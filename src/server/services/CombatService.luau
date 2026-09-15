@@ -3,6 +3,7 @@
 --[=[
 	CombatService ModuleScript
 	Mapped to: ServerScriptService.Server.services.CombatService
+
 	Authoritative combat engine for Card Rift: Co-op Dungeon:
 	1. Owns active CombatState with multi-enemy collection (Enemies: { [string]: EnemyState }).
 	2. Manages monotonic turn timer via os.clock() (TurnStartTime, 45s duration).
@@ -10,6 +11,15 @@
 	4. Handles simultaneous player turn ready-voting and automatic turn expiry resolution.
 	5. Manages downed player states, teammate rescue mechanics (2 energy, 25% HP revive).
 	6. Dispatches serializable CombatSnapshot DTOs and structured CombatEvents.
+
+	=============================================================================
+	SINGLE COMBAT ENCOUNTER ASSUMPTION & MULTI-COMBAT MIGRATION PATH:
+	The current engine assumes one active combat encounter per server instance.
+	State is encapsulated under `activeCombat` and accessed via `CombatService.getActiveCombat()`.
+	When multi-room concurrent combat is introduced, `activeCombat` will be promoted
+	to `activeCombats: { [string]: StateTypes.CombatState }` keyed by CombatId
+	without altering the action contracts or card resolution pipeline.
+	=============================================================================
 ]=]
 
 local Players = game:GetService("Players")
@@ -19,6 +29,7 @@ local RunService = game:GetService("RunService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
@@ -30,26 +41,7 @@ local ArenaVisualizer = require(servicesFolder:WaitForChild("ArenaVisualizer") :
 local CombatService = {}
 
 --------------------------------------------------------------------------------
--- Constants & Configuration
---------------------------------------------------------------------------------
-
-local DEFAULT_TURN_DURATION = 45 -- Monotonic seconds
-local RESCUE_ENERGY_COST = 2
-local REVIVE_HP_PERCENT = 0.25
-
--- Multi-player co-op scaling
-local function scaleEnemyHp(baseHp: number, playerCount: number): number
-	local clamped = math.clamp(playerCount, 1, 4)
-	return math.round(baseHp * (1 + 0.65 * (clamped - 1)))
-end
-
-local function scaleEnemyAttack(baseAtk: number, playerCount: number): number
-	local clamped = math.clamp(playerCount, 1, 4)
-	return math.round(baseAtk * (1 + 0.20 * (clamped - 1)))
-end
-
---------------------------------------------------------------------------------
--- Active Combat State
+-- Active Combat State (Single-Encounter Container)
 --------------------------------------------------------------------------------
 
 local activeCombat: StateTypes.CombatState? = nil
@@ -61,7 +53,7 @@ local turnTimerConnection: RBXScriptConnection? = nil
 -- Snapshot Generators
 --------------------------------------------------------------------------------
 
-function CombatService.getCombatSnapshotForPlayer(player: Player): StateTypes.CombatSnapshot?
+function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.CombatSnapshot?
 	if not activeCombat then return nil end
 
 	local userId = player.UserId
@@ -171,7 +163,6 @@ local function generateEnemyIntent(enemy: StateTypes.EnemyState): StateTypes.Ene
 	local roll = rng:NextInteger(1, 100)
 
 	if roll <= 65 then
-		-- Attack intent
 		local variance = rng:NextInteger(-2, 3)
 		local dmg = math.max(4, enemy.AttackPower + variance)
 		return {
@@ -180,7 +171,6 @@ local function generateEnemyIntent(enemy: StateTypes.EnemyState): StateTypes.Ene
 			Description = string.format("Striking for %d damage", dmg),
 		}
 	elseif roll <= 85 then
-		-- Defend intent
 		local shieldVal = math.max(6, math.floor(enemy.AttackPower * 0.8))
 		return {
 			Type = "Defend",
@@ -188,7 +178,6 @@ local function generateEnemyIntent(enemy: StateTypes.EnemyState): StateTypes.Ene
 			Description = string.format("Fortifying for %d shield", shieldVal),
 		}
 	else
-		-- Debuff / Poison intent
 		return {
 			Type = "Debuff",
 			Value = 3,
@@ -198,7 +187,7 @@ local function generateEnemyIntent(enemy: StateTypes.EnemyState): StateTypes.Ene
 end
 
 --------------------------------------------------------------------------------
--- Damage & Combat Resolution Calculations
+-- Damage & Combat Resolution
 --------------------------------------------------------------------------------
 
 local function applyDamageToEnemy(enemy: StateTypes.EnemyState, rawDamage: number): (number, number)
@@ -238,7 +227,7 @@ local function logEvent(eventType: string, sourceId: string, targetId: string, v
 	}
 
 	table.insert(activeCombat.CombatLog, event)
-	if #activeCombat.CombatLog > 25 then
+	if #activeCombat.CombatLog > GameConfig.Combat.MaxTurnHistoryLog then
 		table.remove(activeCombat.CombatLog, 1)
 	end
 
@@ -324,7 +313,6 @@ local function resolveTurn()
 				if enemy.HP > 0 then dummyTarget = enemy break end
 			end
 
-			-- Relic triggers: OnTurnEnd (Orichalcum, Pocketwatch, Calipers)
 			local relicResult = RelicService.triggerEvent(playerState, activeCombat, "OnTurnEnd", {
 				UnspentEnergy = playerState.Resources.Energy,
 				Enemy = dummyTarget,
@@ -335,14 +323,12 @@ local function resolveTurn()
 				logEvent("ShieldGained", "Relic", tostring(userId), relicResult.BonusShield, string.format("+%d Shield (Relic)", relicResult.BonusShield))
 			end
 
-			-- Calipers check
 			if not relicResult.RetainShield then
 				playerState.Resources.Shield = 0
 			else
 				playerState.Resources.Shield = math.min(15, playerState.Resources.Shield)
 			end
 
-			-- Discard remaining hand
 			CardService.discardHand(playerState)
 		end
 	end
@@ -351,7 +337,6 @@ local function resolveTurn()
 	task.spawn(function()
 		for enemyId, enemy in activeCombat.Enemies do
 			if enemy.HP > 0 then
-				-- Poison tick
 				if enemy.Poison > 0 then
 					local pDmg = enemy.Poison
 					enemy.HP = math.max(0, enemy.HP - pDmg)
@@ -364,8 +349,7 @@ local function resolveTurn()
 					end
 				end
 
-				-- Execute Intent
-				task.wait(0.4)
+				task.wait(0.3)
 				if enemy.Intent.Type == "Attack" then
 					ArenaVisualizer.playEnemyAttackAnimation(enemyId)
 					local livingPlayers: { StateTypes.PlayerState } = {}
@@ -380,7 +364,6 @@ local function resolveTurn()
 						local remDmg, _ = applyDamageToPlayer(target, enemy.Intent.Value)
 						logEvent("DamageDealt", enemy.Name, target.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
 
-						-- Relic trigger: OnDamageTaken (BronzeScales, CentennialPuzzle)
 						if remDmg > 0 then
 							local dmgRelic = RelicService.triggerEvent(target, activeCombat, "OnDamageTaken", {
 								Damage = remDmg,
@@ -405,12 +388,11 @@ local function resolveTurn()
 					end
 				end
 
-				-- Roll next intent for enemy
 				enemy.Intent = generateEnemyIntent(enemy)
 			end
 		end
 
-		-- 3. Check Post-Resolution Status
+		-- Check Post-Resolution Status
 		if areAllEnemiesDead() then
 			endCombat("Victory")
 			return
@@ -421,23 +403,19 @@ local function resolveTurn()
 			return
 		end
 
-		-- 4. Start Next Player Turn
+		-- Start Next Player Turn
 		activeCombat.TurnNumber += 1
 		activeCombat.Phase = "PlayerPhase"
 		activeCombat.TurnStartTime = os.clock()
 
-		for userId, playerState in partyRef do
+		for _, playerState in partyRef do
 			playerState.IsReady = false
 
 			if not playerState.IsDowned then
 				playerState.Resources.Energy = playerState.Resources.MaxEnergy
-
-				-- Relic OnTurnStart
 				local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
 				playerState.Resources.Energy += startRelic.BonusEnergy
-
-				-- Draw cards: 4 base + bonus
-				CardService.drawCards(playerState, 4 + startRelic.BonusDraw)
+				CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount + startRelic.BonusDraw)
 			end
 		end
 
@@ -449,7 +427,6 @@ end
 -- Public Methods: Encounters, Actions, Ready, Rescue
 --------------------------------------------------------------------------------
 
--- Initializes a new combat encounter with 1 to N enemies scaled to party size
 function CombatService.startCombat(
 	encounterId: string,
 	roomType: StateTypes.ActiveRoomType,
@@ -468,8 +445,8 @@ function CombatService.startCombat(
 	if roomType == "Elite Monster" then
 		local baseHp = 135 + (tier * 15)
 		local baseAtk = 14 + (tier * 2)
-		local hp = scaleEnemyHp(baseHp, playerCount)
-		local atk = scaleEnemyAttack(baseAtk, playerCount)
+		local hp = GameConfig.scaleEnemyHp(baseHp, playerCount)
+		local atk = GameConfig.scaleEnemyAttack(baseAtk, playerCount)
 
 		enemies["elite_1"] = {
 			InstanceId = "elite_1",
@@ -486,8 +463,8 @@ function CombatService.startCombat(
 	elseif roomType == "Act Boss" then
 		local baseHp = 220 + (tier * 25)
 		local baseAtk = 16 + (tier * 3)
-		local hp = scaleEnemyHp(baseHp, playerCount)
-		local atk = scaleEnemyAttack(baseAtk, playerCount)
+		local hp = GameConfig.scaleEnemyHp(baseHp, playerCount)
+		local atk = GameConfig.scaleEnemyAttack(baseAtk, playerCount)
 
 		enemies["boss_1"] = {
 			InstanceId = "boss_1",
@@ -502,11 +479,10 @@ function CombatService.startCombat(
 			ModelRef = nil,
 		}
 	else
-		-- Standard Combat: Supports 1-2 enemies
 		local baseHp = 70 + (tier * 10)
 		local baseAtk = 8 + math.floor(tier * 1.5)
-		local hp = scaleEnemyHp(baseHp, playerCount)
-		local atk = scaleEnemyAttack(baseAtk, playerCount)
+		local hp = GameConfig.scaleEnemyHp(baseHp, playerCount)
+		local atk = GameConfig.scaleEnemyAttack(baseAtk, playerCount)
 
 		enemies["enemy_1"] = {
 			InstanceId = "enemy_1",
@@ -522,8 +498,8 @@ function CombatService.startCombat(
 		}
 
 		if tier >= 3 then
-			local minionHp = scaleEnemyHp(40, playerCount)
-			local minionAtk = scaleEnemyAttack(5, playerCount)
+			local minionHp = GameConfig.scaleEnemyHp(40, playerCount)
+			local minionAtk = GameConfig.scaleEnemyAttack(5, playerCount)
 			enemies["enemy_2"] = {
 				InstanceId = "enemy_2",
 				DefinitionId = "Cultist",
@@ -544,7 +520,7 @@ function CombatService.startCombat(
 		Phase = "PlayerPhase",
 		TurnNumber = 1,
 		TurnStartTime = os.clock(),
-		TurnDuration = DEFAULT_TURN_DURATION,
+		TurnDuration = GameConfig.Combat.TurnDuration,
 		Participants = {},
 		Enemies = enemies,
 		ReadyPlayers = {},
@@ -562,7 +538,6 @@ function CombatService.startCombat(
 		ClassService.applyClassToPlayer(playerState)
 		RelicService.resetCombatState(userId)
 
-		-- Relic OnCombatStart
 		local combatRelic = RelicService.triggerEvent(playerState, activeCombat, "OnCombatStart", {
 			Enemy = enemies["enemy_1"] or enemies["elite_1"] or enemies["boss_1"],
 		})
@@ -570,11 +545,9 @@ function CombatService.startCombat(
 			playerState.Resources.Shield += combatRelic.BonusShield
 		end
 
-		-- Draw initial hand of 4 cards
-		CardService.drawCards(playerState, 4)
+		CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount)
 	end
 
-	-- Start monotonic turn timer loop
 	if turnTimerConnection then
 		turnTimerConnection:Disconnect()
 	end
@@ -595,7 +568,7 @@ function CombatService.startCombat(
 end
 
 -- Plays a card by its stable CardInstanceId targeting a specific Enemy InstanceId
-function CombatService.playCard(player: Player, cardInstanceId: string, targetEnemyId: string?): (boolean, string?)
+function CombatService.playCard(player: any, cardInstanceId: string, targetEnemyId: string?): (boolean, string?)
 	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
 		return false, "Combat is not in PlayerPhase."
 	end
@@ -615,12 +588,16 @@ function CombatService.playCard(player: Player, cardInstanceId: string, targetEn
 		return false, "Card not found in hand."
 	end
 
-	-- Resolve target enemy
+	-- Strictly resolve target enemy
 	local targetEnemy: StateTypes.EnemyState? = nil
-	if targetEnemyId and activeCombat.Enemies[targetEnemyId] and activeCombat.Enemies[targetEnemyId].HP > 0 then
-		targetEnemy = activeCombat.Enemies[targetEnemyId]
+	if targetEnemyId ~= nil then
+		local enemy = activeCombat.Enemies[targetEnemyId]
+		if not enemy or enemy.HP <= 0 then
+			return false, "Invalid target enemy."
+		end
+		targetEnemy = enemy
 	else
-		-- Fallback to first living enemy
+		-- Default to first living enemy if unassigned
 		for _, e in activeCombat.Enemies do
 			if e.HP > 0 then
 				targetEnemy = e
@@ -636,7 +613,7 @@ function CombatService.playCard(player: Player, cardInstanceId: string, targetEn
 	-- Evaluate Class Gimmick
 	local gimmick = ClassService.processGimmickOnCardPlay(playerState, cardInst, targetEnemy)
 
-	-- Energy verification (considering BloodPriest sacrifice)
+	-- Energy verification
 	if not gimmick.FreeEnergy and playerState.Resources.Energy < cardInst.CardData.Cost then
 		return false, "Not enough Energy!"
 	end
@@ -674,26 +651,25 @@ function CombatService.playCard(player: Player, cardInstanceId: string, targetEn
 		if effect.Type == "Damage" then
 			local dmg = effect.Value + totalBonusDamage
 			local remDmg, _ = applyDamageToEnemy(targetEnemy, dmg)
-			logEvent("DamageDealt", player.DisplayName, targetEnemy.Name, dmg, string.format("-%d HP", remDmg))
+			logEvent("DamageDealt", playerState.DisplayName, targetEnemy.Name, dmg, string.format("-%d HP", remDmg))
 
-			-- Check if enemy died
 			if targetEnemy.HP <= 0 then
-				logEvent("EnemyDefeated", player.DisplayName, targetEnemy.Name, nil, string.format("%s was defeated!", targetEnemy.Name))
+				logEvent("EnemyDefeated", playerState.DisplayName, targetEnemy.Name, nil, string.format("%s was defeated!", targetEnemy.Name))
 				RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = targetEnemy })
 			end
 
 		elseif effect.Type == "Shield" then
 			local shieldVal = effect.Value + totalBonusShield
 			playerState.Resources.Shield += shieldVal
-			logEvent("ShieldGained", player.DisplayName, player.DisplayName, shieldVal, string.format("+%d Shield", shieldVal))
+			logEvent("ShieldGained", playerState.DisplayName, playerState.DisplayName, shieldVal, string.format("+%d Shield", shieldVal))
 
 		elseif effect.Type == "Poison" then
 			targetEnemy.Poison += effect.Value
-			logEvent("PoisonApplied", player.DisplayName, targetEnemy.Name, effect.Value, string.format("+%d Poison", effect.Value))
+			logEvent("PoisonApplied", playerState.DisplayName, targetEnemy.Name, effect.Value, string.format("+%d Poison", effect.Value))
 
 		elseif effect.Type == "Heal" then
 			playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + effect.Value)
-			logEvent("Healed", player.DisplayName, player.DisplayName, effect.Value, string.format("+%d HP", effect.Value))
+			logEvent("Healed", playerState.DisplayName, playerState.DisplayName, effect.Value, string.format("+%d HP", effect.Value))
 
 		elseif effect.Type == "Draw" then
 			CardService.drawCards(playerState, effect.Value)
@@ -706,12 +682,12 @@ function CombatService.playCard(player: Player, cardInstanceId: string, targetEn
 		return true, nil
 	end
 
-	CombatService.broadcastSnapshots(string.format("%s played [%s]!", player.DisplayName, cardInst.CardData.Name))
+	CombatService.broadcastSnapshots(string.format("%s played [%s]!", playerState.DisplayName, cardInst.CardData.Name))
 	return true, nil
 end
 
 -- Toggles player ready status; resolves turn if all living players are ready
-function CombatService.voteReady(player: Player): (boolean, string?)
+function CombatService.voteReady(player: any): (boolean, string?)
 	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
 		return false, "Cannot vote ready outside PlayerPhase."
 	end
@@ -726,7 +702,7 @@ function CombatService.voteReady(player: Player): (boolean, string?)
 	end
 
 	playerState.IsReady = not playerState.IsReady
-	logEvent("PlayerReadyVoted", player.DisplayName, "Combat", nil, playerState.IsReady and "Ready!" or "Unready")
+	logEvent("PlayerReadyVoted", playerState.DisplayName, "Combat", nil, playerState.IsReady and "Ready!" or "Unready")
 
 	if areAllLivingPlayersReady() then
 		print("[CombatService] All active players ready! Resolving turn...")
@@ -738,8 +714,8 @@ function CombatService.voteReady(player: Player): (boolean, string?)
 	return true, nil
 end
 
--- Rescues a downed teammate by spending 2 Energy
-function CombatService.rescueTeammate(rescuer: Player, targetUserId: number): (boolean, string?)
+-- Rescues a downed teammate by spending Energy
+function CombatService.rescueTeammate(rescuer: any, targetUserId: number): (boolean, string?)
 	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
 		return false, "Can only rescue teammates during PlayerPhase."
 	end
@@ -759,19 +735,27 @@ function CombatService.rescueTeammate(rescuer: Player, targetUserId: number): (b
 		return false, "Target is not downed."
 	end
 
-	if rescuerState.Resources.Energy < RESCUE_ENERGY_COST then
-		return false, string.format("Need %d Energy to rescue teammate!", RESCUE_ENERGY_COST)
+	if rescuerState.Resources.Energy < GameConfig.Coop.RescueEnergyCost then
+		return false, string.format("Need %d Energy to rescue teammate!", GameConfig.Coop.RescueEnergyCost)
 	end
 
-	rescuerState.Resources.Energy -= RESCUE_ENERGY_COST
+	rescuerState.Resources.Energy -= GameConfig.Coop.RescueEnergyCost
 	targetState.IsDowned = false
-	targetState.Resources.HP = math.max(1, math.floor(targetState.Resources.MaxHP * REVIVE_HP_PERCENT))
+	targetState.Resources.HP = math.max(1, math.floor(targetState.Resources.MaxHP * GameConfig.Coop.ReviveHpPercent))
 	targetState.IsReady = false
 
-	logEvent("PlayerRevived", rescuer.DisplayName, targetState.DisplayName, targetState.Resources.HP, string.format("%s rescued %s!", rescuer.DisplayName, targetState.DisplayName))
-	CombatService.broadcastSnapshots(string.format("%s was revived by %s!", targetState.DisplayName, rescuer.DisplayName))
+	logEvent("PlayerRevived", rescuerState.DisplayName, targetState.DisplayName, targetState.Resources.HP, string.format("%s rescued %s!", rescuerState.DisplayName, targetState.DisplayName))
+	CombatService.broadcastSnapshots(string.format("%s was revived by %s!", targetState.DisplayName, rescuerState.DisplayName))
 
 	return true, nil
+end
+
+-- Simulates an automatic turn timeout resolution (used by integration testing & timer expiry)
+function CombatService.forceTurnTimeout()
+	if activeCombat and activeCombat.Phase == "PlayerPhase" then
+		print("[CombatService] Forcing turn timeout resolution...")
+		resolveTurn()
+	end
 end
 
 function CombatService.getActiveCombat(): StateTypes.CombatState?
@@ -790,7 +774,7 @@ function CombatService.cleanupCombat()
 end
 
 function CombatService.init()
-	print("[CombatService] Initialized authoritative multi-enemy combat engine.")
+	print("[CombatService] Initialized authoritative single-encounter combat engine.")
 end
 
 return CombatService

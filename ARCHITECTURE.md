@@ -149,3 +149,37 @@ RunManager.init()           -- 9. Mount authoritative run coordinator
 ```
 
 This ensures zero initialization deadlocks and zero reliance on arbitrary `task.wait()` delays.
+
+---
+
+## 7. Configuration Decoupling (`GameConfig.luau`)
+
+Gameplay tuning, balance constants, co-op multipliers, and rate limits have been isolated from service logic into [`src/shared/GameConfig.luau`](src/shared/GameConfig.luau):
+- **Combat Tuning**: Default turn duration (45s), fallback Max HP (100), starting energy (3), turn draw count (4).
+- **Co-op Scaling**: Party size limits (1–4), enemy HP scaling factor (0.65/player), enemy attack scaling factor (0.20/player), teammate rescue energy cost (2), revive HP percentage (25%).
+- **Progression & Rewards**: Starter gold (50), campfire heal percent (30%), clear rewards (gold, aether shards), draft choices count (3).
+- **Network Rate Limits**: Token-bucket burst capacities and replenishment rates per category.
+
+Services and client HUDs query `GameConfig` rather than hardcoding numeric literals.
+
+---
+
+## 8. Single-Run Architectural Scope & Multi-Run Migration Path
+
+### Current Scope (Phase 1 Baseline)
+The current Roblox server architecture assumes **one active party and dungeon run per server instance**:
+- `RunManager` maintains one active `currentRun: StateTypes.RunState`.
+- `CombatService` maintains one active `activeCombat: StateTypes.CombatState`.
+
+### Isolation of Assumption
+This single-instance assumption has been explicitly isolated to prevent structural refactoring debt:
+1. All client actions identify the caller by `player.UserId`, and the server maps `player.UserId` to `PartyMembers[userId]`.
+2. Encapsulated accessors (`RunManager.getRunState()`, `RunManager.getRunById(runId)`, `CombatService.getActiveCombat()`) hide internal storage mechanics from callers.
+3. Network RemoteEvents carry full context without relying on server-side global singletons.
+
+### Planned Multi-Run Migration (`RunId -> RunState`)
+When the game transitions to multi-party or matchmade lobby servers:
+1. Promote `currentRun` to `activeRuns: { [string]: StateTypes.RunState }` indexed by `RunId`.
+2. Maintain a reverse index `playerToRunId: { [number]: string }` mapping `UserId -> RunId`.
+3. Promote `activeCombat` in `CombatService` to `activeCombats: { [string]: StateTypes.CombatState }` indexed by `CombatId`.
+4. Network payloads and client contracts already possess `RunId` and `CombatId` fields in their DTOs, meaning client-facing protocols will require zero breaking modifications.

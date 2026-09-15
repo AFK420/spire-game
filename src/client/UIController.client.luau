@@ -27,16 +27,13 @@ local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 -- Remote Events Resolution via GameNetwork
 --------------------------------------------------------------------------------
 
-local networkFolder = ReplicatedStorage:WaitForChild("GameNetwork", 10) :: Folder?
-if not networkFolder then
-	warn("[UIController] GameNetwork folder not found!")
-end
-
 local function getEvent(name: string): RemoteEvent?
-	if not networkFolder then return nil end
-	local ev = networkFolder:FindFirstChild(name)
-	if ev and ev:IsA("RemoteEvent") then
-		return ev
+	local folder = ReplicatedStorage:WaitForChild("GameNetwork", 10) :: Folder?
+	if folder then
+		local ev = folder:WaitForChild(name, 5)
+		if ev and ev:IsA("RemoteEvent") then
+			return ev
+		end
 	end
 	return nil
 end

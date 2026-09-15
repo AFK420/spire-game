@@ -3,6 +3,7 @@
 --[=[
 	RunManager ModuleScript
 	Mapped to: ServerScriptService.Server.services.RunManager
+
 	Single Authoritative State Owner for active Dungeon Runs in Card Rift: Co-op Dungeon:
 	1. Owns canonical RunState (Lobby -> MapSelect -> ActiveRoom -> Rewards -> Victory/Defeat).
 	2. Manages co-op party lifecycle (1 to 4 players, joining, leaving, reconnection).
@@ -10,6 +11,15 @@
 	4. Triggers CombatService when entering combat/elite/boss rooms.
 	5. Handles post-encounter universal 3-card drafting and Aether Shard meta-rewards.
 	6. Emits synchronized RunSnapshot DTOs to clients via NetworkService.
+
+	=============================================================================
+	SINGLE RUN ARCHITECTURAL ASSUMPTION & MULTI-RUN MIGRATION PATH:
+	Current architecture assumes one active party and run per Roblox game server.
+	To isolate this constraint for future scalability, all run state mutations
+	and queries flow through encapsulated methods. When transitioning to multi-run,
+	`currentRun` will be promoted to `activeRuns: { [string]: StateTypes.RunState }`
+	without changing client network contracts or external service signatures.
+	=============================================================================
 ]=]
 
 local HttpService = game:GetService("HttpService")
@@ -20,6 +30,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
@@ -27,15 +38,13 @@ local ClassService = require(servicesFolder:WaitForChild("ClassService") :: Modu
 local DungeonService = require(servicesFolder:WaitForChild("DungeonService") :: ModuleScript)
 local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
 local PersistenceService = require(servicesFolder:WaitForChild("PersistenceService") :: ModuleScript)
-local RelicService = require(servicesFolder:WaitForChild("RelicService") :: ModuleScript)
 
--- Forward declaration for circular reference avoidance
 local CombatService: any = nil
 
 local RunManager = {}
 
 --------------------------------------------------------------------------------
--- Authoritative Run State
+-- Isolated Authoritative Run State
 --------------------------------------------------------------------------------
 
 local currentRun: StateTypes.RunState = {
@@ -56,10 +65,11 @@ local currentRun: StateTypes.RunState = {
 local internalDungeonRun: DungeonMap.DungeonRun? = nil
 
 --------------------------------------------------------------------------------
--- Snapshot Helpers
+-- Snapshot Generators
 --------------------------------------------------------------------------------
 
-function RunManager.getRunSnapshotForPlayer(player: Player): StateTypes.RunSnapshot
+function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
+	local userId = player.UserId
 	local actName = "Act 1: The Forsaken Ascent"
 	if internalDungeonRun and internalDungeonRun.Acts[internalDungeonRun.CurrentActIndex] then
 		actName = internalDungeonRun.Acts[internalDungeonRun.CurrentActIndex].Name
@@ -93,7 +103,7 @@ function RunManager.getRunSnapshotForPlayer(player: Player): StateTypes.RunSnaps
 	local rewardView = nil
 	if currentRun.PendingRewards then
 		local offeredViews: { StateTypes.CardView } = {}
-		local offered = currentRun.PendingRewards.OfferedCardsByPlayer[player.UserId]
+		local offered = currentRun.PendingRewards.OfferedCardsByPlayer[userId]
 		if offered then
 			for _, cardDef in offered do
 				table.insert(offeredViews, {
@@ -112,7 +122,7 @@ function RunManager.getRunSnapshotForPlayer(player: Player): StateTypes.RunSnaps
 			GoldAmount = currentRun.PendingRewards.GoldAmount,
 			AetherShardsAmount = currentRun.PendingRewards.AetherShardsAmount,
 			OfferedCards = offeredViews,
-			HasClaimed = currentRun.PendingRewards.ClaimedCards[player.UserId] or false,
+			HasClaimed = currentRun.PendingRewards.ClaimedCards[userId] or false,
 		}
 	end
 
@@ -140,35 +150,41 @@ function RunManager.broadcastRunSnapshots(message: string?)
 end
 
 --------------------------------------------------------------------------------
--- Party Lifecycle
+-- Party Lifecycle & Reconnection Resilience
 --------------------------------------------------------------------------------
 
-function RunManager.addPlayer(player: Player): StateTypes.PlayerState
+function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	local userId = player.UserId
+	local displayName = player.DisplayName or player.Name or ("Player_" .. tostring(userId))
+
+	-- Player rejoining existing run: reattach instance without corrupting state
 	if currentRun.PartyMembers[userId] then
-		currentRun.PartyMembers[userId].PlayerInstance = player
-		return currentRun.PartyMembers[userId]
+		local existing = currentRun.PartyMembers[userId]
+		existing.PlayerInstance = (typeof(player) == "Instance" and player:IsA("Player")) and player or nil
+		existing.DisplayName = displayName
+		RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
+		return existing
 	end
 
 	local pState: StateTypes.PlayerState = {
 		UserId = userId,
-		PlayerInstance = player,
-		DisplayName = player.DisplayName or player.Name,
+		PlayerInstance = (typeof(player) == "Instance" and player:IsA("Player")) and player or nil,
+		DisplayName = displayName,
 		ClassId = "Warlord",
 		SubclassId = "Berserker",
 		Resources = {
-			HP = 100,
-			MaxHP = 100,
+			HP = GameConfig.Combat.DefaultBaseHP,
+			MaxHP = GameConfig.Combat.DefaultBaseHP,
 			Shield = 0,
-			Energy = 3,
-			MaxEnergy = 3,
+			Energy = GameConfig.Combat.DefaultStartingEnergy,
+			MaxEnergy = GameConfig.Combat.DefaultStartingEnergy,
 		},
 		Deck = {},
 		Hand = {},
 		DiscardPile = {},
 		ExhaustPile = {},
-		RelicIds = { "Anchor" }, -- Default starter relic
-		Gold = 50,
+		RelicIds = { "Anchor" },
+		Gold = GameConfig.Dungeon.StarterGold,
 		IsReady = false,
 		IsDowned = false,
 		VotedNodeId = nil,
@@ -177,20 +193,25 @@ function RunManager.addPlayer(player: Player): StateTypes.PlayerState
 	currentRun.PartyMembers[userId] = pState
 	ClassService.applyClassToPlayer(pState)
 
-	RunManager.broadcastRunSnapshots(string.format("%s joined the party!", player.DisplayName))
+	RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName))
 	return pState
 end
 
-function RunManager.removePlayer(player: Player)
+function RunManager.removePlayer(player: any)
 	local userId = player.UserId
-	if currentRun.PartyMembers[userId] then
+	local member = currentRun.PartyMembers[userId]
+	if not member then return end
+
+	member.PlayerInstance = nil
+	if currentRun.Phase == "Lobby" then
 		currentRun.PartyMembers[userId] = nil
-		RunManager.broadcastRunSnapshots(string.format("%s left the party.", player.DisplayName))
 	end
+
+	RunManager.broadcastRunSnapshots(string.format("%s left the party.", member.DisplayName))
 end
 
 --------------------------------------------------------------------------------
--- Universal Card Draft Generation (3 Choices per Player)
+-- Universal 3-Card Draft Choices
 --------------------------------------------------------------------------------
 
 local function generateDraftChoices(): { CardData.Card }
@@ -209,24 +230,22 @@ local function generateDraftChoices(): { CardData.Card }
 	end
 
 	local draft = {}
-	for i = 1, math.min(3, #pool) do
+	for i = 1, math.min(GameConfig.Rewards.CardDraftChoicesCount, #pool) do
 		table.insert(draft, pool[i])
 	end
 	return draft
 end
 
 --------------------------------------------------------------------------------
--- Run State Machine Transitions
+-- State Machine Transitions
 --------------------------------------------------------------------------------
 
--- Lobby -> MapSelect
 function RunManager.startRun(): boolean
 	if currentRun.Phase ~= "Lobby" then
 		warn("[RunManager] Cannot start run outside Lobby.")
 		return false
 	end
 
-	print("[RunManager] Initializing new DungeonRun...")
 	internalDungeonRun = DungeonService.generateRun()
 
 	local seed = internalDungeonRun.Seed
@@ -250,7 +269,7 @@ function RunManager.startRun(): boolean
 		table.insert(currentRun.AvailableNodeIds, n.Id)
 	end
 
-	-- Reset party stats & decks
+	-- Prepare all players
 	for _, pState in currentRun.PartyMembers do
 		pState.VotedNodeId = nil
 		pState.IsReady = false
@@ -261,13 +280,12 @@ function RunManager.startRun(): boolean
 		ClassService.applyClassToPlayer(pState)
 	end
 
-	RunManager.broadcastRunSnapshots("The Rift has opened! Select your starting path on the Map.")
+	RunManager.broadcastRunSnapshots("Expedition started! Choose your path on the Map.")
 	NetworkService.broadcastAnnouncement("EXPEDITION BEGINS", "Choose your path through the Dungeon!", Color3.fromRGB(60, 200, 255))
 	return true
 end
 
--- Players vote or travel to a connected map node
-function RunManager.voteMapNode(player: Player, targetNodeId: string): (boolean, string?)
+function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?)
 	if currentRun.Phase ~= "MapSelect" or not internalDungeonRun then
 		return false, "Not currently on MapSelect phase."
 	end
@@ -275,7 +293,6 @@ function RunManager.voteMapNode(player: Player, targetNodeId: string): (boolean,
 	local pState = currentRun.PartyMembers[player.UserId]
 	if not pState then return false, "Player not in party." end
 
-	-- Check if targetNodeId is in available nodes
 	local isAvailable = false
 	for _, id in currentRun.AvailableNodeIds do
 		if id == targetNodeId then
@@ -290,7 +307,7 @@ function RunManager.voteMapNode(player: Player, targetNodeId: string): (boolean,
 
 	pState.VotedNodeId = targetNodeId
 
-	-- Check if all players have voted or if majority reached
+	-- Consensus check
 	local votes: { [string]: number } = {}
 	local totalVoters = 0
 	for _, member in currentRun.PartyMembers do
@@ -311,19 +328,16 @@ function RunManager.voteMapNode(player: Player, targetNodeId: string): (boolean,
 	if winningNodeId then
 		return RunManager.travelToNode(winningNodeId)
 	else
-		RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", player.DisplayName, targetNodeId))
+		RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId))
 		return true, nil
 	end
 end
 
--- Executes travel to the node and transitions to ActiveRoom
 function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
 	if not internalDungeonRun then return false, "No active run." end
 
 	local success, err = DungeonService.selectNode(internalDungeonRun, targetNodeId)
-	if not success then
-		return false, err
-	end
+	if not success then return false, err end
 
 	local node = DungeonService.getNode(internalDungeonRun, targetNodeId)
 	if not node then return false, "Node not found." end
@@ -333,7 +347,6 @@ function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
 	currentRun.ActIndex = node.Act
 	table.insert(currentRun.ClearedNodeIds, targetNodeId)
 
-	-- Clear votes
 	for _, member in currentRun.PartyMembers do
 		member.VotedNodeId = nil
 	end
@@ -350,7 +363,6 @@ function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
 
 	currentRun.Phase = "ActiveRoom"
 
-	-- Route based on Room Type
 	if node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss" then
 		if not CombatService then
 			CombatService = require(servicesFolder:WaitForChild("CombatService") :: ModuleScript)
@@ -367,9 +379,8 @@ function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
 		)
 
 	elseif node.Type == "Campfire Rest" then
-		-- Campfire Rest heals all party members by 30% Max HP
 		for _, member in currentRun.PartyMembers do
-			local heal = math.floor(member.Resources.MaxHP * 0.3)
+			local heal = math.floor(member.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
 			member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + heal)
 		end
 		RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered).")
@@ -382,7 +393,6 @@ function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
 	return true, nil
 end
 
--- Callback from CombatService when an encounter finishes
 function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: DungeonMap.DungeonNode)
 	if outcome == "Defeat" then
 		currentRun.Phase = "RunDefeat"
@@ -391,7 +401,6 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 		return
 	end
 
-	-- Victory: Check if Final Boss (Act 4 Boss)
 	if node.Type == "Act Boss" and node.Act == 4 then
 		currentRun.Phase = "RunVictory"
 		for _, member in currentRun.PartyMembers do
@@ -404,16 +413,14 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 		return
 	end
 
-	-- Distribute rewards
 	RunManager.transitionToRewards(node.Type == "Elite Monster", node.Type == "Act Boss")
 end
 
--- ActiveRoom -> Rewards
 function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
 	currentRun.Phase = "Rewards"
 
-	local gold = 25 + (isElite and 25 or 0) + (isBoss and 50 or 0)
-	local shards = 5 + (isElite and 5 or 0) + (isBoss and 15 or 0)
+	local gold = GameConfig.Rewards.BaseCombatGold + (isElite and GameConfig.Rewards.EliteBonusGold or 0) + (isBoss and GameConfig.Rewards.BossBonusGold or 0)
+	local shards = GameConfig.Rewards.BaseCombatShards + (isElite and GameConfig.Rewards.EliteBonusShards or 0) + (isBoss and GameConfig.Rewards.BossBonusShards or 0)
 
 	local offeredCards: { [number]: { CardData.Card } } = {}
 	local claimedFlags: { [number]: boolean } = {}
@@ -438,8 +445,7 @@ function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
 	RunManager.broadcastRunSnapshots(string.format("Rewards Available! Claimed +%d Gold, +%d Shards.", gold, shards))
 end
 
--- Claims one card from draft choices and adds it as a CardInstance to the player's deck
-function RunManager.claimRewardCard(player: Player, cardDefId: string): (boolean, string?)
+function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, string?)
 	if currentRun.Phase ~= "Rewards" or not currentRun.PendingRewards then
 		return false, "Not in Rewards phase."
 	end
@@ -452,7 +458,6 @@ function RunManager.claimRewardCard(player: Player, cardDefId: string): (boolean
 		return false, "Reward already claimed."
 	end
 
-	-- Check if card is among offered cards
 	local offered = currentRun.PendingRewards.OfferedCardsByPlayer[userId]
 	if not offered then return false, "No offered cards." end
 
@@ -468,26 +473,23 @@ function RunManager.claimRewardCard(player: Player, cardDefId: string): (boolean
 		return false, "Card not in draft choices."
 	end
 
-	-- Instantiate card into player's deck
 	local newCardInst = CardService.createCardInstance(cardDefId, userId)
 	if newCardInst then
 		table.insert(member.Deck, newCardInst)
 	end
 
 	currentRun.PendingRewards.ClaimedCards[userId] = true
-	RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", player.DisplayName, cardDefId))
+	RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", member.DisplayName, cardDefId))
 	return true, nil
 end
 
--- Leaves the Rewards screen and returns to MapSelect
-function RunManager.continueFromRewards(player: Player): boolean
+function RunManager.continueFromRewards(player: any): boolean
 	if currentRun.Phase ~= "Rewards" and currentRun.Phase ~= "ActiveRoom" then
 		return false
 	end
 
 	if not internalDungeonRun then return false end
 
-	-- Update available nodes for next tier
 	local available = DungeonService.getAvailableNodes(internalDungeonRun)
 	table.clear(currentRun.AvailableNodeIds)
 	for _, node in available do
@@ -503,12 +505,49 @@ function RunManager.continueFromRewards(player: Player): boolean
 	return true
 end
 
+--------------------------------------------------------------------------------
+-- Encapsulated State Access & Testing Reset
+--------------------------------------------------------------------------------
+
 function RunManager.getRunState(): StateTypes.RunState
 	return currentRun
 end
 
+function RunManager.getRunById(runId: string): StateTypes.RunState?
+	if currentRun.RunId == runId then
+		return currentRun
+	end
+	return nil
+end
+
 function RunManager.getPlayerState(userId: number): StateTypes.PlayerState?
 	return currentRun.PartyMembers[userId]
+end
+
+function RunManager.getDungeonRun(): DungeonMap.DungeonRun?
+	return internalDungeonRun
+end
+
+-- Resets the single run container to clean Lobby state (used for testing and new runs)
+function RunManager.resetRunForTesting()
+	currentRun = {
+		RunId = "run_test_" .. HttpService:GenerateGUID(false):sub(1, 6),
+		Seed = 10001,
+		Phase = "Lobby",
+		ActIndex = 1,
+		CurrentTier = 0,
+		CurrentNodeId = nil,
+		ClearedNodeIds = {},
+		AvailableNodeIds = {},
+		PartyMembers = {},
+		ActiveRoom = nil,
+		ActiveCombat = nil,
+		PendingRewards = nil,
+	}
+	internalDungeonRun = nil
+	if CombatService then
+		CombatService.cleanupCombat()
+	end
 end
 
 function RunManager.init()
@@ -526,7 +565,7 @@ function RunManager.init()
 		RunManager.addPlayer(p)
 	end
 
-	print("[RunManager] Initialized authoritative Dungeon Run state machine.")
+	print("[RunManager] Initialized authoritative single-run coordinator.")
 end
 
 return RunManager

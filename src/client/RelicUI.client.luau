@@ -25,16 +25,9 @@ local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
 --------------------------------------------------------------------------------
 
 local function findRelicEvent(eventName: string): RemoteEvent?
-	local networkFolder = ReplicatedStorage:FindFirstChild("GameNetwork") or ReplicatedStorage:WaitForChild("GameNetwork", 5)
+	local networkFolder = ReplicatedStorage:WaitForChild("GameNetwork", 10) :: Folder?
 	if networkFolder then
-		local ev = networkFolder:FindFirstChild(eventName)
-		if ev and ev:IsA("RemoteEvent") then
-			return ev
-		end
-	end
-	local folder = ReplicatedStorage:FindFirstChild("RelicEvents")
-	if folder then
-		local ev = folder:FindFirstChild(eventName)
+		local ev = networkFolder:WaitForChild(eventName, 5)
 		if ev and ev:IsA("RemoteEvent") then
 			return ev
 		end

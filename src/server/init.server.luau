@@ -41,9 +41,12 @@ print("[Server] All core services deterministically initialized.")
 
 -- 2. Execute Phase 1 automated verification test suite
 task.spawn(function()
-	pcall(function()
+	local success, err = pcall(function()
 		TestRunner.runAllTests()
 	end)
+	if not success then
+		warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
+	end
 end)
 
 --------------------------------------------------------------------------------

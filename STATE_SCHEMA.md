@@ -297,3 +297,50 @@ $$\text{TimeRemaining} = \max\left(0, \text{ceil}\left(\text{TurnDuration} - (\t
 ### 7.3 Teammate Down & Revive
 $$\text{RescueCost} = 2 \text{ Energy}$$
 $$\text{ReviveHP} = \max\left(1, \lfloor\text{MaxHP} \times 0.25\rfloor\right)$$
+
+---
+
+## 8. Configuration Schema (`GameConfig.luau`)
+
+Gameplay tuning constants and scaling thresholds are maintained in `ReplicatedStorage.Shared.GameConfig`:
+
+```luau
+GameConfig.Combat = {
+    TurnDuration = 45,
+    DefaultBaseHP = 100,
+    DefaultStartingEnergy = 3,
+    BaseHandDrawCount = 4,
+    MaxTurnHistoryLog = 25,
+}
+
+GameConfig.Coop = {
+    MaxPartySize = 4,
+    MinPartySize = 1,
+    RescueEnergyCost = 2,
+    ReviveHpPercent = 0.25,
+    EnemyHpScaleMultiplier = 0.65,
+    EnemyAtkScaleMultiplier = 0.20,
+}
+
+GameConfig.Dungeon = {
+    StarterGold = 50,
+    CampfireHealPercent = 0.30,
+}
+
+GameConfig.Rewards = {
+    BaseCombatGold = 25,
+    BaseCombatShards = 5,
+    EliteBonusGold = 25,
+    EliteBonusShards = 5,
+    BossBonusGold = 50,
+    BossBonusShards = 15,
+    CardDraftChoicesCount = 3,
+}
+
+GameConfig.NetworkLimits = {
+    Combat = { MaxTokens = 6, RefillRate = 3.0 },
+    Map = { MaxTokens = 3, RefillRate = 1.0 },
+    Class = { MaxTokens = 3, RefillRate = 1.0 },
+    General = { MaxTokens = 4, RefillRate = 2.0 },
+}
+```

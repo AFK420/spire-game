@@ -15,6 +15,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local NetworkService = {}
 
@@ -73,17 +74,6 @@ type RateBucket = {
 	LastRefillTime: number,
 }
 
--- Category configuration: MaxTokens, RefillRate
-local CATEGORY_LIMITS: { [ActionCategory]: { MaxTokens: number, RefillRate: number } } = {
-	Combat = { MaxTokens = 6, RefillRate = 3.0 },
-	Map = { MaxTokens = 3, RefillRate = 1.0 },
-	Class = { MaxTokens = 3, RefillRate = 1.0 },
-	General = { MaxTokens = 4, RefillRate = 2.0 },
-}
-
--- Per-player rate buckets: Keyed by UserId -> Category -> RateBucket
-local playerBuckets: { [number]: { [string]: RateBucket } } = {}
-
 -- Validates whether an action is permitted under rate-limiting rules
 function NetworkService.checkRateLimit(player: Player, category: ActionCategory): boolean
 	local userId = player.UserId
@@ -94,7 +84,7 @@ function NetworkService.checkRateLimit(player: Player, category: ActionCategory)
 	end
 
 	local bucket = playerBuckets[userId][category]
-	local config = CATEGORY_LIMITS[category] or CATEGORY_LIMITS.General
+	local config = (GameConfig.NetworkLimits :: any)[category] or GameConfig.NetworkLimits.General
 
 	if not bucket then
 		bucket = {
@@ -131,12 +121,16 @@ end
 
 -- Sends a personalized run snapshot to a specific player
 function NetworkService.sendRunState(player: Player, snapshot: StateTypes.RunSnapshot)
-	NetworkService.RunStateUpdateEvent:FireClient(player, snapshot)
+	if typeof(player) == "Instance" and player:IsA("Player") then
+		NetworkService.RunStateUpdateEvent:FireClient(player, snapshot)
+	end
 end
 
 -- Sends a personalized combat snapshot to a specific player
 function NetworkService.sendCombatState(player: Player, snapshot: StateTypes.CombatSnapshot)
-	NetworkService.CombatStateUpdateEvent:FireClient(player, snapshot)
+	if typeof(player) == "Instance" and player:IsA("Player") then
+		NetworkService.CombatStateUpdateEvent:FireClient(player, snapshot)
+	end
 end
 
 -- Sends a structured combat event (e.g. floating damage or sound) to all clients
@@ -155,7 +149,9 @@ end
 
 -- Notifies a specific player of a passive relic trigger
 function NetworkService.notifyRelicTrigger(player: Player, payload: { RelicId: string, RelicName: string, Icon: string, Text: string, Rarity: string })
-	NetworkService.RelicNotificationEvent:FireClient(player, payload)
+	if typeof(player) == "Instance" and player:IsA("Player") then
+		NetworkService.RelicNotificationEvent:FireClient(player, payload)
+	end
 end
 
 --------------------------------------------------------------------------------
