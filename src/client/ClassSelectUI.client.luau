@@ -26,7 +26,14 @@ local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 --------------------------------------------------------------------------------
 
 local function findEvent(folderName: string, eventName: string): RemoteEvent?
-	local folder = ReplicatedStorage:WaitForChild(folderName, 5) :: Folder?
+	local networkFolder = ReplicatedStorage:FindFirstChild("GameNetwork") or ReplicatedStorage:WaitForChild("GameNetwork", 5)
+	if networkFolder then
+		local ev = networkFolder:FindFirstChild(eventName)
+		if ev and ev:IsA("RemoteEvent") then
+			return ev
+		end
+	end
+	local folder = ReplicatedStorage:FindFirstChild(folderName)
 	if folder then
 		local ev = folder:FindFirstChild(eventName)
 		if ev and ev:IsA("RemoteEvent") then
@@ -37,9 +44,7 @@ local function findEvent(folderName: string, eventName: string): RemoteEvent?
 end
 
 local SelectClassEvent = findEvent("ClassEvents", "SelectClass")
-local ClassSelectionUpdateEvent = findEvent("ClassEvents", "ClassSelectionUpdate")
-local GimmickFeedbackEvent = findEvent("ClassEvents", "GimmickFeedback")
-local FlowStateUpdateEvent = findEvent("GameFlowEvents", "FlowStateUpdate")
+local RunStateUpdateEvent = findEvent("GameNetwork", "RunStateUpdate")
 
 --------------------------------------------------------------------------------
 -- UI Creation Helpers
@@ -517,8 +522,8 @@ end)
 -- Game Flow Visibility Sync
 --------------------------------------------------------------------------------
 
-if FlowStateUpdateEvent then
-	FlowStateUpdateEvent.OnClientEvent:Connect(function(state: any)
+if RunStateUpdateEvent then
+	RunStateUpdateEvent.OnClientEvent:Connect(function(state: any)
 		if typeof(state) == "table" and state.Phase then
 			-- Show in Lobby, hide during MapSelect, ActiveRoom, Rewards
 			modal.Visible = (state.Phase == "Lobby")

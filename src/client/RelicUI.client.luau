@@ -25,7 +25,14 @@ local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
 --------------------------------------------------------------------------------
 
 local function findRelicEvent(eventName: string): RemoteEvent?
-	local folder = ReplicatedStorage:WaitForChild("RelicEvents", 5) :: Folder?
+	local networkFolder = ReplicatedStorage:FindFirstChild("GameNetwork") or ReplicatedStorage:WaitForChild("GameNetwork", 5)
+	if networkFolder then
+		local ev = networkFolder:FindFirstChild(eventName)
+		if ev and ev:IsA("RemoteEvent") then
+			return ev
+		end
+	end
+	local folder = ReplicatedStorage:FindFirstChild("RelicEvents")
 	if folder then
 		local ev = folder:FindFirstChild(eventName)
 		if ev and ev:IsA("RemoteEvent") then
@@ -35,9 +42,8 @@ local function findRelicEvent(eventName: string): RemoteEvent?
 	return nil
 end
 
-local RelicInventoryUpdateEvent = findRelicEvent("RelicInventoryUpdate")
-local RelicTriggerNotificationEvent = findRelicEvent("RelicTriggerNotification")
-local RequestRelicInventoryEvent = findRelicEvent("RequestRelicInventory")
+local RelicTriggerNotificationEvent = findRelicEvent("RelicNotification")
+local RunStateUpdateEvent = findRelicEvent("RunStateUpdate")
 
 --------------------------------------------------------------------------------
 -- UI Construction & Styling Helpers
@@ -393,10 +399,13 @@ end
 -- Remote Event Listeners
 --------------------------------------------------------------------------------
 
-if RelicInventoryUpdateEvent then
-	RelicInventoryUpdateEvent.OnClientEvent:Connect(function(relics: any)
-		if typeof(relics) == "table" then
-			renderInventory(relics)
+if RunStateUpdateEvent then
+	RunStateUpdateEvent.OnClientEvent:Connect(function(snapshot: any)
+		if typeof(snapshot) == "table" and snapshot.Party then
+			local myParty = snapshot.Party[tostring(localPlayer.UserId)]
+			if myParty and myParty.RelicIds then
+				renderInventory(myParty.RelicIds)
+			end
 		end
 	end)
 end
@@ -409,9 +418,4 @@ if RelicTriggerNotificationEvent then
 	end)
 end
 
--- Request initial relic inventory from server upon loading
-if RequestRelicInventoryEvent then
-	RequestRelicInventoryEvent:FireServer()
-end
-
-print("[RelicUI] Initialized successfully.")
+print("[RelicUI] Initialized successfully with GameNetwork synchronization.")

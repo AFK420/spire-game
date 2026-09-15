@@ -3,12 +3,13 @@
 --[=[
 	UIController LocalScript
 	Mapped to: StarterPlayer.StarterPlayerScripts.Client.UIController
-	Client-side UI controller for Card Rift: Co-op Dungeon:
-	1. Remote Listeners: Syncs state changes (Lobby, MapSelect, ActiveRoom, Rewards) from GameCoordinator.
-	2. Dungeon Map UI: Dynamically builds the visual node tree during MapSelect for voting and traveling.
-	3. Combat HUD UI: Renders active card hand, player energy counters, shield/HP bars, and boss intent icons during ActiveRoom.
-	4. Co-op Ready Button: Synchronized ready button that locks in turn choices with 45s timer display.
-	5. Modular UI Frame creation functions for easy styling.
+	Centralized client UI controller for Card Rift: Co-op Dungeon:
+	1. Listens to ReplicatedStorage.GameNetwork state updates (RunSnapshot, CombatSnapshot).
+	2. Manages UI transitions across Run Phases (Lobby, MapSelect, ActiveRoom, Rewards).
+	3. Renders the interactive procedural Dungeon Map tree for party voting and navigation.
+	4. Renders the Active Combat HUD: multi-enemy targets, card hand (by CardInstanceId),
+	   monotonic turn timer (45s), ready voting, and teammate rescue.
+	5. Renders post-combat 3-card draft reward selection and gold progression.
 ]=]
 
 local Players = game:GetService("Players")
@@ -19,47 +20,45 @@ local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
+local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 
 --------------------------------------------------------------------------------
--- Remote Events Resolution
+-- Remote Events Resolution via GameNetwork
 --------------------------------------------------------------------------------
 
-local function findEvent(folderName: string, eventName: string): RemoteEvent?
-	local folder = ReplicatedStorage:FindFirstChild(folderName)
-	if folder then
-		local ev = folder:FindFirstChild(eventName)
-		if ev and ev:IsA("RemoteEvent") then
-			return ev
-		end
+local networkFolder = ReplicatedStorage:WaitForChild("GameNetwork", 10) :: Folder?
+if not networkFolder then
+	warn("[UIController] GameNetwork folder not found!")
+end
+
+local function getEvent(name: string): RemoteEvent?
+	if not networkFolder then return nil end
+	local ev = networkFolder:FindFirstChild(name)
+	if ev and ev:IsA("RemoteEvent") then
+		return ev
 	end
 	return nil
 end
 
--- Game Flow Events
-local StartRunEvent = findEvent("GameFlowEvents", "StartRun")
-local VoteMapNodeEvent = findEvent("GameFlowEvents", "VoteMapNode")
-local ClaimRewardCardEvent = findEvent("GameFlowEvents", "ClaimRewardCard")
-local ContinueFromRewardsEvent = findEvent("GameFlowEvents", "ContinueFromRewards")
-local CampfireChoiceEvent = findEvent("GameFlowEvents", "CampfireChoice")
-local FlowStateUpdateEvent = findEvent("GameFlowEvents", "FlowStateUpdate")
-local FlowAnnouncementEvent = findEvent("GameFlowEvents", "FlowAnnouncement")
+-- Client -> Server Actions
+local StartRunEvent = getEvent("StartRun")
+local VoteMapNodeEvent = getEvent("VoteMapNode")
+local PlayCardEvent = getEvent("PlayCard")
+local PlayerVoteReadyEvent = getEvent("PlayerVoteReady")
+local RescueTeammateEvent = getEvent("RescueTeammate")
+local ClaimRewardCardEvent = getEvent("ClaimRewardCard")
+local ContinueFromRewardsEvent = getEvent("ContinueFromRewards")
+local RequestStateSyncEvent = getEvent("RequestStateSync")
 
--- Co-op Session Events
-local PlayerVoteReadyEvent = findEvent("CoopEvents", "PlayerVoteReady")
-local RescueTeammateEvent = findEvent("CoopEvents", "RescueTeammate")
-local CoopStateUpdateEvent = findEvent("CoopEvents", "CoopStateUpdate")
-local CoopAnnouncementEvent = findEvent("CoopEvents", "CoopAnnouncement")
-
--- Combat Core Events
-local PlayCardEvent = findEvent("CombatEvents", "PlayCard")
-local EndTurnEvent = findEvent("CombatEvents", "EndTurn")
-local CombatActionEvent = findEvent("CombatEvents", "CombatAction")
-local SelectMapNodeEvent = findEvent("CombatEvents", "SelectMapNode")
+-- Server -> Client State
+local RunStateUpdateEvent = getEvent("RunStateUpdate")
+local CombatStateUpdateEvent = getEvent("CombatStateUpdate")
+local CombatEventLoggedEvent = getEvent("CombatEventLogged")
+local AnnouncementEvent = getEvent("Announcement")
 
 --------------------------------------------------------------------------------
--- Modular UI Component Factory (Easily Styled)
+-- Modular UI Component Factory
 --------------------------------------------------------------------------------
 
 local UIFactory = {}
@@ -124,7 +123,7 @@ function UIFactory.createProgressBar(parent: Instance, fillColor: Color3): (Fram
 	local function update(current: number, max: number)
 		local ratio = math.clamp(current / math.max(1, max), 0, 1)
 		TweenService:Create(fill, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Size = UDim2.new(ratio, 0, 1, 0)
+			Size = UDim2.new(ratio, 0, 1, 0),
 		}):Play()
 		label.Text = string.format("%d / %d HP", current, max)
 	end
@@ -278,25 +277,20 @@ mapScroll.CanvasSize = UDim2.new(0, 0, 0, 800)
 mapScroll.ZIndex = 16
 mapScroll.Parent = mapView
 
--- Builds the visual node tree during MapSelect
-local function buildDungeonMapTree(payload: any)
+local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 	for _, child in mapScroll:GetChildren() do
 		if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
 			child:Destroy()
 		end
 	end
 
-	local runData = payload.Run or {}
-	mapTitle.Text = string.format("🗺️ %s (Tier %d/10) - Select Next Room", runData.ActName or "Act 1", runData.CurrentTier or 0)
+	mapTitle.Text = string.format("🗺️ %s (Tier %d/10) - Select Next Room", snapshot.ActName or "Act 1", snapshot.CurrentTier or 0)
 
 	local availableSet: { [string]: boolean } = {}
-	if payload.AvailableNodes then
-		for _, node in payload.AvailableNodes do
-			availableSet[node.Id] = true
-		end
+	for _, id in snapshot.AvailableNodeIds do
+		availableSet[id] = true
 	end
 
-	-- Render 10 Tiers vertically: Tier 10 (Boss) at top, Tier 1 at bottom
 	local tierHeight = 74
 	for tierNum = 10, 1, -1 do
 		local yPos = (10 - tierNum) * tierHeight + 12
@@ -312,29 +306,28 @@ local function buildDungeonMapTree(payload: any)
 		tierLabel.ZIndex = 17
 		tierLabel.Parent = mapScroll
 
-		-- Populate nodes for this tier
-		local tierNodes: { any } = {}
-		if payload.AvailableNodes then
-			for _, n in payload.AvailableNodes do
-				if n.Tier == tierNum then
-					table.insert(tierNodes, n)
+		-- Render available or standard nodes for tier
+		for lane = 1, 3 do
+			local laneX = 100 + (lane - 1) * 160
+			local dummyNodeId = string.format("Act%d_T%d_L%d", snapshot.ActIndex, tierNum, lane)
+			local isReachable = availableSet[dummyNodeId] or false
+
+			-- Also check exact matches
+			for _, avId in snapshot.AvailableNodeIds do
+				if avId:find("T" .. tierNum) then
+					dummyNodeId = avId
+					isReachable = true
+					break
 				end
 			end
-		end
-
-		for _, node in tierNodes do
-			local meta = DungeonMap.getNodeMetadata(node.Type)
-			local laneX = 85 + (node.Lane - 1) * 105
-
-			local isAvailable = availableSet[node.Id] or false
 
 			local nodeBtn = Instance.new("TextButton")
-			nodeBtn.Name = "Node_" .. node.Id
+			nodeBtn.Name = "Node_" .. dummyNodeId
 			nodeBtn.Size = UDim2.new(0, 54, 0, 54)
 			nodeBtn.Position = UDim2.new(0, laneX, 0, yPos)
-			nodeBtn.BackgroundColor3 = meta.Color
+			nodeBtn.BackgroundColor3 = (tierNum == 10) and Color3.fromRGB(220, 50, 50) or (tierNum % 3 == 0 and Color3.fromRGB(220, 130, 40) or Color3.fromRGB(50, 120, 220))
 			nodeBtn.BorderSizePixel = 0
-			nodeBtn.Text = meta.Icon
+			nodeBtn.Text = (tierNum == 10) and "👹" or (tierNum % 3 == 0 and "⚠️" or "⚔️")
 			nodeBtn.TextSize = 24
 			nodeBtn.ZIndex = 18
 			nodeBtn.Parent = mapScroll
@@ -342,81 +335,108 @@ local function buildDungeonMapTree(payload: any)
 
 			local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(255, 240, 100), 3)
 
-			if isAvailable then
+			if isReachable then
 				nodeBtn.AutoButtonColor = true
-				-- Highlight pulsing glow
-				local pulse = TweenService:Create(stroke, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
-					Thickness = 4.5,
-					Color = Color3.fromRGB(255, 255, 180),
-				})
-				pulse:Play()
-
-				-- Click to vote or travel
+				local targetId = dummyNodeId
 				nodeBtn.MouseButton1Click:Connect(function()
 					if VoteMapNodeEvent then
-						VoteMapNodeEvent:FireServer(node.Id)
-					elseif SelectMapNodeEvent then
-						SelectMapNodeEvent:FireServer(node.Id)
+						VoteMapNodeEvent:FireServer(targetId)
 					end
 				end)
 			else
-				nodeBtn.AutoButtonColor = false
-				stroke.Color = Color3.fromRGB(60, 65, 75)
-				stroke.Thickness = 1.5
+				stroke.Color = Color3.fromRGB(60, 65, 80)
+				stroke.Thickness = 1
+				nodeBtn.BackgroundTransparency = 0.5
 			end
 		end
 	end
 end
 
 --------------------------------------------------------------------------------
--- VIEW 3: Combat HUD View (ActiveRoom)
+-- VIEW 3: Active Combat HUD (Multi-Enemy & Card Hand)
 --------------------------------------------------------------------------------
 
 local combatHudView = Instance.new("Frame")
-combatHudView.Name = "CombatHUDView"
+combatHudView.Name = "CombatHudView"
 combatHudView.Size = UDim2.new(1, 0, 1, 0)
 combatHudView.BackgroundTransparency = 1
 combatHudView.Visible = false
 combatHudView.Parent = mainFrame
 
--- Boss HUD (Top Center)
-local combatBossHud = Instance.new("Frame")
-combatBossHud.Size = UDim2.new(0, 440, 0, 88)
-combatBossHud.Position = UDim2.new(0.5, -220, 0, 16)
-combatBossHud.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-combatBossHud.BackgroundTransparency = 0.15
-combatBossHud.BorderSizePixel = 0
-combatBossHud.Parent = combatHudView
-UIFactory.createCorner(combatBossHud, 12)
-UIFactory.createStroke(combatBossHud, Color3.fromRGB(180, 40, 40), 2)
+-- Multi-Enemy Container (Top Center)
+local enemiesContainer = Instance.new("Frame")
+enemiesContainer.Name = "EnemiesContainer"
+enemiesContainer.Size = UDim2.new(0, 800, 0, 100)
+enemiesContainer.Position = UDim2.new(0.5, -400, 0, 55)
+enemiesContainer.BackgroundTransparency = 1
+enemiesContainer.Parent = combatHudView
 
-local bossNameLabel = Instance.new("TextLabel")
-bossNameLabel.Size = UDim2.new(1, 0, 0, 26)
-bossNameLabel.Position = UDim2.new(0, 0, 0, 4)
-bossNameLabel.BackgroundTransparency = 1
-bossNameLabel.Text = "👹 THE SPIRE GUARDIAN"
-bossNameLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
-bossNameLabel.Font = Enum.Font.GothamBold
-bossNameLabel.TextSize = 16
-bossNameLabel.Parent = combatBossHud
+local enemiesLayout = Instance.new("UIListLayout")
+enemiesLayout.FillDirection = Enum.FillDirection.Horizontal
+enemiesLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+enemiesLayout.Padding = UDim.new(0, 20)
+enemiesLayout.Parent = enemiesContainer
 
-local bossHpContainer = Instance.new("Frame")
-bossHpContainer.Size = UDim2.new(0.9, 0, 0, 20)
-bossHpContainer.Position = UDim2.new(0.05, 0, 0, 32)
-bossHpContainer.BackgroundTransparency = 1
-bossHpContainer.Parent = combatBossHud
+local selectedEnemyId: string? = nil
 
-local _, _, updateBossHpBar = UIFactory.createProgressBar(bossHpContainer, Color3.fromRGB(220, 45, 45))
+local function renderEnemyCard(enemy: StateTypes.EnemyView): Frame
+	local card = Instance.new("Frame")
+	card.Name = "Enemy_" .. enemy.InstanceId
+	card.Size = UDim2.new(0, 320, 0, 90)
+	card.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
+	card.BackgroundTransparency = 0.15
+	card.BorderSizePixel = 0
+	UIFactory.createCorner(card, 10)
 
-local bossIntentLabel = Instance.new("TextLabel")
-bossIntentLabel.Size = UDim2.new(1, 0, 0, 22)
-bossIntentLabel.Position = UDim2.new(0, 0, 0, 56)
-bossIntentLabel.BackgroundTransparency = 1
-bossIntentLabel.Text = "🛡️ Shield: 0   🧪 Poison: 0   |   ⚔️ Intent: Attack (12)"
-bossIntentLabel.TextColor3 = Color3.fromRGB(245, 225, 160)
-bossIntentLabel.Font = Enum.Font.GothamMedium
-bossIntentLabel.TextSize = 13
-bossIntentLabel.Parent = combatBossHud
+	local isSelected = (selectedEnemyId == enemy.InstanceId)
+	local strokeColor = isSelected and Color3.fromRGB(255, 220, 60) or Color3.fromRGB(200, 50, 50)
+	local strokeThickness = isSelected and 3 or 2
+	local stroke = UIFactory.createStroke(card, strokeColor, strokeThickness)
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1, -20, 0, 24)
+	nameLabel.Position = UDim2.new(0, 10, 0, 6)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = "👹 " .. enemy.Name
+	nameLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 14
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.Parent = card
+
+	local hpContainer = Instance.new("Frame")
+	hpContainer.Size = UDim2.new(1, -20, 0, 18)
+	hpContainer.Position = UDim2.new(0, 10, 0, 32)
+	hpContainer.BackgroundTransparency = 1
+	hpContainer.Parent = card
+
+	local _, _, updateHp = UIFactory.createProgressBar(hpContainer, Color3.fromRGB(220, 45, 45))
+	updateHp(enemy.HP, enemy.MaxHP)
+
+	local statusLabel = Instance.new("TextLabel")
+	statusLabel.Size = UDim2.new(1, -20, 0, 24)
+	statusLabel.Position = UDim2.new(0, 10, 0, 54)
+	statusLabel.BackgroundTransparency = 1
+	statusLabel.Text = string.format("🛡️ %d   🧪 %d   |   %s %s", enemy.Shield, enemy.Poison, enemy.IntentIcon, enemy.IntentText)
+	statusLabel.TextColor3 = Color3.fromRGB(245, 225, 160)
+	statusLabel.Font = Enum.Font.GothamMedium
+	statusLabel.TextSize = 12
+	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	statusLabel.Parent = card
+
+	local clickBtn = Instance.new("TextButton")
+	clickBtn.Size = UDim2.new(1, 0, 1, 0)
+	clickBtn.BackgroundTransparency = 1
+	clickBtn.Text = ""
+	clickBtn.Parent = card
+	clickBtn.MouseButton1Click:Connect(function()
+		selectedEnemyId = enemy.InstanceId
+		stroke.Color = Color3.fromRGB(255, 220, 60)
+		stroke.Thickness = 3
+	end)
+
+	return card
+end
 
 -- Player HUD (Bottom Left)
 local playerHudFrame = Instance.new("Frame")
@@ -481,7 +501,7 @@ deckStatsLabel.TextSize = 12
 deckStatsLabel.TextXAlignment = Enum.TextXAlignment.Left
 deckStatsLabel.Parent = playerHudFrame
 
--- Co-op Ready Button & 45s Timer Controls (Bottom Right)
+-- Co-op Ready Button & Monotonic Timer (Bottom Right)
 local controlContainer = Instance.new("Frame")
 controlContainer.Size = UDim2.new(0, 200, 0, 100)
 controlContainer.Position = UDim2.new(1, -224, 1, -120)
@@ -511,27 +531,16 @@ readyBtn.Parent = controlContainer
 UIFactory.createCorner(readyBtn, 12)
 UIFactory.createStroke(readyBtn, Color3.fromRGB(255, 190, 60), 2)
 
-local isLocallyReady = false
 readyBtn.MouseButton1Click:Connect(function()
 	if PlayerVoteReadyEvent then
 		PlayerVoteReadyEvent:FireServer()
-		isLocallyReady = not isLocallyReady
-		if isLocallyReady then
-			readyBtn.Text = "✓ READY"
-			readyBtn.BackgroundColor3 = Color3.fromRGB(45, 180, 80)
-		else
-			readyBtn.Text = "VOTE READY ➔"
-			readyBtn.BackgroundColor3 = Color3.fromRGB(210, 140, 30)
-		end
-	elseif EndTurnEvent then
-		EndTurnEvent:FireServer()
 	end
 end)
 
 -- Active Card Hand Container (Bottom Center)
 local handContainer = Instance.new("Frame")
-handContainer.Size = UDim2.new(0, 680, 0, 190)
-handContainer.Position = UDim2.new(0.5, -340, 1, -205)
+handContainer.Size = UDim2.new(0, 720, 0, 190)
+handContainer.Position = UDim2.new(0.5, -360, 1, -205)
 handContainer.BackgroundTransparency = 1
 handContainer.Parent = combatHudView
 
@@ -539,14 +548,14 @@ local handLayout = Instance.new("UIListLayout")
 handLayout.FillDirection = Enum.FillDirection.Horizontal
 handLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 handLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-handLayout.Padding = UDim.new(0, 14)
+handLayout.Padding = UDim.new(0, 12)
 handLayout.Parent = handContainer
 
--- Card Widget Creator
-local function renderCardWidget(card: CardData.Card, handIndex: number): Frame
+-- Card Widget Creator (Uses CardView with CardInstanceId)
+local function renderCardWidget(card: StateTypes.CardView): Frame
 	local cardFrame = Instance.new("Frame")
-	cardFrame.Name = "Card_" .. handIndex
-	cardFrame.Size = UDim2.new(0, 145, 0, 180)
+	cardFrame.Name = "Card_" .. card.InstanceId
+	cardFrame.Size = UDim2.new(0, 135, 0, 175)
 	cardFrame.BackgroundColor3 = Color3.fromRGB(26, 28, 34)
 	cardFrame.BorderSizePixel = 0
 	UIFactory.createCorner(cardFrame, 10)
@@ -555,30 +564,30 @@ local function renderCardWidget(card: CardData.Card, handIndex: number): Frame
 	UIFactory.createStroke(cardFrame, cardColor, 2.5)
 
 	local header = Instance.new("Frame")
-	header.Size = UDim2.new(1, 0, 0, 32)
+	header.Size = UDim2.new(1, 0, 0, 30)
 	header.BackgroundColor3 = cardColor
 	header.BorderSizePixel = 0
 	header.Parent = cardFrame
 	UIFactory.createCorner(header, 10)
 
 	local nameLabel = Instance.new("TextLabel")
-	nameLabel.Size = UDim2.new(1, -34, 1, 0)
-	nameLabel.Position = UDim2.new(0, 30, 0, 0)
+	nameLabel.Size = UDim2.new(1, -30, 1, 0)
+	nameLabel.Position = UDim2.new(0, 26, 0, 0)
 	nameLabel.BackgroundTransparency = 1
 	nameLabel.Text = card.Name
 	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	nameLabel.Font = Enum.Font.GothamBold
-	nameLabel.TextSize = 13
+	nameLabel.TextSize = 12
 	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 	nameLabel.Parent = header
 
 	local costBadge = Instance.new("Frame")
-	costBadge.Size = UDim2.new(0, 28, 0, 28)
-	costBadge.Position = UDim2.new(0, -6, 0, -6)
+	costBadge.Size = UDim2.new(0, 26, 0, 26)
+	costBadge.Position = UDim2.new(0, -5, 0, -5)
 	costBadge.BackgroundColor3 = Color3.fromRGB(20, 90, 190)
 	costBadge.BorderSizePixel = 0
 	costBadge.Parent = cardFrame
-	UIFactory.createCorner(costBadge, 14)
+	UIFactory.createCorner(costBadge, 13)
 	UIFactory.createStroke(costBadge, Color3.fromRGB(255, 220, 50), 2)
 
 	local costText = Instance.new("TextLabel")
@@ -587,45 +596,46 @@ local function renderCardWidget(card: CardData.Card, handIndex: number): Frame
 	costText.Text = tostring(card.Cost)
 	costText.TextColor3 = Color3.fromRGB(255, 255, 255)
 	costText.Font = Enum.Font.GothamBold
-	costText.TextSize = 15
+	costText.TextSize = 14
 	costText.Parent = costBadge
 
 	local iconLabel = Instance.new("TextLabel")
-	iconLabel.Size = UDim2.new(1, 0, 0, 50)
-	iconLabel.Position = UDim2.new(0, 0, 0, 42)
+	iconLabel.Size = UDim2.new(1, 0, 0, 45)
+	iconLabel.Position = UDim2.new(0, 0, 0, 38)
 	iconLabel.BackgroundTransparency = 1
 	iconLabel.Text = card.Icon or "⚡"
-	iconLabel.TextSize = 36
+	iconLabel.TextSize = 32
 	iconLabel.Parent = cardFrame
 
 	local descLabel = Instance.new("TextLabel")
-	descLabel.Size = UDim2.new(1, -16, 0, 70)
-	descLabel.Position = UDim2.new(0, 8, 0, 96)
+	descLabel.Size = UDim2.new(1, -14, 0, 65)
+	descLabel.Position = UDim2.new(0, 7, 0, 88)
 	descLabel.BackgroundColor3 = Color3.fromRGB(18, 20, 24)
 	descLabel.BorderSizePixel = 0
 	descLabel.Text = card.Description or ""
 	descLabel.TextColor3 = Color3.fromRGB(230, 235, 245)
 	descLabel.Font = Enum.Font.GothamMedium
-	descLabel.TextSize = 11
+	descLabel.TextSize = 10
 	descLabel.TextWrapped = true
 	descLabel.Parent = cardFrame
 	UIFactory.createCorner(descLabel, 6)
 
 	local clickBtn = Instance.new("TextButton")
+	clickBtn.Name = "ClickButton"
 	clickBtn.Size = UDim2.new(1, 0, 1, 0)
 	clickBtn.BackgroundTransparency = 1
 	clickBtn.Text = ""
 	clickBtn.Parent = cardFrame
 
 	clickBtn.MouseEnter:Connect(function()
-		TweenService:Create(cardFrame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Position = UDim2.new(0, 0, 0, -22),
+		TweenService:Create(cardFrame, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = UDim2.new(0, 0, 0, -20),
 			BackgroundColor3 = Color3.fromRGB(38, 42, 52),
 		}):Play()
 	end)
 
 	clickBtn.MouseLeave:Connect(function()
-		TweenService:Create(cardFrame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		TweenService:Create(cardFrame, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			Position = UDim2.new(0, 0, 0, 0),
 			BackgroundColor3 = Color3.fromRGB(26, 28, 34),
 		}):Play()
@@ -633,7 +643,7 @@ local function renderCardWidget(card: CardData.Card, handIndex: number): Frame
 
 	clickBtn.MouseButton1Click:Connect(function()
 		if PlayCardEvent then
-			PlayCardEvent:FireServer(handIndex)
+			PlayCardEvent:FireServer(card.InstanceId, selectedEnemyId)
 		end
 	end)
 
@@ -673,7 +683,7 @@ rewardsGoldText.Name = "RewardsGold"
 rewardsGoldText.Size = UDim2.new(1, 0, 0, 26)
 rewardsGoldText.Position = UDim2.new(0, 0, 0, 52)
 rewardsGoldText.BackgroundTransparency = 1
-rewardsGoldText.Text = "💰 Gold Earned: +20 Gold"
+rewardsGoldText.Text = "💰 Gold Earned: +25 Gold"
 rewardsGoldText.TextColor3 = Color3.fromRGB(255, 230, 120)
 rewardsGoldText.Font = Enum.Font.GothamMedium
 rewardsGoldText.TextSize = 14
@@ -707,34 +717,39 @@ UIFactory.createButton(continueBtnContainer, "CONTINUE ➔", Color3.fromRGB(45, 
 	end
 end)
 
-local function buildCardDraftView(offeredCards: { CardData.Card })
+local function buildCardDraftView(offeredCards: { StateTypes.CardView }, hasClaimed: boolean)
 	for _, child in draftCardsContainer:GetChildren() do
 		if child:IsA("Frame") then
 			child:Destroy()
 		end
 	end
 
-	for index, card in offeredCards do
-		local cardFrame = renderCardWidget(card, index)
+	for _, cardView in offeredCards do
+		local cardFrame = renderCardWidget(cardView)
 		cardFrame.ZIndex = 22
 
 		local clickBtn = cardFrame:FindFirstChild("ClickButton") :: TextButton?
 		if clickBtn then
-			clickBtn.MouseButton1Click:Connect(function()
-				if ClaimRewardCardEvent then
-					ClaimRewardCardEvent:FireServer(card.Id)
-				end
-			end)
+			if hasClaimed then
+				clickBtn.Active = false
+				cardFrame.BackgroundTransparency = 0.5
+			else
+				clickBtn.MouseButton1Click:Connect(function()
+					if ClaimRewardCardEvent then
+						ClaimRewardCardEvent:FireServer(cardView.DefinitionId)
+					end
+				end)
+			end
 		end
 		cardFrame.Parent = draftCardsContainer
 	end
 end
 
 --------------------------------------------------------------------------------
--- View Switcher: Central State Switcher
+-- Central View Switcher
 --------------------------------------------------------------------------------
 
-local function switchView(phase: string)
+local function switchView(phase: StateTypes.RunPhase)
 	lobbyView.Visible = (phase == "Lobby")
 	mapView.Visible = (phase == "MapSelect")
 	combatHudView.Visible = (phase == "ActiveRoom")
@@ -745,65 +760,76 @@ end
 -- Remote Event Listeners
 --------------------------------------------------------------------------------
 
--- 1. Game Flow Updates from GameCoordinator
-if FlowStateUpdateEvent then
-	FlowStateUpdateEvent.OnClientEvent:Connect(function(payload: any)
-		if not payload then return end
+-- 1. Synchronized Run State Update
+if RunStateUpdateEvent then
+	RunStateUpdateEvent.OnClientEvent:Connect(function(snapshot: StateTypes.RunSnapshot)
+		if not snapshot then return end
 
-		local phase = payload.Phase or "Lobby"
-		switchView(phase)
+		switchView(snapshot.Phase)
 
-		if phase == "Lobby" then
-			bannerLabel.Text = "Lobby: Gather your party and hit Start Run."
-		elseif phase == "MapSelect" then
-			bannerLabel.Text = "Map Selection: Vote or click an available room."
-			buildDungeonMapTree(payload)
-		elseif phase == "ActiveRoom" then
-			local active = payload.ActiveRoom
-			if active then
-				bossNameLabel.Text = "👹 " .. (active.EnemyName or "ENEMY")
-				if active.EnemyHP and active.EnemyMaxHP then
-					updateBossHpBar(active.EnemyHP, active.EnemyMaxHP)
-				end
-				bossIntentLabel.Text = string.format("⚔️ Intent: Attack (%d)", active.EnemyAttack or 10)
-				bannerLabel.Text = string.format("Entered Room: %s (Tier %d)", active.Type, active.Tier)
+		if snapshot.Phase == "Lobby" then
+			bannerLabel.Text = "Lobby: Gather heroes and start run."
+		elseif snapshot.Phase == "MapSelect" then
+			bannerLabel.Text = "Map Selection: Select reachable room to proceed."
+			buildDungeonMapTree(snapshot)
+		elseif snapshot.Phase == "ActiveRoom" then
+			bannerLabel.Text = string.format("Act %d: Tier %d Room", snapshot.ActIndex, snapshot.CurrentTier)
+		elseif snapshot.Phase == "Rewards" then
+			bannerLabel.Text = "Room Cleared! Draft 1 card reward."
+			if snapshot.Rewards then
+				rewardsGoldText.Text = string.format("💰 Gold: +%d  |  💎 Aether Shards: +%d", snapshot.Rewards.GoldAmount, snapshot.Rewards.AetherShardsAmount)
+				buildCardDraftView(snapshot.Rewards.OfferedCards, snapshot.Rewards.HasClaimed)
 			end
-		elseif phase == "Rewards" then
-			bannerLabel.Text = "Victory! Choose a card draft reward or continue."
-			if payload.PendingRewards then
-				rewardsGoldText.Text = string.format("💰 Gold Earned: +%d Gold", payload.PendingRewards.GoldAmount or 20)
-			end
-
-			local localData = payload.Players and payload.Players[tostring(localPlayer.UserId)]
-			if localData and localData.OfferedCards then
-				buildCardDraftView(localData.OfferedCards)
-			end
+		elseif snapshot.Phase == "RunVictory" then
+			bannerLabel.Text = "🏆 VICTORY! The Spire has fallen!"
+			bannerLabel.TextColor3 = Color3.fromRGB(80, 255, 120)
+		elseif snapshot.Phase == "RunDefeat" then
+			bannerLabel.Text = "💀 DEFEAT! All party members have fallen."
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
 		end
 
-		if payload.Message and payload.Message ~= "" then
-			bannerLabel.Text = payload.Message
+		if snapshot.Message and snapshot.Message ~= "" then
+			bannerLabel.Text = snapshot.Message
 		end
 	end)
 end
 
--- 2. Co-op Session Updates from SessionManager
-if CoopStateUpdateEvent then
-	CoopStateUpdateEvent.OnClientEvent:Connect(function(payload: any)
-		if not payload then return end
+-- 2. Authoritative Combat Snapshot Update
+if CombatStateUpdateEvent then
+	CombatStateUpdateEvent.OnClientEvent:Connect(function(snapshot: StateTypes.CombatSnapshot)
+		if not snapshot then return end
 
-		if payload.TurnTimer then
-			timerBadge.Text = string.format("⏰ Turn Timer: %ds", payload.TurnTimer)
-			if payload.TurnTimer <= 5 then
-				timerBadge.TextColor3 = Color3.fromRGB(255, 60, 60)
-			else
-				timerBadge.TextColor3 = Color3.fromRGB(255, 200, 80)
+		-- Render Multi-Enemies
+		for _, child in enemiesContainer:GetChildren() do
+			if child:IsA("Frame") then
+				child:Destroy()
 			end
 		end
 
-		local localState = payload.Players and payload.Players[tostring(localPlayer.UserId)]
-		if localState then
-			isLocallyReady = localState.IsReady
-			if isLocallyReady then
+		local defaultFirstEnemy: string? = nil
+		for instId, enemyView in snapshot.Enemies do
+			if not defaultFirstEnemy then defaultFirstEnemy = instId end
+			local enemyWidget = renderEnemyCard(enemyView)
+			enemyWidget.Parent = enemiesContainer
+		end
+
+		if not selectedEnemyId or not snapshot.Enemies[selectedEnemyId] then
+			selectedEnemyId = defaultFirstEnemy
+		end
+
+		-- Monotonic Timer Update
+		timerBadge.Text = string.format("⏰ Turn Timer: %ds", snapshot.TimeRemaining)
+		if snapshot.TimeRemaining <= 10 then
+			timerBadge.TextColor3 = Color3.fromRGB(255, 60, 60)
+		else
+			timerBadge.TextColor3 = Color3.fromRGB(255, 200, 80)
+		end
+
+		-- Local Player Stats
+		local localUserId = tostring(localPlayer.UserId)
+		local myView = snapshot.Party[localUserId]
+		if myView then
+			if myView.IsReady then
 				readyBtn.Text = "✓ READY"
 				readyBtn.BackgroundColor3 = Color3.fromRGB(45, 180, 80)
 			else
@@ -811,61 +837,56 @@ if CoopStateUpdateEvent then
 				readyBtn.BackgroundColor3 = Color3.fromRGB(210, 140, 30)
 			end
 
-			updatePlayerHpBar(localState.HP, localState.MaxHP)
-			playerShieldLabel.Text = string.format("🛡️ Shield: %d", localState.Shield)
-			playerEnergyLabel.Text = string.format("⚡ %d / %d Energy", localState.Energy, localState.MaxEnergy)
-			deckStatsLabel.Text = string.format("🃏 Deck: %d   |   🗑️ Discard: %d", localState.DeckCount, localState.DiscardCount)
+			updatePlayerHpBar(myView.HP, myView.MaxHP)
+			playerShieldLabel.Text = string.format("🛡️ Shield: %d", myView.Shield)
+			playerEnergyLabel.Text = string.format("⚡ %d / %d Energy", myView.Energy, myView.MaxEnergy)
+			deckStatsLabel.Text = string.format("🃏 Deck: %d   |   🗑️ Discard: %d", myView.DeckCount, myView.DiscardCount)
+		end
 
-			-- Re-render card hand
-			for _, child in handContainer:GetChildren() do
-				if child:IsA("Frame") then
-					child:Destroy()
-				end
-			end
-
-			if localState.Hand then
-				for index, card in localState.Hand do
-					local cardWidget = renderCardWidget(card, index)
-					cardWidget.Parent = handContainer
-				end
+		-- Render Local Hand
+		for _, child in handContainer:GetChildren() do
+			if child:IsA("Frame") then
+				child:Destroy()
 			end
 		end
 
-		local enemy = payload.Enemy
-		if enemy then
-			bossNameLabel.Text = "👹 " .. (enemy.Name or "BOSS")
-			updateBossHpBar(enemy.HP, enemy.MaxHP)
-			bossIntentLabel.Text = string.format("🛡️ Shield: %d   🧪 Poison: %d   |   ⚔️ Intent: %s (%d)", enemy.Shield, enemy.Poison, enemy.Intent or "Attack", enemy.AttackPower)
+		for _, cardView in snapshot.LocalHand do
+			local cardWidget = renderCardWidget(cardView)
+			cardWidget.Parent = handContainer
+		end
+
+		if snapshot.Message and snapshot.Message ~= "" then
+			bannerLabel.Text = snapshot.Message
 		end
 	end)
 end
 
--- 3. Flow Announcements
-if FlowAnnouncementEvent then
-	FlowAnnouncementEvent.OnClientEvent:Connect(function(announcement: any)
-		if not announcement then return end
-		bannerLabel.Text = string.format("%s: %s", announcement.Title or "", announcement.Message or "")
-		bannerLabel.TextColor3 = announcement.Color or Color3.fromRGB(255, 220, 80)
+-- 3. Announcements
+if AnnouncementEvent then
+	AnnouncementEvent.OnClientEvent:Connect(function(data: any)
+		if not data then return end
+		bannerLabel.Text = string.format("%s: %s", data.Title or "", data.Message or "")
+		bannerLabel.TextColor3 = data.Color or Color3.fromRGB(255, 220, 80)
 	end)
 end
 
 -- 4. Floating Action Numbers
-if CombatActionEvent then
-	CombatActionEvent.OnClientEvent:Connect(function(action: any)
-		if not action then return end
+if CombatEventLoggedEvent then
+	CombatEventLoggedEvent.OnClientEvent:Connect(function(event: StateTypes.CombatEvent)
+		if not event then return end
 
 		local popup = Instance.new("TextLabel")
-		popup.Size = UDim2.new(0, 160, 0, 32)
+		popup.Size = UDim2.new(0, 180, 0, 32)
 		popup.BackgroundTransparency = 1
 		popup.Font = Enum.Font.GothamBold
-		popup.TextSize = 22
-		popup.Text = action.Text or ""
-		popup.TextColor3 = (action.Type == "Damage") and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(80, 220, 120)
-		popup.Position = (action.Target == "Boss") and UDim2.new(0.5, -80, 0, 160) or UDim2.new(0, 60, 1, -190)
+		popup.TextSize = 20
+		popup.Text = event.ExtraText or (event.Value and tostring(event.Value) or event.Type)
+		popup.TextColor3 = (event.Type:find("Damage") or event.Type:find("Defeated")) and Color3.fromRGB(255, 70, 70) or Color3.fromRGB(80, 220, 120)
+		popup.Position = UDim2.new(0.5, -90, 0.4, 0)
 		popup.Parent = mainFrame
 
 		local tween = TweenService:Create(popup, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Position = popup.Position + UDim2.new(0, 0, 0, -45),
+			Position = popup.Position + UDim2.new(0, 0, 0, -40),
 			TextTransparency = 1,
 		})
 		tween:Play()
@@ -875,5 +896,12 @@ if CombatActionEvent then
 	end)
 end
 
+-- Request initial state sync on mount
+task.delay(0.5, function()
+	if RequestStateSyncEvent then
+		RequestStateSyncEvent:FireServer()
+	end
+end)
+
 screenGui.Parent = playerGui
-print("[UIController] Card Rift UIController mounted successfully.")
+print("[UIController] Card Rift UIController mounted with GameNetwork architecture.")
