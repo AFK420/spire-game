@@ -2153,6 +2153,132 @@ function TestRunner.runAllTests(): boolean
 	local okFinalInv, _ = CardService.validatePileInvariants(chainPlayer)
 	assertTest(okFinalInv == true, "[CrossSystem] Pile invariants preserved after CreateCard + Draw")
 
+	----------------------------------------------------------------------------
+	-- TEST 37: Static Card Effect Target Compatibility
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 37] Static Card Effect Target Compatibility ---")
+
+	-- 1. All registered cards in CardData pass static validation
+	local okDefs, errDefs = CardData.validateCardDefinitions()
+	assertTest(okDefs == true and errDefs == nil, string.format("[CardValidator] All registered cards pass static validation (err: %s)", tostring(errDefs)))
+
+	-- 2. Mixed-target cards pass individual validation
+	local shieldSlamCard = CardData.getCard("ShieldSlam")
+	assert(shieldSlamCard ~= nil)
+	local okSS, _ = CardData.validateCard(shieldSlamCard)
+	assertTest(okSS == true, "[CardValidator] ShieldSlam passes static validation (Shield -> Self, Damage -> Enemy)")
+
+	local soulHarvestCard = CardData.getCard("SoulHarvest")
+	assert(soulHarvestCard ~= nil)
+	local okSH, _ = CardData.validateCard(soulHarvestCard)
+	assertTest(okSH == true, "[CardValidator] SoulHarvest passes static validation (Damage -> Enemy, Heal -> Self)")
+
+	local deployTurretCard = CardData.getCard("DeployTurret")
+	assert(deployTurretCard ~= nil)
+	local okDT, _ = CardData.validateCard(deployTurretCard)
+	assertTest(okDT == true, "[CardValidator] DeployTurret passes static validation (Target: Enemy, Shield -> Self, Damage -> Enemy)")
+
+	local packCallCard = CardData.getCard("PackCall")
+	assert(packCallCard ~= nil)
+	local okPC, _ = CardData.validateCard(packCallCard)
+	assertTest(okPC == true, "[CardValidator] PackCall passes static validation (Target: Enemy, Shield -> Self, Damage -> Enemy)")
+
+	-- 3. Damage effect cannot silently inherit Self or Ally
+	local badDmgInherit: CardData.Card = {
+		Id = "BadDmgInherit",
+		Name = "Bad Dmg Inherit",
+		Cost = 1,
+		Target = "Self",
+		Effects = {
+			{ Type = "Damage", Value = 5 },
+		},
+		Description = "Invalid card",
+		Color = Color3.fromRGB(0, 0, 0),
+		Icon = "❌",
+	}
+	local okBDI, errBDI = CardData.validateCard(badDmgInherit)
+	assertTest(okBDI == false and string.find(errBDI or "", "cannot silently inherit") ~= nil, "[CardValidator] Damage effect inheriting Self rejected")
+
+	-- 4. Shield / Heal / Revive cannot silently inherit Enemy
+	local badShieldInherit: CardData.Card = {
+		Id = "BadShieldInherit",
+		Name = "Bad Shield Inherit",
+		Cost = 1,
+		Target = "Enemy",
+		Effects = {
+			{ Type = "Shield", Value = 5 },
+		},
+		Description = "Invalid card",
+		Color = Color3.fromRGB(0, 0, 0),
+		Icon = "❌",
+	}
+	local okBSI, errBSI = CardData.validateCard(badShieldInherit)
+	assertTest(okBSI == false and string.find(errBSI or "", "cannot silently inherit") ~= nil, "[CardValidator] Shield effect inheriting Enemy rejected")
+
+	-- 5. Explicit illegal targets rejected (Damage targeting Self, Shield targeting Enemy)
+	local badDmgTarget: CardData.Card = {
+		Id = "BadDmgTarget",
+		Name = "Bad Dmg Target",
+		Cost = 1,
+		Target = "Enemy",
+		Effects = {
+			{ Type = "Damage", Value = 5, Target = "Self" },
+		},
+		Description = "Invalid card",
+		Color = Color3.fromRGB(0, 0, 0),
+		Icon = "❌",
+	}
+	local okBDT, errBDT = CardData.validateCard(badDmgTarget)
+	assertTest(okBDT == false and string.find(errBDT or "", "illegal target") ~= nil, "[CardValidator] Damage explicitly targeting Self rejected")
+
+	local badShieldTarget: CardData.Card = {
+		Id = "BadShieldTarget",
+		Name = "Bad Shield Target",
+		Cost = 1,
+		Target = "Enemy",
+		Effects = {
+			{ Type = "Shield", Value = 5, Target = "Enemy" },
+		},
+		Description = "Invalid card",
+		Color = Color3.fromRGB(0, 0, 0),
+		Icon = "❌",
+	}
+	local okBST, errBST = CardData.validateCard(badShieldTarget)
+	assertTest(okBST == false and string.find(errBST or "", "illegal target") ~= nil, "[CardValidator] Shield explicitly targeting Enemy rejected")
+
+	-- 6. Mixed-target card without explicit Target on effect rejected
+	local badMixedCard: CardData.Card = {
+		Id = "BadMixedCard",
+		Name = "Bad Mixed Card",
+		Cost = 1,
+		Target = "Enemy",
+		Effects = {
+			{ Type = "Damage", Value = 6, Target = "Enemy" },
+			{ Type = "Shield", Value = 6 },
+		},
+		Description = "Invalid mixed card",
+		Color = Color3.fromRGB(0, 0, 0),
+		Icon = "❌",
+	}
+	local okBMC, errBMC = CardData.validateCard(badMixedCard)
+	assertTest(okBMC == false and string.find(errBMC or "", "must explicitly declare its Target") ~= nil, "[CardValidator] Mixed-target card omitting effect Target rejected")
+
+	-- 7. ModifyResource requires legal Player target
+	local badResCard: CardData.Card = {
+		Id = "BadResCard",
+		Name = "Bad Res Card",
+		Cost = 1,
+		Target = "Enemy",
+		Effects = {
+			{ Type = "ModifyResource", Resource = "Energy", Value = 1, Target = "Enemy" },
+		},
+		Description = "Invalid resource card",
+		Color = Color3.fromRGB(0, 0, 0),
+		Icon = "❌",
+	}
+	local okBRC, errBRC = CardData.validateCard(badResCard)
+	assertTest(okBRC == false and string.find(errBRC or "", "ModifyResource") ~= nil, "[CardValidator] ModifyResource targeting Enemy rejected")
+
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 2, 2.1 & 2.2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")

@@ -481,4 +481,109 @@ function CardData.getCard(identifier: string): Card?
 	return nil
 end
 
+local VALID_TARGET_TYPES: { [string]: boolean } = {
+	Enemy = true,
+	Self = true,
+	Ally = true,
+	None = true,
+}
+
+-- Validates an individual Card definition against strict effect-target compatibility rules
+function CardData.validateCard(card: Card): (boolean, string?)
+	if not card or typeof(card) ~= "table" then
+		return false, "Card is nil or not a table"
+	end
+	if not card.Id or card.Id == "" then
+		return false, "Card has missing or empty Id"
+	end
+	if not VALID_TARGET_TYPES[card.Target] then
+		return false, string.format("Card '%s' has invalid top-level Target '%s'", card.Id, tostring(card.Target))
+	end
+	if not card.Effects or #card.Effects == 0 then
+		return false, string.format("Card '%s' has no effects", card.Id)
+	end
+
+	-- Check if card is mixed-target (contains both Enemy-targeting and Player-targeting effects)
+	local hasEnemyEffect = false
+	local hasPlayerEffect = false
+	for _, eff in card.Effects do
+		if eff.Type == "Damage" or eff.Type == "Poison" then
+			hasEnemyEffect = true
+		elseif eff.Type == "Shield" or eff.Type == "Heal" or eff.Type == "Revive" or eff.Type == "ModifyResource" then
+			hasPlayerEffect = true
+		end
+	end
+	local isMixedTarget = hasEnemyEffect and hasPlayerEffect
+
+	for idx, eff in ipairs(card.Effects) do
+		-- Rule 2: Explicitly targeted effect must use valid TargetType
+		if eff.Target ~= nil and not VALID_TARGET_TYPES[eff.Target] then
+			return false, string.format("Card '%s' effect #%d has invalid Target '%s'", card.Id, idx, tostring(eff.Target))
+		end
+
+		-- Rule 3: Mixed-target cards must explicitly declare Target on effects
+		if isMixedTarget and eff.Target == nil then
+			return false, string.format("Mixed-target card '%s' effect #%d (%s) must explicitly declare its Target", card.Id, idx, eff.Type)
+		end
+
+		local effectiveTarget = eff.Target or card.Target
+
+		-- Rule 1, 4, 7: Damage and Poison effects require Enemy target and cannot inherit/target Self or Ally
+		if eff.Type == "Damage" or eff.Type == "Poison" then
+			if effectiveTarget ~= "Enemy" then
+				if eff.Target == nil then
+					return false, string.format("Card '%s' effect #%d (%s) cannot silently inherit '%s' target from card", card.Id, idx, eff.Type, effectiveTarget)
+				else
+					return false, string.format("Card '%s' effect #%d (%s) has illegal target '%s' (must be Enemy)", card.Id, idx, eff.Type, effectiveTarget)
+				end
+			end
+		end
+
+		-- Rule 1, 5, 7: Shield, Heal, Revive require Player target (Self or Ally) and cannot inherit/target Enemy
+		if eff.Type == "Shield" or eff.Type == "Heal" or eff.Type == "Revive" then
+			if effectiveTarget == "Enemy" then
+				if eff.Target == nil then
+					return false, string.format("Card '%s' effect #%d (%s) cannot silently inherit 'Enemy' target from card", card.Id, idx, eff.Type)
+				else
+					return false, string.format("Card '%s' effect #%d (%s) has illegal target 'Enemy' (must be Self or Ally)", card.Id, idx, eff.Type)
+				end
+			end
+			if effectiveTarget ~= "Self" and effectiveTarget ~= "Ally" then
+				return false, string.format("Card '%s' effect #%d (%s) has illegal target '%s' (must be Self or Ally)", card.Id, idx, eff.Type, effectiveTarget)
+			end
+		end
+
+		-- Rule 6: ModifyResource must have a legal Player target
+		if eff.Type == "ModifyResource" then
+			if effectiveTarget ~= "Self" and effectiveTarget ~= "Ally" then
+				return false, string.format("Card '%s' effect #%d (ModifyResource) requires a legal Player target (Self or Ally), got '%s'", card.Id, idx, effectiveTarget)
+			end
+		end
+
+		-- CreateCard requires valid CardDefId
+		if eff.Type == "CreateCard" then
+			if not eff.CardDefId or eff.CardDefId == "" then
+				return false, string.format("Card '%s' effect #%d (CreateCard) requires a non-empty CardDefId", card.Id, idx)
+			end
+		end
+	end
+
+	return true, nil
+end
+
+-- Validates all registered card definitions in CardData
+function CardData.validateCardDefinitions(): (boolean, string?)
+	local seen: { [string]: boolean } = {}
+	for _, entry in CardData do
+		if typeof(entry) == "table" and entry.Id and not seen[entry.Id] then
+			seen[entry.Id] = true
+			local ok, err = CardData.validateCard(entry :: Card)
+			if not ok then
+				return false, err
+			end
+		end
+	end
+	return true, nil
+end
+
 return CardData

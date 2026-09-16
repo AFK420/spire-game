@@ -422,6 +422,21 @@ test("--- [Suite 34] Card Pile Invariant Verification" in testrunner_src, "TestR
 test("--- [Suite 35] Status Authority Boundary" in testrunner_src, "TestRunner includes Suite 35: Status Authority Boundary")
 test("--- [Suite 36] Cross-System Multi-Action" in testrunner_src, "TestRunner includes Suite 36: Cross-System Multi-Action")
 
+# 38. Phase 2.3 Card Effect-Target Consistency & Static Validator
+print("\n--- [Check 38] Phase 2.3 Card Effect-Target Consistency & Static Validator ---")
+card_data_src = (ROOT / "src/shared/CardData.luau").read_text(encoding="utf-8")
+test("function CardData.validateCard(card: Card): (boolean, string?)" in card_data_src, "CardData.validateCard function exists with correct signature")
+test("function CardData.validateCardDefinitions(): (boolean, string?)" in card_data_src, "CardData.validateCardDefinitions function exists")
+test("cannot silently inherit" in card_data_src, "validateCard detects and rejects silent inheritance of incompatible targets")
+test("must explicitly declare its Target" in card_data_src, "validateCard requires mixed-target cards to explicitly declare effect targets")
+test("--- [Suite 37] Static Card Effect Target Compatibility" in testrunner_src, "TestRunner includes Suite 37: Static Card Effect Target Compatibility")
+test("Target = \"Enemy\"" in card_data_src and "ShieldSlam" in card_data_src, "ShieldSlam configured with Target = 'Enemy'")
+test("Target = \"Enemy\"" in card_data_src and "DeployTurret" in card_data_src, "DeployTurret configured with Target = 'Enemy'")
+test("Target = \"Enemy\"" in card_data_src and "PackCall" in card_data_src, "PackCall configured with Target = 'Enemy'")
+test("Target = \"Enemy\"" in card_data_src and "WrenchThrow" in card_data_src, "WrenchThrow configured with Target = 'Enemy'")
+test("Target = \"Enemy\"" in card_data_src and "SoulHarvest" in card_data_src, "SoulHarvest configured with Target = 'Enemy'")
+test("Target = \"Enemy\"" in card_data_src and "TimeWarp" in card_data_src, "TimeWarp configured with Target = 'Enemy'")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")
