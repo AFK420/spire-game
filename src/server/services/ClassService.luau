@@ -65,8 +65,22 @@ function ClassService.resetGimmicks(userId: number)
 	}
 end
 
+local runManagerRef: any = nil
+local function getRunManager(): any
+	if not runManagerRef then
+		runManagerRef = require(servicesFolder:WaitForChild("RunManager") :: ModuleScript)
+	end
+	return runManagerRef
+end
+
 -- Validates and updates a player's class & subclass
-function ClassService.selectClass(player: Player, playerState: StateTypes.PlayerState, classId: string, subclassId: string): boolean
+function ClassService.selectClass(player: any, playerState: StateTypes.PlayerState, classId: string, subclassId: string): boolean
+	local rm = getRunManager()
+	if rm and rm.getRunState and rm.getRunState().Phase ~= "Lobby" then
+		warn(string.format("[ClassService] Cannot change class outside Lobby phase for %s", playerState.DisplayName))
+		return false
+	end
+
 	local heroClass = ClassData.getClass(classId)
 	if not heroClass then
 		warn("[ClassService] Unknown class: " .. tostring(classId))
@@ -81,7 +95,7 @@ function ClassService.selectClass(player: Player, playerState: StateTypes.Player
 
 	-- Verify unlock in profile
 	if not PersistenceService.isClassUnlocked(player, classId) then
-		warn(string.format("[ClassService] Player %s has not unlocked class %s", player.Name, classId))
+		warn(string.format("[ClassService] Player %s has not unlocked class %s", tostring(playerState.DisplayName), classId))
 		return false
 	end
 
@@ -91,8 +105,8 @@ function ClassService.selectClass(player: Player, playerState: StateTypes.Player
 	return true
 end
 
--- Applies hero class base stats and creates initial starting deck as CardInstances
-function ClassService.applyClassToPlayer(playerState: StateTypes.PlayerState)
+-- Sets hero class base resources (MaxHP, HP, MaxEnergy, Energy, and starting Shield)
+function ClassService.applyBaseClassStats(playerState: StateTypes.PlayerState)
 	local heroClass = ClassData.getClass(playerState.ClassId) or ClassData.getClass("Warlord") :: ClassData.HeroClass
 	local subclass = ClassData.getSubclass(playerState.ClassId, playerState.SubclassId)
 
@@ -106,8 +120,12 @@ function ClassService.applyClassToPlayer(playerState: StateTypes.PlayerState)
 	playerState.Resources.MaxEnergy = heroClass.StartingEnergy
 	playerState.Resources.Energy = heroClass.StartingEnergy
 	playerState.Resources.Shield = (subclass and subclass.Id == "Titan") and 10 or 0
+end
 
-	-- Generate runtime CardInstances for starting deck
+-- Generates runtime CardInstances for starting deck (Only called when initializing a new player/deck in Lobby)
+function ClassService.initializeStartingDeck(playerState: StateTypes.PlayerState)
+	local heroClass = ClassData.getClass(playerState.ClassId) or ClassData.getClass("Warlord") :: ClassData.HeroClass
+
 	table.clear(playerState.Deck)
 	table.clear(playerState.Hand)
 	table.clear(playerState.DiscardPile)
@@ -119,8 +137,28 @@ function ClassService.applyClassToPlayer(playerState: StateTypes.PlayerState)
 			table.insert(playerState.Deck, inst)
 		end
 	end
+end
 
-	ClassService.resetGimmicks(playerState.UserId)
+-- Resets per-combat temporary resources (Shield, Energy, ready and downed status)
+function ClassService.resetCombatResources(playerState: StateTypes.PlayerState)
+	local subclass = ClassData.getSubclass(playerState.ClassId, playerState.SubclassId)
+
+	playerState.Resources.Energy = playerState.Resources.MaxEnergy
+	playerState.Resources.Shield = (subclass and subclass.Id == "Titan") and 10 or 0
+	playerState.IsReady = false
+	playerState.IsDowned = false
+end
+
+-- Resets combat gimmick counters for a user
+function ClassService.resetClassCombatGimmicks(userId: number)
+	ClassService.resetGimmicks(userId)
+end
+
+-- Applies hero class base stats and creates initial starting deck as CardInstances (Lobby setup)
+function ClassService.applyClassToPlayer(playerState: StateTypes.PlayerState)
+	ClassService.applyBaseClassStats(playerState)
+	ClassService.initializeStartingDeck(playerState)
+	ClassService.resetClassCombatGimmicks(playerState.UserId)
 end
 
 -- Evaluates class-specific active gimmicks when playing a card

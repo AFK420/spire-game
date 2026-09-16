@@ -53,6 +53,7 @@ export type PlayerState = {
 	Gold: number,
 	IsReady: boolean,
 	IsDowned: boolean,
+	IsConnected: boolean?,
 	VotedNodeId: string?,
 }
 
@@ -165,6 +166,7 @@ export type CardView = {
 	DefinitionId: string,
 	Name: string,
 	Cost: number,
+	Target: CardData.TargetType,
 	Description: string,
 	Icon: string,
 	Color: Color3,

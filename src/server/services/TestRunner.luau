@@ -31,11 +31,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
+local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
+local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
 
 local services = script.Parent
 local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
 local CombatService = require(services:WaitForChild("CombatService") :: ModuleScript)
 local ClassService = require(services:WaitForChild("ClassService") :: ModuleScript)
+local CardService = require(services:WaitForChild("CardService") :: ModuleScript)
+local RelicService = require(services:WaitForChild("RelicService") :: ModuleScript)
+local PersistenceService = require(services:WaitForChild("PersistenceService") :: ModuleScript)
 
 local TestRunner = {}
 
@@ -86,6 +91,7 @@ function TestRunner.runAllTests(): boolean
 	local p1State = RunManager.addPlayer(player1)
 	assertTest(runState.PartyMembers[10001] ~= nil, "Player 1 registered in PartyMembers")
 	assertTest(p1State.DisplayName == "KnightOne", "Player 1 DisplayName matches")
+	assertTest(p1State.IsConnected == true, "Player 1 marked connected")
 
 	local p2State = RunManager.addPlayer(player2)
 	local p3State = RunManager.addPlayer(player3)
@@ -114,12 +120,20 @@ function TestRunner.runAllTests(): boolean
 	assertTest(typeof(p1State.Deck[1].InstanceId) == "string" and #p1State.Deck[1].InstanceId > 6, "CardInstances carry unique GUID InstanceId")
 
 	----------------------------------------------------------------------------
-	-- TEST 3: Start Run & Map Select Transition
+	-- TEST 3: Start Run & Persistence TotalRuns Tracking
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 3] Real API startRun() Execution ---")
+	print("\n--- [Suite 3] Run Start & Persistence TotalRuns Tracking ---")
+	local profile1 = PersistenceService.getProfile(player1 :: any)
+	local initialTotalRuns = profile1.TotalRuns
+
 	local startRunSuccess = RunManager.startRun()
 	assertTest(startRunSuccess == true, "RunManager.startRun() returned true")
 	assertTest(runState.Phase == "MapSelect", "Run phase transitioned to MapSelect")
+	assertTest(profile1.TotalRuns == initialTotalRuns + 1, "TotalRuns incremented exactly once when run begins")
+
+	-- Mid-run class change must be strictly rejected
+	local midRunClassChange = ClassService.selectClass(player1 :: any, p1State, "Shadowblade", "Assassin")
+	assertTest(midRunClassChange == false, "Class change during active run is strictly rejected")
 	assertTest(runState.CurrentTier == 0, "CurrentTier initialized to 0")
 	assertTest(#runState.AvailableNodeIds > 0, "Procedural map generated reachable starting nodes")
 	assertTest(p1State.Resources.HP == p1State.Resources.MaxHP, "Party members have full health")
@@ -146,60 +160,114 @@ function TestRunner.runAllTests(): boolean
 	assertTest(runState.ActiveRoom ~= nil and runState.ActiveRoom.NodeId == targetNodeId, "ActiveRoom initialized")
 
 	----------------------------------------------------------------------------
-	-- TEST 5: Enter Combat & Multi-Enemy Co-op Scaling (4 Players)
+	-- TEST 5: Co-op Multi-Player Scaling (1, 2, 3, 4 Players)
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 5] Active Combat Encounter & 4-Player Scaling ---")
+	print("\n--- [Suite 5] Active Combat Encounter & Co-op Scaling ---")
+	-- Verify Mathematical Scaling Formulas across 1 to 4 players
+	assertTest(GameConfig.scaleEnemyHp(80, 1) == 80, "1-Player scaling: 80 HP")
+	assertTest(GameConfig.scaleEnemyHp(80, 2) == 132, "2-Player scaling: 132 HP (+65%)")
+	assertTest(GameConfig.scaleEnemyHp(80, 3) == 184, "3-Player scaling: 184 HP (+130%)")
+	assertTest(GameConfig.scaleEnemyHp(80, 4) == 236, "4-Player scaling: 236 HP (+195%)")
+
+	assertTest(GameConfig.scaleEnemyAttack(9, 1) == 9, "1-Player ATK scaling: 9")
+	assertTest(GameConfig.scaleEnemyAttack(9, 2) == 11, "2-Player ATK scaling: 11 (+20%)")
+	assertTest(GameConfig.scaleEnemyAttack(9, 3) == 13, "3-Player ATK scaling: 13 (+40%)")
+	assertTest(GameConfig.scaleEnemyAttack(9, 4) == 14, "4-Player ATK scaling: 14 (+60%)")
+
 	local combat = CombatService.getActiveCombat()
 	assertTest(combat ~= nil, "CombatService.getActiveCombat() is active")
 	assertTest(combat.Phase == "PlayerPhase", "Combat begins in PlayerPhase")
 	assertTest(combat.TurnNumber == 1, "Combat initialized on Turn 1")
 
-	local enemyCount = 0
 	local firstEnemy: StateTypes.EnemyState? = nil
 	for _, e in combat.Enemies do
-		enemyCount += 1
 		if not firstEnemy then firstEnemy = e end
 	end
-	assertTest(enemyCount >= 1, "Multi-enemy collection populated with combatants")
 	assertTest(firstEnemy ~= nil, "Primary enemy retrieved")
+	assertTest(firstEnemy.MaxHP == 236, "Enemy HP in 4-player combat equals expected 236 HP")
 
-	-- Verify Co-op Scaling across 4 players
-	local expectedHp = GameConfig.scaleEnemyHp(80, 4) -- Tier 1 standard enemy
-	assertTest(firstEnemy.MaxHP == expectedHp, string.format("Enemy HP scaled correctly for 4 players (Expected: %d, Actual: %d)", expectedHp, firstEnemy.MaxHP))
-
-	-- Verify all 4 players drew cards
+	-- Verify opening hands
 	local p1HandCount = 0
 	for _ in p1State.Hand do p1HandCount += 1 end
 	assertTest(p1HandCount == GameConfig.Combat.BaseHandDrawCount, "Player 1 drew opening hand of 4 cards")
 
 	----------------------------------------------------------------------------
-	-- TEST 6: Strict API Rejection Checks on CombatService.playCard
+	-- TEST 6: Strict Card Targeting & API Rejection Checks
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 6] Strict Rejection Rules on Real CombatService API ---")
-	local testCard = getAnyCardInHand(p1State)
+	print("\n--- [Suite 6] Strict Card Targeting & Rejection Rules ---")
+	local enemyCard = getAnyCardInHand(p1State)
+	if enemyCard.CardData.Target ~= "Enemy" then
+		for _, c in p1State.Hand do
+			if c.CardData.Target == "Enemy" then
+				enemyCard = c
+				break
+			end
+		end
+	end
 
-	-- 6a. Unauthorized / non-party player
+	-- 6a. Enemy card + invalid enemy ID
+	local rejTargetOk, rejTargetErr = CombatService.playCard(player1, enemyCard.InstanceId, "invalid_enemy_999")
+	assertTest(rejTargetOk == false and rejTargetErr == "Invalid target enemy.", "Enemy card with invalid enemy ID rejected")
+
+	-- 6b. Enemy card + nil target
+	local rejNilOk, rejNilErr = CombatService.playCard(player1, enemyCard.InstanceId, nil)
+	assertTest(rejNilOk == false and rejNilErr == "Enemy target is required.", "Enemy card with nil target rejected (never auto-redirects)")
+
+	-- 6c. Enemy card + dead enemy target
+	local deadEnemyId = "test_dead_enemy"
+	combat.Enemies[deadEnemyId] = {
+		InstanceId = deadEnemyId,
+		DefinitionId = "SpireSentinel",
+		Name = "Dead Sentinel",
+		HP = 0,
+		MaxHP = 100,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 },
+		ModelRef = nil,
+	}
+	local rejDeadOk, rejDeadErr = CombatService.playCard(player1, enemyCard.InstanceId, deadEnemyId)
+	assertTest(rejDeadOk == false and rejDeadErr == "Target enemy is already defeated.", "Enemy card targeting dead enemy rejected")
+
+	-- 6d. Self card attempting to target another entity
+	local selfCardInst = CardService.createCardInstance("Defend", 10001)
+	assertTest(selfCardInst ~= nil, "Synthesized Defend card instance")
+	p1State.Hand[selfCardInst.InstanceId] = selfCardInst
+
+	local rejSelfOtherOk, rejSelfOtherErr = CombatService.playCard(player1, selfCardInst.InstanceId, firstEnemy.InstanceId)
+	assertTest(rejSelfOtherOk == false and rejSelfOtherErr == "Self cards cannot target other entities.", "Self card targeting enemy rejected")
+
+	-- 6e. Ally card targeting non-existent user / non-party member
+	local firstAidInst = CardService.createCardInstance("FirstAid", 10001)
+	assertTest(firstAidInst ~= nil, "Synthesized FirstAid card instance")
+	p1State.Hand[firstAidInst.InstanceId] = firstAidInst
+
+	local rejAllyNonPartyOk, rejAllyNonPartyErr = CombatService.playCard(player1, firstAidInst.InstanceId, 99999)
+	assertTest(rejAllyNonPartyOk == false and rejAllyNonPartyErr == "Target ally not in party.", "Ally card targeting non-party member rejected")
+
+	-- 6f. Ally card + nil target
+	local rejAllyNilOk, rejAllyNilErr = CombatService.playCard(player1, firstAidInst.InstanceId, nil)
+	assertTest(rejAllyNilOk == false and rejAllyNilErr == "Ally target is required.", "Ally card with nil target rejected")
+
+	-- 6g. Unauthorized / non-party player
 	local fakePlayer = { UserId = 99999, Name = "Hacker" }
-	local rejPlayerOk, rejPlayerErr = CombatService.playCard(fakePlayer, testCard.InstanceId, firstEnemy.InstanceId)
-	assertTest(rejPlayerOk == false and rejPlayerErr == "Player not in party.", "Unauthorized player rejected")
+	local rejPlayerOk, rejPlayerErr = CombatService.playCard(fakePlayer, enemyCard.InstanceId, firstEnemy.InstanceId)
+	assertTest(rejPlayerOk == false and rejPlayerErr == "Player not in party.", "Unauthorized non-party player rejected")
 
-	-- 6b. Invalid target enemy ID
-	local rejTargetOk, rejTargetErr = CombatService.playCard(player1, testCard.InstanceId, "invalid_enemy_999")
-	assertTest(rejTargetOk == false and rejTargetErr == "Invalid target enemy.", "Invalid target enemy rejected")
-
-	-- 6c. Insufficient energy
+	-- 6h. Insufficient energy
 	p1State.Resources.Energy = 0
-	local rejEnergyOk, rejEnergyErr = CombatService.playCard(player1, testCard.InstanceId, firstEnemy.InstanceId)
+	local rejEnergyOk, rejEnergyErr = CombatService.playCard(player1, enemyCard.InstanceId, firstEnemy.InstanceId)
 	assertTest(rejEnergyOk == false and rejEnergyErr == "Not enough Energy!", "Card play with insufficient energy rejected")
-	p1State.Resources.Energy = 3 -- Restore energy
+	p1State.Resources.Energy = 3
 
-	-- 6d. Wrong combat phase
+	-- 6i. Wrong combat phase
 	combat.Phase = "ResolutionPhase"
-	local rejPhaseOk, rejPhaseErr = CombatService.playCard(player1, testCard.InstanceId, firstEnemy.InstanceId)
+	local rejPhaseOk, rejPhaseErr = CombatService.playCard(player1, enemyCard.InstanceId, firstEnemy.InstanceId)
 	assertTest(rejPhaseOk == false and rejPhaseErr == "Combat is not in PlayerPhase.", "Card play during wrong phase rejected")
-	combat.Phase = "PlayerPhase" -- Restore phase
+	combat.Phase = "PlayerPhase"
 
-	-- 6e. Downed player actions
+	-- 6j. Downed player actions
 	p2State.IsDowned = true
 	local p2Card = getAnyCardInHand(p2State)
 	local rejDownedOk, rejDownedErr = CombatService.playCard(player2, p2Card.InstanceId, firstEnemy.InstanceId)
@@ -210,29 +278,106 @@ function TestRunner.runAllTests(): boolean
 	p2State.IsDowned = false
 
 	----------------------------------------------------------------------------
-	-- TEST 7: Safe Card Play & Double-Play Prevention (Real API Path)
+	-- TEST 7: First Aid & Revive Mechanics
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 7] Real Card Play & Double-Play Prevention ---")
-	local startingEnemyHp = firstEnemy.HP
-	local startingEnergy = p1State.Resources.Energy
+	print("\n--- [Suite 7] First Aid Revive & Heal Correctness ---")
+	-- 7a. Enemy target for First Aid must be rejected
+	local rejFaEnemyOk, rejFaEnemyErr = CombatService.playCard(player1, firstAidInst.InstanceId, firstEnemy.InstanceId)
+	assertTest(rejFaEnemyOk == false and rejFaEnemyErr == "Target ally not in party.", "First Aid targeting enemy is rejected")
+
+	-- 7b. Downed ally -> Revive with specified 30 HP without double-healing
+	p3State.Resources.HP = 0
+	p3State.IsDowned = true
+	p1State.Resources.Energy = 3
+
+	local faReviveOk, faReviveErr = CombatService.playCard(player1, firstAidInst.InstanceId, p3State.UserId)
+	assertTest(faReviveOk == true and faReviveErr == nil, "First Aid played successfully on downed ally")
+	assertTest(p3State.IsDowned == false, "Downed ally successfully revived")
+	assertTest(p3State.Resources.HP == 30, "Revived ally has exactly 30 HP (Revive value, not double-healed to 60)")
+
+	-- 7c. Living ally -> Healed +30 HP (no revive)
+	local firstAidInst2 = CardService.createCardInstance("FirstAid", 10001)
+	assertTest(firstAidInst2 ~= nil, "Synthesized second FirstAid card instance")
+	p1State.Hand[firstAidInst2.InstanceId] = firstAidInst2
+	p1State.Resources.Energy = 3
+
+	local faHealOk, faHealErr = CombatService.playCard(player1, firstAidInst2.InstanceId, p3State.UserId)
+	assertTest(faHealOk == true and faHealErr == nil, "First Aid played successfully on living ally")
+	assertTest(p3State.IsDowned == false, "Living ally remains active")
+	assertTest(p3State.Resources.HP == 60, "Living ally healed for +30 HP (HP is now 60)")
+
+	----------------------------------------------------------------------------
+	-- TEST 8: Relic Trigger Correctness (Zero Duplication Bug)
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 8] Relic Trigger Mechanics (No Double-Triggers) ---")
+	local testAttackCard = CardService.createCardInstance("Strike", 10001) :: StateTypes.CardInstance
+	RelicService.resetCombatState(10001)
+
+	-- 8a. 0 Relics
+	p1State.RelicIds = {}
+	local r0 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	assertTest(r0.BonusDamage == 0 and r0.BonusEnergy == 0, "0 relics contribute 0 bonus")
+
+	-- 8b. 1 Relic: Vajra (+2 Damage)
+	p1State.RelicIds = { "Vajra" }
+	local r1 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	assertTest(r1.BonusDamage == 2, "Vajra alone contributes exactly +2 bonus damage")
+
+	-- 8c. 2 Relics: Vajra + Akabeko
+	RelicService.resetCombatState(10001)
+	p1State.RelicIds = { "Vajra", "Akabeko" }
+	local r2_1 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	assertTest(r2_1.BonusDamage == 10, "First attack with Vajra + Akabeko deals exactly +10 bonus damage (+2 +8)")
+
+	local r2_2 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	assertTest(r2_2.BonusDamage == 2, "Second attack deals only +2 bonus damage (Akabeko only triggers once)")
+
+	-- 8d. Multiple relics with duplicate trigger types & duplicate IDs in inventory
+	RelicService.resetCombatState(10001)
+	p1State.RelicIds = { "Vajra", "Akabeko", "Sundial", "Vajra" }
+	local rMulti_1 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	assertTest(rMulti_1.BonusDamage == 10, "Multiple relics with duplicate IDs evaluate Vajra at most once (+10 total)")
+
+	-- 8e. Sundial: 3 attacks generate +2 Energy exactly on the 3rd attack
+	RelicService.resetCombatState(10001)
+	p1State.RelicIds = { "Sundial" }
+	local s1 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	local s2 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	local s3 = RelicService.triggerEvent(p1State, combat, "OnCardPlay", { Card = testAttackCard, Enemy = firstEnemy })
+	assertTest(s1.BonusEnergy == 0 and s2.BonusEnergy == 0 and s3.BonusEnergy == 2, "Sundial counter increments once per attack; grants +2 Energy on 3rd attack")
+
+	-- Restore player 1 relics
+	p1State.RelicIds = { "Anchor" }
+
+	----------------------------------------------------------------------------
+	-- TEST 9: Safe Card Play & Double-Play Prevention (Real API Path)
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 9] Real Card Play & Double-Play Prevention ---")
 	local cardToPlay = getAnyCardInHand(p1State)
+	while cardToPlay.CardData.Target ~= "Enemy" do
+		local newCard = CardService.createCardInstance("Strike", 10001) :: StateTypes.CardInstance
+		p1State.Hand[newCard.InstanceId] = newCard
+		cardToPlay = newCard
+	end
+
 	local playedCardId = cardToPlay.InstanceId
 	local cardCost = cardToPlay.CardData.Cost
+	p1State.Resources.Energy = 3
 
 	local playSuccess, playErr = CombatService.playCard(player1, playedCardId, firstEnemy.InstanceId)
 	assertTest(playSuccess == true and playErr == nil, "CombatService.playCard executed successfully")
 	assertTest(p1State.Hand[playedCardId] == nil, "Played card removed from player hand hashmap")
 	assertTest(#p1State.DiscardPile >= 1, "Played card moved to discard pile")
-	assertTest(p1State.Resources.Energy == startingEnergy - cardCost, "Energy correctly deducted")
+	assertTest(p1State.Resources.Energy == 3 - cardCost, "Energy correctly deducted")
 
 	-- CRITICAL INVARIANT: Re-playing the exact same CardInstanceId MUST fail
 	local doublePlaySuccess, doublePlayErr = CombatService.playCard(player1, playedCardId, firstEnemy.InstanceId)
 	assertTest(doublePlaySuccess == false and doublePlayErr == "Card not found in hand.", "Double-play through real API safely rejected with 'Card not found in hand.'")
 
 	----------------------------------------------------------------------------
-	-- TEST 8: Downed State & Teammate Rescue Mechanics
+	-- TEST 10: Downed State & Teammate Rescue Mechanics
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 8] Downed State & Teammate Rescue Mechanics ---")
+	print("\n--- [Suite 10] Downed State & Teammate Rescue Mechanics ---")
 	p4State.Resources.HP = 0
 	p4State.IsDowned = true
 
@@ -251,9 +396,9 @@ function TestRunner.runAllTests(): boolean
 	assertTest(p4State.Resources.HP == expectedReviveHp, string.format("Target revived with 25%% HP (%d HP)", expectedReviveHp))
 
 	----------------------------------------------------------------------------
-	-- TEST 9: Turn Ready Voting & Automatic Timeout
+	-- TEST 11: Turn Ready Voting & Automatic Timeout
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 9] Ready Voting & Monotonic Turn Timeout ---")
+	print("\n--- [Suite 11] Ready Voting & Monotonic Turn Timeout ---")
 	CombatService.voteReady(player1)
 	assertTest(p1State.IsReady == true, "Player 1 voted ready")
 	CombatService.voteReady(player1)
@@ -266,16 +411,16 @@ function TestRunner.runAllTests(): boolean
 	assertTest(combat.Phase == "PlayerPhase", "Returned to PlayerPhase for Turn 2")
 
 	----------------------------------------------------------------------------
-	-- TEST 10: Enemy Defeat, Victory Callback & Rewards Transition
+	-- TEST 12: Enemy Defeat, Victory Callback & Rewards Transition
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 10] Enemy Defeat & Room Clear Transition ---")
-	-- Set all enemies to 1 HP
+	print("\n--- [Suite 12] Enemy Defeat & Room Clear Transition ---")
 	for _, e in combat.Enemies do
 		e.HP = 1
 		e.Shield = 0
 	end
 
-	local lethalCard = getAnyCardInHand(p1State)
+	local lethalCard = CardService.createCardInstance("Strike", 10001) :: StateTypes.CardInstance
+	p1State.Hand[lethalCard.InstanceId] = lethalCard
 	p1State.Resources.Energy = 3
 	CombatService.playCard(player1, lethalCard.InstanceId, firstEnemy.InstanceId)
 
@@ -287,19 +432,16 @@ function TestRunner.runAllTests(): boolean
 	assertTest(runState.PendingRewards.AetherShardsAmount > 0, "Aether Shards assigned")
 	assertTest(runState.PendingRewards.OfferedCardsByPlayer[10001] ~= nil, "Player 1 received 3-card draft choices")
 
-	----------------------------------------------------------------------------
-	-- TEST 11: 3-Card Universal Draft Claim & Double-Claim Rejection
-	----------------------------------------------------------------------------
-	print("\n--- [Suite 11] Reward Card Claiming & Double-Claim Rejection ---")
+	-- Claim 3-card draft choice
 	local draftOptions = runState.PendingRewards.OfferedCardsByPlayer[10001]
 	assertTest(#draftOptions == GameConfig.Rewards.CardDraftChoicesCount, "Exact 3 draft cards offered")
-	local chosenCardId = draftOptions[1].Id
+	local chosenCardDefId = draftOptions[1].Id
 	local deckCountBefore = #p1State.Deck
 
-	local claimSuccess, claimErr = RunManager.claimRewardCard(player1, chosenCardId)
+	local claimSuccess, claimErr = RunManager.claimRewardCard(player1, chosenCardDefId)
 	assertTest(claimSuccess == true and claimErr == nil, "Draft card successfully claimed")
 	assertTest(#p1State.Deck == deckCountBefore + 1, "Claimed card added to player deck")
-	assertTest(p1State.Deck[#p1State.Deck].DefinitionId == chosenCardId, "New card definition matches choice")
+	assertTest(p1State.Deck[#p1State.Deck].DefinitionId == chosenCardDefId, "New card definition matches choice")
 	assertTest(runState.PendingRewards.ClaimedCards[10001] == true, "Claim flag set for player")
 
 	-- Double-claim rejection
@@ -307,16 +449,24 @@ function TestRunner.runAllTests(): boolean
 	assertTest(doubleClaimSuccess == false and doubleClaimErr == "Reward already claimed.", "Second claim attempt safely rejected")
 
 	----------------------------------------------------------------------------
-	-- TEST 12: Continue to MapSelect & Travel to Subsequent Room
+	-- TEST 13: CRITICAL INVARIANT — Card Persistence Across Multiple Combats
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 12] Continue from Rewards & Multi-Room Progression ---")
+	print("\n--- [Suite 13] Critical Invariant: Card Persistence Across Combats ---")
+	-- Record all card instance IDs currently owned by player 1
+	local recordedCardIds: { [string]: boolean } = {}
+	local totalOwnedCardsBefore = #p1State.Deck
+	for _, cardInst in p1State.Deck do
+		recordedCardIds[cardInst.InstanceId] = true
+	end
+
+	-- Continue from rewards to MapSelect
 	local contSuccess = RunManager.continueFromRewards(player1)
 	assertTest(contSuccess == true, "RunManager.continueFromRewards succeeded")
 	assertTest(runState.Phase == "MapSelect", "Returned to MapSelect phase")
 	assertTest(runState.CurrentTier == 1, "Completed Tier 1; tier is now 1")
 	assertTest(#runState.AvailableNodeIds > 0, "Tier 2 rooms available for selection")
 
-	-- Travel to Tier 2 room
+	-- Travel to Tier 2 room (Combat #2)
 	local nextRoomId = runState.AvailableNodeIds[1]
 	RunManager.voteMapNode(player1, nextRoomId)
 	RunManager.voteMapNode(player2, nextRoomId)
@@ -325,29 +475,65 @@ function TestRunner.runAllTests(): boolean
 	assertTest(runState.Phase == "ActiveRoom", "Traveled to subsequent room (Tier 2)")
 	assertTest(runState.CurrentNodeId == nextRoomId, "CurrentNodeId points to Tier 2 room")
 
+	local combat2 = CombatService.getActiveCombat()
+	assertTest(combat2 ~= nil, "Combat #2 successfully initiated")
+
+	-- CRITICAL ASSERTIONS:
+	-- Total cards owned across Deck, Hand, Discard, Exhaust must equal totalOwnedCardsBefore!
+	local totalCardsInCombat2 = #p1State.Deck
+	for _ in p1State.Hand do totalCardsInCombat2 += 1 end
+	for _ in p1State.DiscardPile do totalCardsInCombat2 += 1 end
+	for _ in p1State.ExhaustPile do totalCardsInCombat2 += 1 end
+
+	assertTest(totalCardsInCombat2 == totalOwnedCardsBefore, string.format("Total cards owned preserved into Combat #2 (Expected: %d, Actual: %d)", totalOwnedCardsBefore, totalCardsInCombat2))
+
+	-- Verify the reward card claimed in Suite 12 still exists in player's deck or opening hand
+	local rewardCardFound = false
+	for _, c in p1State.Deck do
+		if c.DefinitionId == chosenCardDefId then rewardCardFound = true break end
+	end
+	if not rewardCardFound then
+		for _, c in p1State.Hand do
+			if c.DefinitionId == chosenCardDefId then rewardCardFound = true break end
+		end
+	end
+	assertTest(rewardCardFound == true, string.format("Reward card [%s] still exists in player's deck/hand during Combat #2!", chosenCardDefId))
+
+	-- Verify original card instance IDs were NOT destroyed and regenerated
+	local matchedOriginalIds = 0
+	for _, c in p1State.Deck do
+		if recordedCardIds[c.InstanceId] then matchedOriginalIds += 1 end
+	end
+	for _, c in p1State.Hand do
+		if recordedCardIds[c.InstanceId] then matchedOriginalIds += 1 end
+	end
+	assertTest(matchedOriginalIds == totalOwnedCardsBefore, "All original runtime CardInstance IDs were preserved (Deck was NOT regenerated)!")
+
 	----------------------------------------------------------------------------
-	-- TEST 13: Player Leaving and Rejoining Mid-Run State Resilience
+	-- TEST 14: Player Leaving and Rejoining Mid-Run State Resilience
 	----------------------------------------------------------------------------
-	print("\n--- [Suite 13] Player Disconnect / Reconnect State Resilience ---")
+	print("\n--- [Suite 14] Player Disconnect / Reconnect State Resilience ---")
 	local p2HpBefore = p2State.Resources.HP
 	local p2DeckCountBefore = #p2State.Deck
 	local p2GoldBefore = p2State.Gold
 
-	-- Player 2 leaves
+	-- Player 2 leaves mid-combat
 	RunManager.removePlayer(player2)
 	assertTest(runState.PartyMembers[10002] ~= nil, "Player 2 record retained mid-run (slot preserved)")
 	assertTest(runState.PartyMembers[10002].PlayerInstance == nil, "PlayerInstance reference safely cleared")
+	assertTest(runState.PartyMembers[10002].IsConnected == false, "Player 2 marked disconnected")
 
 	-- Player 2 reconnects
 	local reconnectedP2 = RunManager.addPlayer(player2)
 	assertTest(reconnectedP2 == p2State, "Reconnected player re-associated with original PlayerState")
+	assertTest(reconnectedP2.IsConnected == true, "Reconnected player marked connected")
 	assertTest(reconnectedP2.Resources.HP == p2HpBefore, "Player HP completely preserved")
 	assertTest(#reconnectedP2.Deck == p2DeckCountBefore, "Player Deck completely preserved")
 	assertTest(reconnectedP2.Gold == p2GoldBefore, "Player Gold completely preserved")
 	assertTest(partyCount == 4, "Party integrity preserved with zero corruption")
 
 	print("\n============================================================")
-	print(string.format("  ALL %d INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 1.1 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end

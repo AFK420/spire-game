@@ -100,7 +100,14 @@ function RelicService.triggerEvent(
 		cState.PendingBonusDraw = 0
 	end
 
+	local evaluatedRelics: { [string]: boolean } = {}
+
 	for _, relicId in playerState.RelicIds do
+		if evaluatedRelics[relicId] then
+			continue
+		end
+		evaluatedRelics[relicId] = true
+
 		local relic = RelicData.getRelic(relicId)
 		if relic and relic.Trigger == triggerType then
 			local id = relic.Id
@@ -132,17 +139,17 @@ function RelicService.triggerEvent(
 					end
 				end
 
-				if isAttack and RelicService.hasRelic(playerState, "Vajra") then
-					result.BonusDamage += 2
-				end
-				if isAttack and id == "Akabeko" and not cState.FirstAttackUsed then
-					cState.FirstAttackUsed = true
-					result.BonusDamage += relic.Value
-				end
-				if isAttack and id == "Sundial" then
-					cState.AttacksPlayedThisCombat += 1
-					if cState.AttacksPlayedThisCombat % 3 == 0 then
-						result.BonusEnergy += relic.Value
+				if isAttack then
+					if id == "Vajra" then
+						result.BonusDamage += relic.Value
+					elseif id == "Akabeko" and not cState.FirstAttackUsed then
+						cState.FirstAttackUsed = true
+						result.BonusDamage += relic.Value
+					elseif id == "Sundial" then
+						cState.AttacksPlayedThisCombat += 1
+						if cState.AttacksPlayedThisCombat % 3 == 0 then
+							result.BonusEnergy += relic.Value
+						end
 					end
 				end
 

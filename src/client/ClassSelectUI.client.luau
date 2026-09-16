@@ -7,7 +7,7 @@
 	1. Displays an interactive lobby showcase for all 10 core classes.
 	2. Shows class stats (Max HP, Starting Energy), descriptions, and combat gimmicks.
 	3. Provides toggle buttons for selecting between the 2 specialized subclasses.
-	4. Fires secure RemoteEvents to ClassManager when locking in selections.
+	4. Fires secure RemoteEvents to ClassService via GameNetwork when locking in selections.
 	5. Automatically hides during active dungeon runs and reappears in the Lobby.
 ]=]
 
@@ -22,10 +22,10 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 
 --------------------------------------------------------------------------------
--- Remote Events Resolution
+-- Remote Events Resolution via GameNetwork
 --------------------------------------------------------------------------------
 
-local function findEvent(folderName: string, eventName: string): RemoteEvent?
+local function findEvent(eventName: string): RemoteEvent?
 	local networkFolder = ReplicatedStorage:WaitForChild("GameNetwork", 10) :: Folder?
 	if networkFolder then
 		local ev = networkFolder:WaitForChild(eventName, 5)
@@ -36,8 +36,8 @@ local function findEvent(folderName: string, eventName: string): RemoteEvent?
 	return nil
 end
 
-local SelectClassEvent = findEvent("ClassEvents", "SelectClass")
-local RunStateUpdateEvent = findEvent("GameNetwork", "RunStateUpdate")
+local SelectClassEvent = findEvent("SelectClass")
+local RunStateUpdateEvent = findEvent("RunStateUpdate")
 
 --------------------------------------------------------------------------------
 -- UI Creation Helpers
@@ -60,18 +60,19 @@ local function createStroke(parent: Instance, color: Color3, thickness: number):
 end
 
 --------------------------------------------------------------------------------
--- ScreenGui Setup
+-- ScreenGui Setup (Dedicated CardRiftClassSelectGui)
 --------------------------------------------------------------------------------
 
 local mainGui: ScreenGui
-local existing = playerGui:FindFirstChild("CardRiftScreenGui")
+local existing = playerGui:FindFirstChild("CardRiftClassSelectGui")
 if existing and existing:IsA("ScreenGui") then
 	mainGui = existing
+	mainGui:ClearAllChildren()
 else
 	local newGui = Instance.new("ScreenGui")
-	newGui.Name = "CardRiftScreenGui"
+	newGui.Name = "CardRiftClassSelectGui"
 	newGui.ResetOnSpawn = false
-	newGui.DisplayOrder = 12
+	newGui.DisplayOrder = 20
 	newGui.Parent = playerGui
 	mainGui = newGui
 end

@@ -22,6 +22,7 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 --------------------------------------------------------------------------------
 -- Remote Events Resolution via GameNetwork
@@ -132,15 +133,16 @@ end
 -- Build Main ScreenGui Root
 --------------------------------------------------------------------------------
 
-local existingGui = playerGui:FindFirstChild("CardRiftScreenGui")
-if existingGui then
-	existingGui:Destroy()
+local screenGui = playerGui:FindFirstChild("CardRiftScreenGui") :: ScreenGui?
+if not screenGui then
+	screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "CardRiftScreenGui"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.Parent = playerGui
+else
+	screenGui:ClearAllChildren()
 end
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "CardRiftScreenGui"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
@@ -508,7 +510,7 @@ controlContainer.Parent = combatHudView
 local timerBadge = Instance.new("TextLabel")
 timerBadge.Size = UDim2.new(1, 0, 0, 24)
 timerBadge.BackgroundTransparency = 1
-timerBadge.Text = "⏰ Turn Timer: 45s"
+timerBadge.Text = string.format("⏰ Turn Timer: %ds", GameConfig.Combat.TurnDuration)
 timerBadge.TextColor3 = Color3.fromRGB(255, 200, 80)
 timerBadge.Font = Enum.Font.GothamBold
 timerBadge.TextSize = 14
@@ -640,7 +642,15 @@ local function renderCardWidget(card: StateTypes.CardView): Frame
 
 	clickBtn.MouseButton1Click:Connect(function()
 		if PlayCardEvent then
-			PlayCardEvent:FireServer(card.InstanceId, selectedEnemyId)
+			local targetParam: any = nil
+			if card.Target == "Enemy" then
+				targetParam = selectedEnemyId
+			elseif card.Target == "Ally" then
+				targetParam = localPlayer.UserId
+			elseif card.Target == "Self" or card.Target == "None" then
+				targetParam = nil
+			end
+			PlayCardEvent:FireServer(card.InstanceId, targetParam)
 		end
 	end)
 

@@ -162,6 +162,7 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		local existing = currentRun.PartyMembers[userId]
 		existing.PlayerInstance = (typeof(player) == "Instance" and player:IsA("Player")) and player or nil
 		existing.DisplayName = displayName
+		existing.IsConnected = true
 		RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
 		return existing
 	end
@@ -187,6 +188,7 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		Gold = GameConfig.Dungeon.StarterGold,
 		IsReady = false,
 		IsDowned = false,
+		IsConnected = true,
 		VotedNodeId = nil,
 	}
 
@@ -203,6 +205,12 @@ function RunManager.removePlayer(player: any)
 	if not member then return end
 
 	member.PlayerInstance = nil
+	member.IsConnected = false
+
+	-- Save profile and clean rate-limit buckets
+	PersistenceService.saveProfile(player)
+	NetworkService.cleanPlayer(userId)
+
 	if currentRun.Phase == "Lobby" then
 		currentRun.PartyMembers[userId] = nil
 	end
@@ -272,12 +280,13 @@ function RunManager.startRun(): boolean
 	-- Prepare all players
 	for _, pState in currentRun.PartyMembers do
 		pState.VotedNodeId = nil
-		pState.IsReady = false
-		pState.IsDowned = false
 		pState.Resources.HP = pState.Resources.MaxHP
-		pState.Resources.Shield = 0
-		pState.Resources.Energy = pState.Resources.MaxEnergy
-		ClassService.applyClassToPlayer(pState)
+		ClassService.resetCombatResources(pState)
+		CardService.resetCombatPiles(pState)
+
+		-- Record run start in profile exactly once when run begins
+		local playerRef = pState.PlayerInstance or { UserId = pState.UserId }
+		PersistenceService.recordRunStarted(playerRef)
 	end
 
 	RunManager.broadcastRunSnapshots("Expedition started! Choose your path on the Map.")

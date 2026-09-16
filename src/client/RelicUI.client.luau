@@ -62,11 +62,12 @@ end
 -- ScreenGui & Main Relic Bar Setup
 --------------------------------------------------------------------------------
 
--- Ensure a ScreenGui exists for the Relic HUD
+-- Ensure a ScreenGui exists for the Relic HUD (Dedicated CardRiftRelicGui)
 local relicScreenGui: ScreenGui
-local existingGui = playerGui:FindFirstChild("CardRiftScreenGui")
+local existingGui = playerGui:FindFirstChild("CardRiftRelicGui")
 if existingGui and existingGui:IsA("ScreenGui") then
 	relicScreenGui = existingGui
+	relicScreenGui:ClearAllChildren()
 else
 	local newGui = Instance.new("ScreenGui")
 	newGui.Name = "CardRiftRelicGui"

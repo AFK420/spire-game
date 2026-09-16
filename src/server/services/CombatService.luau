@@ -264,7 +264,7 @@ local function areAllLivingPlayersReady(): boolean
 	local livingCount = 0
 	local readyCount = 0
 	for _, pState in partyRef do
-		if not pState.IsDowned then
+		if not pState.IsDowned and pState.IsConnected ~= false then
 			livingCount += 1
 			if pState.IsReady then
 				readyCount += 1
@@ -530,12 +530,9 @@ function CombatService.startCombat(
 	-- Setup player combat state
 	for userId, playerState in partyRef do
 		table.insert(activeCombat.Participants, userId)
-		playerState.Resources.Shield = 0
-		playerState.Resources.Energy = playerState.Resources.MaxEnergy
-		playerState.IsReady = false
-		playerState.IsDowned = false
-
-		ClassService.applyClassToPlayer(playerState)
+		ClassService.resetCombatResources(playerState)
+		ClassService.resetClassCombatGimmicks(userId)
+		CardService.resetCombatPiles(playerState)
 		RelicService.resetCombatState(userId)
 
 		local combatRelic = RelicService.triggerEvent(playerState, activeCombat, "OnCombatStart", {
@@ -567,8 +564,8 @@ function CombatService.startCombat(
 	return activeCombat
 end
 
--- Plays a card by its stable CardInstanceId targeting a specific Enemy InstanceId
-function CombatService.playCard(player: any, cardInstanceId: string, targetEnemyId: string?): (boolean, string?)
+-- Plays a card by its stable CardInstanceId targeting a specific entity (Enemy InstanceId, Ally UserId, or Self)
+function CombatService.playCard(player: any, cardInstanceId: string, targetParam: any?): (boolean, string?)
 	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
 		return false, "Combat is not in PlayerPhase."
 	end
@@ -588,26 +585,48 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetEnemy
 		return false, "Card not found in hand."
 	end
 
-	-- Strictly resolve target enemy
+	local cardDef = cardInst.CardData
 	local targetEnemy: StateTypes.EnemyState? = nil
-	if targetEnemyId ~= nil then
-		local enemy = activeCombat.Enemies[targetEnemyId]
-		if not enemy or enemy.HP <= 0 then
+	local targetPlayer: StateTypes.PlayerState? = nil
+
+	-- Strictly validate target according to card definition
+	if cardDef.Target == "Enemy" then
+		if targetParam == nil or typeof(targetParam) ~= "string" or targetParam == "" then
+			return false, "Enemy target is required."
+		end
+		local enemy = activeCombat.Enemies[targetParam]
+		if not enemy then
 			return false, "Invalid target enemy."
 		end
-		targetEnemy = enemy
-	else
-		-- Default to first living enemy if unassigned
-		for _, e in activeCombat.Enemies do
-			if e.HP > 0 then
-				targetEnemy = e
-				break
-			end
+		if enemy.HP <= 0 then
+			return false, "Target enemy is already defeated."
 		end
-	end
+		targetEnemy = enemy
 
-	if not targetEnemy then
-		return false, "No valid living target enemy found."
+	elseif cardDef.Target == "Self" then
+		if targetParam ~= nil and targetParam ~= player.UserId and targetParam ~= tostring(player.UserId) then
+			return false, "Self cards cannot target other entities."
+		end
+		targetPlayer = playerState
+
+	elseif cardDef.Target == "Ally" then
+		if targetParam == nil then
+			return false, "Ally target is required."
+		end
+		local targetUserId = tonumber(targetParam)
+		if not targetUserId then
+			return false, "Invalid ally target."
+		end
+		local allyState = partyRef[targetUserId]
+		if not allyState then
+			return false, "Target ally not in party."
+		end
+		targetPlayer = allyState
+
+	elseif cardDef.Target == "None" then
+		-- No specific target required
+	else
+		return false, "Unsupported card target type."
 	end
 
 	-- Evaluate Class Gimmick
@@ -642,34 +661,54 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetEnemy
 		playerState.Resources.Shield += totalBonusShield
 	end
 
-	if gimmick.PoisonApplied > 0 then
+	if gimmick.PoisonApplied > 0 and targetEnemy then
 		targetEnemy.Poison += gimmick.PoisonApplied
 	end
 
 	-- Execute Card Effects
+	local didReviveThisCard = false
+
 	for _, effect in cardInst.CardData.Effects do
 		if effect.Type == "Damage" then
-			local dmg = effect.Value + totalBonusDamage
-			local remDmg, _ = applyDamageToEnemy(targetEnemy, dmg)
-			logEvent("DamageDealt", playerState.DisplayName, targetEnemy.Name, dmg, string.format("-%d HP", remDmg))
+			if targetEnemy then
+				local dmg = effect.Value + totalBonusDamage
+				local remDmg, _ = applyDamageToEnemy(targetEnemy, dmg)
+				logEvent("DamageDealt", playerState.DisplayName, targetEnemy.Name, dmg, string.format("-%d HP", remDmg))
 
-			if targetEnemy.HP <= 0 then
-				logEvent("EnemyDefeated", playerState.DisplayName, targetEnemy.Name, nil, string.format("%s was defeated!", targetEnemy.Name))
-				RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = targetEnemy })
+				if targetEnemy.HP <= 0 then
+					logEvent("EnemyDefeated", playerState.DisplayName, targetEnemy.Name, nil, string.format("%s was defeated!", targetEnemy.Name))
+					RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = targetEnemy })
+				end
 			end
 
 		elseif effect.Type == "Shield" then
 			local shieldVal = effect.Value + totalBonusShield
-			playerState.Resources.Shield += shieldVal
-			logEvent("ShieldGained", playerState.DisplayName, playerState.DisplayName, shieldVal, string.format("+%d Shield", shieldVal))
+			local recipient = targetPlayer or playerState
+			recipient.Resources.Shield += shieldVal
+			logEvent("ShieldGained", playerState.DisplayName, recipient.DisplayName, shieldVal, string.format("+%d Shield", shieldVal))
 
 		elseif effect.Type == "Poison" then
-			targetEnemy.Poison += effect.Value
-			logEvent("PoisonApplied", playerState.DisplayName, targetEnemy.Name, effect.Value, string.format("+%d Poison", effect.Value))
+			if targetEnemy then
+				targetEnemy.Poison += effect.Value
+				logEvent("PoisonApplied", playerState.DisplayName, targetEnemy.Name, effect.Value, string.format("+%d Poison", effect.Value))
+			end
+
+		elseif effect.Type == "Revive" then
+			local recipient = targetPlayer or playerState
+			if recipient.IsDowned then
+				recipient.IsDowned = false
+				recipient.Resources.HP = math.min(recipient.Resources.MaxHP, effect.Value)
+				didReviveThisCard = true
+				logEvent("PlayerRevived", playerState.DisplayName, recipient.DisplayName, effect.Value, string.format("%s was revived with %d HP!", recipient.DisplayName, recipient.Resources.HP))
+			end
 
 		elseif effect.Type == "Heal" then
-			playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + effect.Value)
-			logEvent("Healed", playerState.DisplayName, playerState.DisplayName, effect.Value, string.format("+%d HP", effect.Value))
+			local recipient = targetPlayer or playerState
+			-- Only heal if the recipient was NOT just revived by this card and is NOT downed
+			if not didReviveThisCard and not recipient.IsDowned then
+				recipient.Resources.HP = math.min(recipient.Resources.MaxHP, recipient.Resources.HP + effect.Value)
+				logEvent("Healed", playerState.DisplayName, recipient.DisplayName, effect.Value, string.format("+%d HP", effect.Value))
+			end
 
 		elseif effect.Type == "Draw" then
 			CardService.drawCards(playerState, effect.Value)

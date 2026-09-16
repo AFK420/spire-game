@@ -114,6 +114,86 @@ revive_hp = math.floor(max_hp * 0.25)
 test(rescue_cost == 2, "Rescue energy cost = 2")
 test(revive_hp == 27, "Titan revive HP (25% of 110) = 27")
 
+# 6. Deck Persistence & Reset Bug Prevention
+print("\n--- [Check 6] Deck Persistence & Separation of Concerns ---")
+combat_service_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+test("ClassService.applyClassToPlayer(playerState)" not in combat_service_src, "CombatService.startCombat does NOT wipe deck via applyClassToPlayer")
+test("CardService.resetCombatPiles(playerState)" in combat_service_src, "CombatService.startCombat calls CardService.resetCombatPiles")
+
+class_service_src = (ROOT / "src/server/services/ClassService.luau").read_text(encoding="utf-8")
+test("function ClassService.applyBaseClassStats" in class_service_src, "ClassService.applyBaseClassStats exists")
+test("function ClassService.initializeStartingDeck" in class_service_src, "ClassService.initializeStartingDeck exists")
+test("function ClassService.resetCombatResources" in class_service_src, "ClassService.resetCombatResources exists")
+
+card_service_src = (ROOT / "src/server/services/CardService.luau").read_text(encoding="utf-8")
+test("function CardService.resetCombatPiles" in card_service_src, "CardService.resetCombatPiles exists")
+
+# 7. Targeting Model & Strict Validation
+print("\n--- [Check 7] Targeting Model & Strict Validation ---")
+card_data_src = (ROOT / "src/shared/CardData.luau").read_text(encoding="utf-8")
+test('"None"' in card_data_src and '"Self"' in card_data_src and '"Enemy"' in card_data_src and '"Ally"' in card_data_src, "TargetType includes None, Self, Enemy, Ally")
+test('Target = "Ally"' in card_data_src, "FirstAid has Target = Ally")
+
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+test("Target: CardData.TargetType" in state_types_src, "CardView contains Target field")
+test('cardDef.Target == "Enemy"' in combat_service_src, "CombatService validates Enemy targeting")
+test('cardDef.Target == "Self"' in combat_service_src, "CombatService validates Self targeting")
+test('cardDef.Target == "Ally"' in combat_service_src, "CombatService validates Ally targeting")
+test("Target enemy is already defeated." in combat_service_src, "CombatService rejects dead enemy target")
+test("Self cards cannot target other entities." in combat_service_src, "CombatService rejects Self card targeting other entity")
+
+# 8. First Aid & Revive Mechanics
+print("\n--- [Check 8] First Aid Revive & Heal Correctness ---")
+test('effect.Type == "Revive"' in combat_service_src, "CombatService handles Revive effect")
+test('didReviveThisCard' in combat_service_src, "CombatService prevents double-heal on revive")
+
+# 9. Relic Double-Trigger Bug Resolution
+print("\n--- [Check 9] Relic Trigger Hardening ---")
+relic_data_src = (ROOT / "src/shared/RelicData.luau").read_text(encoding="utf-8")
+test('["Vajra"]' in relic_data_src and 'Trigger = "OnCardPlay"' in relic_data_src, "Vajra trigger configured as OnCardPlay")
+test('["Akabeko"]' in relic_data_src and 'Trigger = "OnCardPlay"' in relic_data_src, "Akabeko trigger configured as OnCardPlay")
+
+relic_service_src = (ROOT / "src/server/services/RelicService.luau").read_text(encoding="utf-8")
+test('evaluatedRelics' in relic_service_src, "RelicService tracks evaluatedRelics set")
+test('id == "Vajra"' in relic_service_src, "Vajra evaluated specifically by ID")
+test('hasRelic(playerState, "Vajra")' not in relic_service_src, "Vajra does not loop-multiply across inventory")
+
+# 10. Persistence Autosave & TotalRuns
+print("\n--- [Check 10] Persistence Autosave & TotalRuns ---")
+persistence_src = (ROOT / "src/server/services/PersistenceService.luau").read_text(encoding="utf-8")
+test("function PersistenceService.recordRunStarted" in persistence_src, "PersistenceService.recordRunStarted exists")
+test("autosaveThread" in persistence_src, "PersistenceService has background autosave loop")
+
+run_manager_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+test("PersistenceService.recordRunStarted" in run_manager_src, "RunManager.startRun records run started once")
+
+# 11. Disconnect Safety & Rate Limiting
+print("\n--- [Check 11] Disconnect Safety & Rate Limits ---")
+network_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+test("function NetworkService.cleanPlayer" in network_src, "NetworkService.cleanPlayer flushes rate-limit buckets")
+test("NetworkService.cleanPlayer(userId)" in run_manager_src, "RunManager.removePlayer cleans rate-limit buckets")
+test("PersistenceService.saveProfile(player)" in run_manager_src, "RunManager.removePlayer saves profile")
+test("pState.IsConnected ~= false" in combat_service_src, "CombatService ignores disconnected players in ready checks")
+
+# 12. UI Ownership Decoupling
+print("\n--- [Check 12] UI Ownership Decoupling ---")
+ui_controller_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+test("existingGui:Destroy()" not in ui_controller_src, "UIController does not destroy existing ScreenGui")
+
+class_ui_src = (ROOT / "src/client/ClassSelectUI.client.luau").read_text(encoding="utf-8")
+test('"CardRiftClassSelectGui"' in class_ui_src, "ClassSelectUI uses dedicated CardRiftClassSelectGui")
+test('"ClassEvents"' not in class_ui_src, "ClassSelectUI has no stale ClassEvents folder reference")
+
+relic_ui_src = (ROOT / "src/client/RelicUI.client.luau").read_text(encoding="utf-8")
+test('"CardRiftRelicGui"' in relic_ui_src, "RelicUI uses dedicated CardRiftRelicGui")
+
+# 13. Strict Luau on All Files
+print("\n--- [Check 13] Strict Luau Annotations ---")
+all_luau_files = list((ROOT / "src").rglob("*.luau"))
+for lf in all_luau_files:
+    first_line = lf.read_text(encoding="utf-8").splitlines()[0]
+    test(first_line == "--!strict", f"--!strict present in {lf.name}")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")

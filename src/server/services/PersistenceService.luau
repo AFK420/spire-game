@@ -82,18 +82,20 @@ function PersistenceService.loadProfile(player: Player): PlayerProfile
 	return profile
 end
 
-function PersistenceService.saveProfile(player: Player)
+function PersistenceService.saveProfile(player: any)
 	local userId = player.UserId
 	local profile = activeProfiles[userId]
-	if not profile or not profileStore or RunService:IsStudio() then return end
+	if not profile then return end
 
 	profile.LastSavedTimestamp = os.time()
+	if not profileStore or RunService:IsStudio() then return end
+
 	pcall(function()
 		profileStore:SetAsync(tostring(userId), profile)
 	end)
 end
 
-function PersistenceService.getProfile(player: Player): PlayerProfile
+function PersistenceService.getProfile(player: any): PlayerProfile
 	local profile = activeProfiles[player.UserId]
 	if not profile then
 		return PersistenceService.loadProfile(player)
@@ -101,17 +103,22 @@ function PersistenceService.getProfile(player: Player): PlayerProfile
 	return profile
 end
 
-function PersistenceService.addAetherShards(player: Player, amount: number)
+function PersistenceService.addAetherShards(player: any, amount: number)
 	local profile = PersistenceService.getProfile(player)
 	profile.AetherShards += amount
 end
 
-function PersistenceService.recordRunVictory(player: Player)
+function PersistenceService.recordRunStarted(player: any)
+	local profile = PersistenceService.getProfile(player)
+	profile.TotalRuns += 1
+end
+
+function PersistenceService.recordRunVictory(player: any)
 	local profile = PersistenceService.getProfile(player)
 	profile.TotalVictories += 1
 end
 
-function PersistenceService.isClassUnlocked(player: Player, classId: string): boolean
+function PersistenceService.isClassUnlocked(player: any, classId: string): boolean
 	local profile = PersistenceService.getProfile(player)
 	for _, unlocked in profile.UnlockedClasses do
 		if unlocked == classId then
@@ -120,6 +127,8 @@ function PersistenceService.isClassUnlocked(player: Player, classId: string): bo
 	end
 	return false
 end
+
+local autosaveThread: thread? = nil
 
 function PersistenceService.init()
 	Players.PlayerAdded:Connect(function(p: Player)
@@ -135,7 +144,32 @@ function PersistenceService.init()
 		PersistenceService.loadProfile(p)
 	end
 
-	print("[PersistenceService] Initialized DataStore persistence layer.")
+	-- Periodic autosave loop running every AUTOSAVE_INTERVAL seconds
+	autosaveThread = task.spawn(function()
+		while true do
+			task.wait(AUTOSAVE_INTERVAL)
+			for userId, profile in activeProfiles do
+				profile.LastSavedTimestamp = os.time()
+				if profileStore and not RunService:IsStudio() then
+					pcall(function()
+						profileStore:SetAsync(tostring(userId), profile)
+					end)
+				end
+			end
+		end
+	end)
+
+	game:BindToClose(function()
+		for userId, profile in activeProfiles do
+			if profileStore and not RunService:IsStudio() then
+				pcall(function()
+					profileStore:SetAsync(tostring(userId), profile)
+				end)
+			end
+		end
+	end)
+
+	print("[PersistenceService] Initialized DataStore persistence layer with autosave loop.")
 end
 
 return PersistenceService

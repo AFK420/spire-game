@@ -7,7 +7,7 @@
 ]=]
 
 export type EffectType = "Damage" | "Shield" | "Poison" | "Revive" | "Heal"
-export type TargetType = "Enemy" | "Self" | "Ally"
+export type TargetType = "Enemy" | "Self" | "Ally" | "None"
 
 export type Effect = {
 	Type: EffectType,

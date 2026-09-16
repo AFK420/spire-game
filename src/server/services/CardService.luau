@@ -49,10 +49,37 @@ function CardService.toCardView(instance: StateTypes.CardInstance): StateTypes.C
 		DefinitionId = instance.DefinitionId,
 		Name = instance.CardData.Name,
 		Cost = instance.CardData.Cost,
+		Target = instance.CardData.Target,
 		Description = instance.CardData.Description,
 		Icon = instance.CardData.Icon,
 		Color = instance.CardData.Color,
 	}
+end
+
+-- Resets combat card piles between encounters without losing any acquired cards
+function CardService.resetCombatPiles(playerState: StateTypes.PlayerState)
+	-- Gather all cards from hand, discard pile, and exhaust pile back into deck
+	for _, cardInst in playerState.Hand do
+		table.insert(playerState.Deck, cardInst)
+	end
+	table.clear(playerState.Hand)
+
+	for _, cardInst in playerState.DiscardPile do
+		table.insert(playerState.Deck, cardInst)
+	end
+	table.clear(playerState.DiscardPile)
+
+	for _, cardInst in playerState.ExhaustPile do
+		table.insert(playerState.Deck, cardInst)
+	end
+	table.clear(playerState.ExhaustPile)
+
+	-- Shuffle deck for initial draw
+	local rng = Random.new()
+	for i = #playerState.Deck, 2, -1 do
+		local j = rng:NextInteger(1, i)
+		playerState.Deck[i], playerState.Deck[j] = playerState.Deck[j], playerState.Deck[i]
+	end
 end
 
 -- Draws N cards from player's draw pile into their hand

@@ -110,6 +110,11 @@ function NetworkService.checkRateLimit(player: Player, category: ActionCategory)
 	end
 end
 
+-- Flushes rate-limit buckets for a player on disconnect
+function NetworkService.cleanPlayer(userId: number)
+	playerBuckets[userId] = nil
+end
+
 --------------------------------------------------------------------------------
 -- Client Dispatch Helpers
 --------------------------------------------------------------------------------

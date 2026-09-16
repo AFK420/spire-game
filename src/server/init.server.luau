@@ -89,12 +89,11 @@ NetworkService.VoteMapNodeEvent.OnServerEvent:Connect(function(player: Player, t
 end)
 
 -- 4. Play Card by CardInstanceId
-NetworkService.PlayCardEvent.OnServerEvent:Connect(function(player: Player, cardInstanceId: any, targetEnemyId: any)
+NetworkService.PlayCardEvent.OnServerEvent:Connect(function(player: Player, cardInstanceId: any, targetParam: any)
 	if not NetworkService.checkRateLimit(player, "Combat") then return end
 	if typeof(cardInstanceId) ~= "string" then return end
 
-	local targetStr = typeof(targetEnemyId) == "string" and targetEnemyId or nil
-	local success, err = CombatService.playCard(player, cardInstanceId, targetStr)
+	local success, err = CombatService.playCard(player, cardInstanceId, targetParam)
 	if not success and err then
 		warn(string.format("[Server] PlayCard rejected for %s: %s", player.Name, err))
 	end
