@@ -229,16 +229,16 @@ test_runner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encod
 test("Duplicate RunManager.startRun() outside Lobby safely returns false" in test_runner_src, "TestRunner tests startRun outside Lobby idempotence")
 test("Specific claimed reward CardInstanceId" in test_runner_src, "TestRunner tests specific claimed CardInstanceId preserved in Combat 2")
 
-# 18. Phase 3 Boundary Verification (Phase 3 NOT started)
-print("\n--- [Check 18] Phase 3 Strict Boundary Verification ---")
-phase3_terms = ["EquipmentService", "SkillTreeService", "ActiveSkillService"]
-for term in phase3_terms:
+# 18. Phase 3 Boundary Verification (Out-of-Scope Concepts NOT started)
+print("\n--- [Check 18] Phase 3 Out-of-Scope Boundary Verification ---")
+out_of_scope_terms = ["CraftingService", "MonetizationService", "BattlePassService"]
+for term in out_of_scope_terms:
     term_found = False
     for lf in all_luau_files:
         if term in lf.read_text(encoding="utf-8"):
             term_found = True
             break
-    test(not term_found, f"Phase 3 concept '{term}' NOT present in src/ (Phase 3 NOT started)")
+    test(not term_found, f"Out-of-scope concept '{term}' NOT present in src/ (unstarted)")
 
 # 19. Phase 1.2 Disconnect Safety: Map Voting Consensus
 print("\n--- [Check 19] Disconnect Safety: Map Voting ---")

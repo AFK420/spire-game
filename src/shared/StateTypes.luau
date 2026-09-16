@@ -27,6 +27,23 @@ export type CardInstance = {
 }
 
 --------------------------------------------------------------------------------
+-- 1.1 Phase 3 Equipment Types
+--------------------------------------------------------------------------------
+
+export type EquipmentSlot = "Weapon" | "Armor" | "Accessory"
+export type EquipmentRarity = "Common" | "Uncommon" | "Rare" | "Epic" | "Legendary"
+
+-- Runtime instance of equipped or inventoried equipment
+export type EquipmentInstance = {
+	InstanceId: string,         -- Unique stable runtime GUID (e.g. "equip_inst_48102")
+	DefinitionId: string,       -- Reference to EquipmentData definition ID (e.g. "IronBroadsword")
+	OwnerUserId: number,        -- Owner player's UserId
+	Slot: EquipmentSlot,        -- Equipment slot ("Weapon", "Armor", "Accessory")
+	Level: number,              -- Item upgrade level (default 1)
+	Modifiers: { Modifier }?,   -- Rolled or runtime modifiers
+}
+
+--------------------------------------------------------------------------------
 -- 2. Player Canonical State Models
 --------------------------------------------------------------------------------
 
@@ -55,6 +72,9 @@ export type PlayerState = {
 	IsDowned: boolean,
 	IsConnected: boolean?,
 	VotedNodeId: string?,
+	-- Phase 3 Run-Scoped Equipment
+	EquippedItems: { [EquipmentSlot]: EquipmentInstance }?,
+	EquipmentInventory: { EquipmentInstance }?,
 }
 
 --------------------------------------------------------------------------------
@@ -153,7 +173,16 @@ export type ResolvedTarget = {
 }
 
 export type ModifierOperation = "Add" | "Multiply" | "Override"
-export type ModifierStat = "Damage" | "Shield" | "Healing" | "Cost"
+export type ModifierStat =
+	| "Damage"
+	| "Shield"
+	| "Healing"
+	| "Cost"
+	| "MaxHP"
+	| "MaxEnergy"
+	| "ShieldGain"
+	| "CritChance"
+	| "CritMultiplier"
 
 export type Modifier = {
 	Id: string,

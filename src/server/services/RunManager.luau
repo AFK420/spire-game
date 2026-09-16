@@ -190,6 +190,8 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		IsDowned = false,
 		IsConnected = true,
 		VotedNodeId = nil,
+		EquippedItems = {},
+		EquipmentInventory = {},
 	}
 
 	currentRun.PartyMembers[userId] = pState
