@@ -437,11 +437,28 @@ test("Target = \"Enemy\"" in card_data_src and "WrenchThrow" in card_data_src, "
 test("Target = \"Enemy\"" in card_data_src and "SoulHarvest" in card_data_src, "SoulHarvest configured with Target = 'Enemy'")
 test("Target = \"Enemy\"" in card_data_src and "TimeWarp" in card_data_src, "TimeWarp configured with Target = 'Enemy'")
 
+# 39. Phase 2.3 End-to-End Mixed-Target Execution & Shield Gimmick Safety
+print("\n--- [Check 39] Phase 2.3 End-to-End Mixed-Target Execution & Shield Gimmick Safety ---")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+test("--- [Suite 38] End-to-End Mixed-Target Card Execution" in testrunner_src, "TestRunner includes Suite 38: End-to-End Mixed-Target Card Execution")
+test("[E2E ShieldSlam] Caster gained 8 Shield" in testrunner_src, "Suite 38 tests ShieldSlam shield and damage execution")
+test("[E2E WrenchThrow] Enemy took 7 damage" in testrunner_src, "Suite 38 tests WrenchThrow damage and shield execution")
+test("[E2E SoulHarvest] Injured caster healed 3 HP" in testrunner_src, "Suite 38 tests SoulHarvest damage and heal execution")
+test("[E2E DeployTurret] Caster gained 6 Shield" in testrunner_src, "Suite 38 tests DeployTurret shield and damage execution")
+test("[E2E TimeWarp] Caster gained 4 Shield" in testrunner_src, "Suite 38 tests TimeWarp damage and shield execution")
+test("[E2E PackCall] Caster gained 7 Shield" in testrunner_src, "Suite 38 tests PackCall shield and damage execution")
+test("[E2E Contagion] Enemy afflicted with 4 Poison stacks" in testrunner_src, "Suite 38 tests Contagion damage and poison execution")
+test("[E2E FirstAid] Downed ally successfully revived" in testrunner_src, "Suite 38 tests FirstAid revive and heal branches")
+test("[E2E BonusShield] Bonus Shield correctly added once without duplication" in testrunner_src, "Suite 38 tests Bonus Shield gimmick safety")
+combat_service_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+test("cardHasShieldEffect" in combat_service_src, "CombatService checks cardHasShieldEffect before applying bonus shield")
+test("ActionBonusShield" in combat_service_src, "CombatService routes bonus shield through ActionBonusShield modifier")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")
 
 if failed > 0:
-    sys.exit(1)
+	sys.exit(1)
 else:
     print("ALL LOGIC CHECKS VERIFIED 100% CLEAN!\n")

@@ -2279,8 +2279,282 @@ function TestRunner.runAllTests(): boolean
 	local okBRC, errBRC = CardData.validateCard(badResCard)
 	assertTest(okBRC == false and string.find(errBRC or "", "ModifyResource") ~= nil, "[CardValidator] ModifyResource targeting Enemy rejected")
 
+	----------------------------------------------------------------------------
+	-- TEST 38: End-to-End Mixed-Target Card Execution
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 38] End-to-End Mixed-Target Card Execution ---")
+
+	local e2eCaster: StateTypes.PlayerState = {
+		UserId = 38001,
+		PlayerInstance = nil,
+		DisplayName = "E2ECaster",
+		ClassId = "Warrior",
+		SubclassId = "Juggernaut",
+		Resources = { HP = 60, MaxHP = 80, Shield = 0, Energy = 10, MaxEnergy = 10 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 100,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local e2eAlly: StateTypes.PlayerState = {
+		UserId = 38002,
+		PlayerInstance = nil,
+		DisplayName = "E2EAlly",
+		ClassId = "Ranger",
+		SubclassId = "Marksman",
+		Resources = { HP = 40, MaxHP = 80, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 100,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local e2eEnemy: StateTypes.EnemyState = {
+		InstanceId = "e2e_target_dummy",
+		DefinitionId = "TrainingDummy",
+		Name = "E2E Training Dummy",
+		HP = 150,
+		MaxHP = 150,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10, TargetUserId = 38001 },
+		ModelRef = nil,
+	}
+
+	local e2eParty: { [number]: StateTypes.PlayerState } = {
+		[38001] = e2eCaster,
+		[38002] = e2eAlly,
+	}
+
+	local e2eCombatState: StateTypes.CombatState = {
+		CombatId = "combat_e2e_suite38",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = os.clock(),
+		TurnDuration = 45,
+		Participants = { 38001, 38002 },
+		Enemies = { ["e2e_target_dummy"] = e2eEnemy },
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+
+	local resolvedEnemy = TargetResolver.resolveTarget(
+		e2eCaster,
+		"Enemy",
+		"e2e_target_dummy",
+		e2eCombatState,
+		e2eParty
+	)
+	assertTest(resolvedEnemy.Success == true, "[E2E Target] Resolved enemy target successfully")
+
+	local resolvedAlly = TargetResolver.resolveTarget(
+		e2eCaster,
+		"Ally",
+		38002,
+		e2eCombatState,
+		e2eParty
+	)
+	assertTest(resolvedAlly.Success == true, "[E2E Target] Resolved ally target successfully")
+
+	-- 1. ShieldSlam: Caster gains 8 Shield, Enemy takes 8 damage, Enemy gains 0 shield
+	e2eCaster.Resources.Shield = 0
+	e2eEnemy.HP = 150
+	e2eEnemy.Shield = 0
+	local shieldSlamDef = CardData.getCard("ShieldSlam")
+	assert(shieldSlamDef ~= nil)
+	local ssInst = CardService.createCardInstance("ShieldSlam", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxShieldSlam: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = ssInst,
+		Modifiers = {},
+	}
+	local ssResults = EffectResolver.resolveEffects(shieldSlamDef.Effects, ctxShieldSlam)
+	assertTest(#ssResults == 2 and ssResults[1].Success and ssResults[2].Success, "[E2E ShieldSlam] Both effects executed successfully")
+	assertTest(e2eCaster.Resources.Shield == 8, string.format("[E2E ShieldSlam] Caster gained 8 Shield (Actual: %d)", e2eCaster.Resources.Shield))
+	assertTest(e2eEnemy.HP == 142, string.format("[E2E ShieldSlam] Enemy took 8 damage, 150 -> 142 (Actual: %d)", e2eEnemy.HP))
+	assertTest(e2eEnemy.Shield == 0, string.format("[E2E ShieldSlam] Enemy gained 0 shield (Actual: %d)", e2eEnemy.Shield))
+
+	-- 2. WrenchThrow: Enemy takes 7 damage, Caster gains 3 Shield
+	e2eCaster.Resources.Shield = 0
+	local wrenchThrowDef = CardData.getCard("WrenchThrow")
+	assert(wrenchThrowDef ~= nil)
+	local wtInst = CardService.createCardInstance("WrenchThrow", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxWrenchThrow: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = wtInst,
+		Modifiers = {},
+	}
+	local wtResults = EffectResolver.resolveEffects(wrenchThrowDef.Effects, ctxWrenchThrow)
+	assertTest(#wtResults == 2 and wtResults[1].Success and wtResults[2].Success, "[E2E WrenchThrow] Both effects executed successfully")
+	assertTest(e2eEnemy.HP == 135, string.format("[E2E WrenchThrow] Enemy took 7 damage, 142 -> 135 (Actual: %d)", e2eEnemy.HP))
+	assertTest(e2eCaster.Resources.Shield == 3, string.format("[E2E WrenchThrow] Caster gained 3 Shield (Actual: %d)", e2eCaster.Resources.Shield))
+
+	-- 3. SoulHarvest: Enemy takes 7 damage, injured Caster heals 3 HP
+	e2eCaster.Resources.HP = 50
+	local soulHarvestDef = CardData.getCard("SoulHarvest")
+	assert(soulHarvestDef ~= nil)
+	local shInst = CardService.createCardInstance("SoulHarvest", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxSoulHarvest: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = shInst,
+		Modifiers = {},
+	}
+	local shResults = EffectResolver.resolveEffects(soulHarvestDef.Effects, ctxSoulHarvest)
+	assertTest(#shResults == 2 and shResults[1].Success and shResults[2].Success, "[E2E SoulHarvest] Both effects executed successfully")
+	assertTest(e2eEnemy.HP == 128, string.format("[E2E SoulHarvest] Enemy took 7 damage, 135 -> 128 (Actual: %d)", e2eEnemy.HP))
+	assertTest(e2eCaster.Resources.HP == 53, string.format("[E2E SoulHarvest] Injured caster healed 3 HP, 50 -> 53 (Actual: %d)", e2eCaster.Resources.HP))
+
+	-- 4. DeployTurret: Caster gains 6 Shield, Enemy takes 6 damage
+	e2eCaster.Resources.Shield = 0
+	local deployTurretDef = CardData.getCard("DeployTurret")
+	assert(deployTurretDef ~= nil)
+	local dtInst = CardService.createCardInstance("DeployTurret", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxDeployTurret: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = dtInst,
+		Modifiers = {},
+	}
+	local dtResults = EffectResolver.resolveEffects(deployTurretDef.Effects, ctxDeployTurret)
+	assertTest(#dtResults == 2 and dtResults[1].Success and dtResults[2].Success, "[E2E DeployTurret] Both effects executed successfully")
+	assertTest(e2eCaster.Resources.Shield == 6, string.format("[E2E DeployTurret] Caster gained 6 Shield (Actual: %d)", e2eCaster.Resources.Shield))
+	assertTest(e2eEnemy.HP == 122, string.format("[E2E DeployTurret] Enemy took 6 damage, 128 -> 122 (Actual: %d)", e2eEnemy.HP))
+
+	-- 5. TimeWarp: Enemy takes 7 damage, Caster gains 4 Shield
+	e2eCaster.Resources.Shield = 0
+	local timeWarpDef = CardData.getCard("TimeWarp")
+	assert(timeWarpDef ~= nil)
+	local twInst = CardService.createCardInstance("TimeWarp", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxTimeWarp: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = twInst,
+		Modifiers = {},
+	}
+	local twResults = EffectResolver.resolveEffects(timeWarpDef.Effects, ctxTimeWarp)
+	assertTest(#twResults == 2 and twResults[1].Success and twResults[2].Success, "[E2E TimeWarp] Both effects executed successfully")
+	assertTest(e2eEnemy.HP == 115, string.format("[E2E TimeWarp] Enemy took 7 damage, 122 -> 115 (Actual: %d)", e2eEnemy.HP))
+	assertTest(e2eCaster.Resources.Shield == 4, string.format("[E2E TimeWarp] Caster gained 4 Shield (Actual: %d)", e2eCaster.Resources.Shield))
+
+	-- 6. PackCall: Caster gains 7 Shield, Enemy takes 4 damage
+	e2eCaster.Resources.Shield = 0
+	local packCallDef = CardData.getCard("PackCall")
+	assert(packCallDef ~= nil)
+	local pcInst = CardService.createCardInstance("PackCall", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxPackCall: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = pcInst,
+		Modifiers = {},
+	}
+	local pcResults = EffectResolver.resolveEffects(packCallDef.Effects, ctxPackCall)
+	assertTest(#pcResults == 2 and pcResults[1].Success and pcResults[2].Success, "[E2E PackCall] Both effects executed successfully")
+	assertTest(e2eCaster.Resources.Shield == 7, string.format("[E2E PackCall] Caster gained 7 Shield (Actual: %d)", e2eCaster.Resources.Shield))
+	assertTest(e2eEnemy.HP == 111, string.format("[E2E PackCall] Enemy took 4 damage, 115 -> 111 (Actual: %d)", e2eEnemy.HP))
+
+	-- 7. Contagion: Enemy takes 8 damage + 4 Poison stacks
+	e2eEnemy.Poison = 0
+	local contagionDef = CardData.getCard("Contagion")
+	assert(contagionDef ~= nil)
+	local contInst = CardService.createCardInstance("Contagion", e2eCaster.UserId) :: StateTypes.CardInstance
+	local ctxContagion: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = contInst,
+		Modifiers = {},
+	}
+	local contResults = EffectResolver.resolveEffects(contagionDef.Effects, ctxContagion)
+	assertTest(#contResults == 2 and contResults[1].Success and contResults[2].Success, "[E2E Contagion] Both effects executed successfully")
+	assertTest(e2eEnemy.HP == 103, string.format("[E2E Contagion] Enemy took 8 damage, 111 -> 103 (Actual: %d)", e2eEnemy.HP))
+	assertTest(e2eEnemy.Poison == 4, string.format("[E2E Contagion] Enemy afflicted with 4 Poison stacks (Actual: %d)", e2eEnemy.Poison))
+
+	-- 8. FirstAid: Downed ally revived, living ally healed
+	local firstAidDef2 = CardData.getCard("FirstAid")
+	assert(firstAidDef2 ~= nil)
+	local faInst = CardService.createCardInstance("FirstAid", e2eCaster.UserId) :: StateTypes.CardInstance
+	-- 8a. Downed ally
+	e2eAlly.IsDowned = true
+	e2eAlly.Resources.HP = 0
+	local ctxFirstAidDowned: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedAlly,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = faInst,
+		Modifiers = {},
+	}
+	local faDownedResults = EffectResolver.resolveEffects(firstAidDef2.Effects, ctxFirstAidDowned)
+	assertTest(e2eAlly.IsDowned == false, "[E2E FirstAid] Downed ally successfully revived")
+	assertTest(e2eAlly.Resources.HP == 30, string.format("[E2E FirstAid] Downed ally revived with 30 HP (Actual: %d)", e2eAlly.Resources.HP))
+
+	-- 8b. Living injured ally
+	e2eAlly.IsDowned = false
+	e2eAlly.Resources.HP = 40
+	local ctxFirstAidLiving: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedAlly,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = faInst,
+		Modifiers = {},
+	}
+	local faLivingResults = EffectResolver.resolveEffects(firstAidDef2.Effects, ctxFirstAidLiving)
+	assertTest(e2eAlly.Resources.HP == 70, string.format("[E2E FirstAid] Living ally healed 30 HP, 40 -> 70 (Actual: %d)", e2eAlly.Resources.HP))
+	assertTest(e2eAlly.IsDowned == false, "[E2E FirstAid] Living ally remains not downed")
+
+	-- 9. Bonus Shield Gimmick Safety (ActionBonusShield modifier applied exactly once)
+	e2eCaster.Resources.Shield = 0
+	local bonusShieldMod = ModifierResolver.createModifier(
+		"ActionBonusShield",
+		"GimmickAndRelics",
+		"Shield",
+		"Add",
+		4,
+		100
+	)
+	local ctxBonusShield: EffectResolver.ActionContext = {
+		SourcePlayer = e2eCaster,
+		Target = resolvedEnemy,
+		CombatState = e2eCombatState,
+		Party = e2eParty,
+		CardInstance = ssInst,
+		Modifiers = { bonusShieldMod },
+	}
+	local bonusShieldResults = EffectResolver.resolveEffects(shieldSlamDef.Effects, ctxBonusShield)
+	assertTest(bonusShieldResults[1].Success == true, "[E2E BonusShield] Shield effect executed successfully")
+	assertTest(e2eCaster.Resources.Shield == 12, string.format("[E2E BonusShield] Bonus Shield correctly added once without duplication: base 8 + 4 = 12 (Actual: %d)", e2eCaster.Resources.Shield))
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 2, 2.1 & 2.2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 2, 2.1, 2.2 & 2.3 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end
