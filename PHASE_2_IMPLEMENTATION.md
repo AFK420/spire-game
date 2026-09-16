@@ -128,3 +128,45 @@ To ensure that existing UI snapshots (`EnemyView.Poison`), network payloads, and
 - Phase 2 implementation is strictly confined to the gameplay foundation engine.
 - Equipment systems, passive skill trees, active skill trees, and large content rosters were **NOT** started.
 - `PHASE 3 STARTED: NO`
+
+---
+
+## 7. Phase 2.1 Engine Hardening & Correctness Pass
+
+A surgical hardening pass was conducted across the Phase 2 combat foundation to eliminate critical edge cases and enforce strict invariants:
+
+### 1. Card Pile Invariant & Exhaust Uniqueness
+- **Problem**: Playing a card moved it from `Hand` to `DiscardPile`, after which `handlers["Exhaust"]` inserted the same card instance into `ExhaustPile`, causing duplicate card instances across piles.
+- **Resolution**: Implemented `CardService.exhaustCard(playerState, instanceId)`, which removes the card from `Hand`, `DiscardPile`, or `Deck` before inserting it into `ExhaustPile` exactly once.
+- **Invariant**: A `CardInstance` exists in **EXACTLY ONE** pile at any time: `Deck` OR `Hand` OR `DiscardPile` OR `ExhaustPile`.
+
+### 2. Effect-Level Target Overrides
+- **Problem**: Secondary card effects (e.g. Damage Enemy + Shield Self) blindly targeted `context.Target`, causing player shields to be applied to enemies.
+- **Resolution**: Implemented `resolveEffectTarget(effect, context)` in `EffectResolver.luau`. If `effect.Target` is specified, `TargetResolver.resolveTarget` evaluates the specific target entity; otherwise it falls back to `context.Target`. All handlers now receive and consume `resolvedTarget`.
+
+### 3. Status Authority & Tick Behavior Registry
+- **Problem**: `StatusService.luau` hardcoded `if/elseif` chains for ticking and had stub statuses without implementation status.
+- **Resolution**:
+  - Distinguish implemented statuses (`Poison`, `Ignite`, `Bleed`) from planned statuses (`Chill`, `Freeze`, `Shock`) using `Implemented: boolean` and `TickBehaviorId: string?`.
+  - Replaced hardcoded conditionals with data-driven `tickBehaviors: { [string]: TickBehaviorFn }` (`DirectHPPoison`, `FireDoT`, `BleedDoT`).
+  - Added `StatusService.syncEntityFromProjection(targetId, targetEntity)` to reconcile external or legacy modifications into `StatusService`, establishing `StatusService` as the single canonical source of truth for active statuses.
+
+### 4. DamagePipeline Input Validation & Clamping
+- **Input Validation**: Rejects `RawDamage < 0` and missing target entities upfront, returning deterministic `{ FinalDamage = 0, ShieldAbsorbed = 0, HPLost = 0, IsDefeatedOrDowned = false }`.
+- **Invariant Clamping**: Enforces that entity `Shield` and `HP` are clamped to $\ge 0$ at every calculation step.
+
+### 5. Generalized Effects & Recursion Protection
+- **ModifyResource**: Supports typed resources (`HP`, `MaxHP`, `Shield`, `Energy`, `MaxEnergy`, `Gold`) with bounds clamping and downing detection. Rejects invalid resource types cleanly.
+- **TriggerEvent**: Validates non-empty `EventId`, logs custom combat events, and safely dispatches to `RelicService.triggerRelics`.
+- **Recursion Safety**: Protected against recursion depth leaks by wrapping handler resolution in `pcall` ensuring `currentDepth` is always decremented.
+
+### 6. Phase 2.1 Test Suite Expansion (29 Suites Total)
+- **Suite 23 (Suite A)**: Exhaust Pile Uniqueness & Pile Count Invariants.
+- **Suite 24 (Suite B)**: Effect-Level Target Overrides (Damage Enemy + Shield Self).
+- **Suite 25 (Suite C)**: ModifyResource Safety, Bounds Clamping, and Invalid Type Rejection.
+- **Suite 26 (Suite D)**: Event Triggering, Event Logging, and Recursion Depth Limit Safety.
+- **Suite 27 (Suite E)**: Status Authority, Projection Synchronization, and Tick Behavior Registry.
+- **Suite 28 (Suite F)**: Damage Pipeline Edge Cases (Negative Raw Damage, Missing Entities, Direct HP Bypass, Shield Overflow).
+- **Suite 29 (Suite G)**: Modifier Pipeline Determinism, Id Sorting, Override Precedence, and Immutability.
+- **Offline Integration Verifier**: 207 / 207 Checks Passed (100% clean).
+
