@@ -448,15 +448,49 @@ end
 
 -- 12. CreateCard Effect
 handlers["CreateCard"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
-	local cardDefId = effect.CardDefId or effect.StatusId or "Strike"
+	local cardDefId = effect.CardDefId
+	if not cardDefId or cardDefId == "" then
+		return {
+			Success = false,
+			EffectType = "CreateCard",
+			Message = "CreateCard requires a valid CardDefId.",
+		}
+	end
+
+	local cardDef = CardData.getCard(cardDefId)
+	if not cardDef then
+		return {
+			Success = false,
+			EffectType = "CreateCard",
+			Message = string.format("Unknown CardDefId '%s'.", cardDefId),
+		}
+	end
+
 	local inst = CardService.createCardInstance(cardDefId, context.SourcePlayer.UserId)
-	if inst then
+	if not inst then
+		return {
+			Success = false,
+			EffectType = "CreateCard",
+			Message = string.format("Failed to instantiate card '%s'.", cardDefId),
+		}
+	end
+
+	local dest = effect.DestinationPile or "Deck"
+	if dest == "Hand" then
+		context.SourcePlayer.Hand[inst.InstanceId] = inst
+	elseif dest == "DiscardPile" then
+		table.insert(context.SourcePlayer.DiscardPile, inst)
+	elseif dest == "ExhaustPile" then
+		table.insert(context.SourcePlayer.ExhaustPile, inst)
+	else
+		-- Default destination is Deck
 		table.insert(context.SourcePlayer.Deck, inst)
 	end
+
 	return {
 		Success = true,
 		EffectType = "CreateCard",
-		Message = string.format("Created card %s.", cardDefId),
+		Message = string.format("Created card %s in %s.", cardDefId, dest),
 	}
 end
 

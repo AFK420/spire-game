@@ -37,7 +37,8 @@ export type Effect = {
 	DamageType: string?,
 	Tags: { string }?,
 	Condition: string?,
-	CardDefId: string?,
+	CardDefId: string?, -- Definition ID of card to create for CreateCard effect
+	DestinationPile: string?, -- Target pile for CreateCard effect ("Deck", "Hand", "DiscardPile", "ExhaustPile"; defaults to "Deck")
 	Resource: ResourceType?,
 	EventId: string?,
 }
