@@ -57,7 +57,12 @@ Each service operates with single responsibility and strict interface boundaries
 | **`RelicService`** | `src/server/services/RelicService.luau` | Event-driven passive item triggers (`OnCombatStart`, `OnTurnStart`, `OnCardPlay`, `OnTurnEnd`, `OnDamageTaken`, `OnKill`). |
 | **`DungeonService`** | `src/server/services/DungeonService.luau` | Wraps procedural 4-Act, 10-Tier dungeon generation, adjacency validation, and path traversal. |
 | **`ArenaVisualizer`** | `src/server/services/ArenaVisualizer.luau` | Purely visual reactive layer. Builds 3D arena in Workspace, spawns physical enemy models with overhead BillboardGuis, and triggers attack/hit animations. |
-| **`CombatService`** | `src/server/services/CombatService.luau` | Authoritative multi-enemy combat engine. Governs monotonic turn timers (`os.clock()`), `CardInstanceId` resolution, co-op scaling, ready voting, and teammate downed/revive states. |
+| **`TargetResolver`** | `src/server/services/TargetResolver.luau` | Authoritative target entity validator (`Enemy`, `Self`, `Ally`, `None`), entity existence checks, alive/downed constraints, and disconnect safety. |
+| **`ModifierResolver`** | `src/server/services/ModifierResolver.luau` | Deterministic modifier calculation engine (Base -> Additive -> Multiplicative -> Final Value). |
+| **`DamagePipeline`** | `src/server/services/DamagePipeline.luau` | Multi-phase damage calculation and application, shield absorption, direct HP bypass (`CanHitShield = false`), and lethal transitions. |
+| **`StatusService`** | `src/server/services/StatusService.luau` | Central authority for statuses with Definition vs. Instance separation. Manages Poison, Ignite, Chill, Freeze, Shock, Bleed. |
+| **`EffectResolver`** | `src/server/services/EffectResolver.luau` | Data-driven generic effect dispatcher with recursion depth protection. Dispatches Damage, Heal, Shield, Revive, Status, Draw, Energy, etc. |
+| **`CombatService`** | `src/server/services/CombatService.luau` | Authoritative combat orchestrator. Governs turn flow, player action lifecycle, enemy action lifecycle, ready voting, and snapshot broadcasting. |
 | **`RunManager`** | `src/server/services/RunManager.luau` | Authoritative lifecycle engine for dungeon runs (`Lobby` $\to$ `MapSelect` $\to$ `ActiveRoom` $\to$ `Rewards` $\to$ `Victory`/`Defeat`). Coordinates party state and universal 3-card drafting. |
 
 ---
