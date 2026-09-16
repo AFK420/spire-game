@@ -277,26 +277,11 @@ NetworkService.UnlockPassiveEvent.OnServerEvent:Connect(function(player: Player,
 	end
 end)
 
--- 15. Unlock Skill Definition
+-- 15. Unlock Skill Definition (DISABLED: Client cannot authoritatively unlock skills)
 NetworkService.UnlockSkillEvent.OnServerEvent:Connect(function(player: Player, skillDefId: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(skillDefId) ~= "string" or #skillDefId == 0 then return end
-
-	local def = SkillData.getSkill(skillDefId)
-	if not def then
-		warn(string.format("[Server] UnlockSkill rejected invalid skillDefId '%s' for %s.", tostring(skillDefId), player.Name))
-		return
-	end
-
-	local pState = RunManager.getPlayerState(player.UserId)
-	if not pState then return end
-
-	local success, err = SkillService.unlockSkill(pState, skillDefId)
-	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s unlocked skill %s.", player.DisplayName, skillDefId))
-	elseif err then
-		warn(string.format("[Server] UnlockSkill failed for %s: %s", player.Name, err))
-	end
+	warn(string.format("[Server] UnlockSkillEvent rejected: client-authoritative skill unlocking is disabled for %s.", player.Name))
+	-- Strictly reject client-requested skill unlocks; skill acquisition is server-only.
 end)
 
 -- 16. Use Skill in Combat

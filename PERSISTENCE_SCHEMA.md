@@ -80,13 +80,29 @@ Loaded Raw Data
 
 ---
 
-## 4. Concurrency & Persistence Limitations
+## 4. Concurrency, Load States & Fail-Closed Protection
 
-### Current Implementation:
-- In-memory cache `activeProfiles[userId]` is the authoritative source of truth while the player is connected to the server.
-- Writes to profile state flow through `PersistenceService.mutateProfile(player, mutatorFn)` ensuring single-threaded atomicity per server.
-- Saves occur on `PlayerRemoving`, periodic autosave (`AUTOSAVE_INTERVAL = 300` seconds), and `game:BindToClose`.
+### 4.1 Load States (`ProfileLoadState`)
+Every player profile lifecycle is strictly governed by authoritative load states:
+- `"NotLoaded"`: Profile has not yet attempted loading from DataStore.
+- `"Loaded"`: Existing profile successfully fetched from DataStore and reconciled.
+- `"New"`: Genuinely new account (`GetAsync` returned `nil`) initialized with starter profile.
+- `"LoadFailed"`: DataStore `GetAsync` call failed or threw an error.
+- `"Saving"`: DataStore `UpdateAsync` write is currently in progress.
 
-### Migration to `UpdateAsync`:
-- For cross-server operations (e.g. future trading, external webhooks, or multi-place universes), DataStore writes will migrate from `SetAsync` to `UpdateAsync(key, transformFn)` to resolve conflicting updates transactionally.
-- Because `mutateProfile` isolates profile mutations through functional transforms, the logic is already 100% compatible with `UpdateAsync` callbacks.
+### 4.2 Strict Fail-Closed Guarantee
+To prevent catastrophic account wipes when Roblox DataStore experiences outages or rate limits:
+1. `loadProfile()` distinguishes between a clean `nil` result (genuinely new account) and a pcall failure (`LoadFailed`).
+2. If `GetAsync` fails, `loadProfile()`:
+   - Sets load state to `"LoadFailed"`.
+   - Returns `nil` without creating or substituting a starter profile.
+3. Every save pathway (`saveProfile`, `onPlayerRemoving`, autosave, `BindToClose`) strictly enforces:
+   `if loadState ~= "Loaded" and loadState ~= "New" then return false, "Cannot save" end`
+4. A failed load can **never** overwrite an existing player's DataStore record on disconnect or server shutdown.
+
+### 4.3 Concurrency & `UpdateAsync` Transactional Safety
+- Saving executes via `DataStore:UpdateAsync(userId, transformFn)`.
+- `PersistenceService.resolveUpdateConflict(currentData, profile)` verifies `currentData.LastSavedTimestamp <= profile.LastSavedTimestamp`.
+- If a newer session timestamp exists in DataStore (e.g. from a concurrent server session or teleport), the save aborts without overwriting remote data, maintaining cross-server consistency.
+- In-memory cache `activeProfiles[userId]` is the authoritative source of truth for the local server session, guarded by `mutateProfile`.
+

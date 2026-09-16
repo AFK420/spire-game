@@ -4445,14 +4445,47 @@ function TestRunner.runAllTests(): boolean
 	assertTest(#drawn == 4, "[RunIntegration] Drew 4 cards to hand")
 	assertTest(#pStateRun.Deck == 4, "[RunIntegration] Remaining draw pile has 4 cards")
 
+	-- Regression: Draw doesn't duplicate cards
+	local handCountDraw = 0
+	for _ in pStateRun.Hand do
+		handCountDraw += 1
+	end
+	assertTest(handCountDraw == 4, "[RunIntegration] Hand gained exactly 4 cards")
+	assertTest(#pStateRun.Deck + handCountDraw + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIntegration] Total card count across all piles remains 8 after draw")
+
+	local overlapFound = false
+	for _, deckCard in ipairs(pStateRun.Deck) do
+		if pStateRun.Hand[deckCard.InstanceId] ~= nil then
+			overlapFound = true
+			break
+		end
+	end
+	assertTest(not overlapFound, "[RunIntegration] Zero overlapping GUIDs between draw deck and hand")
+
+	-- Play moves exactly one card
 	local cardToPlay = drawn[1]
 	CardService.playCardFromHand(pStateRun, cardToPlay.InstanceId)
 	assertTest(pStateRun.Hand[cardToPlay.InstanceId] == nil, "[RunIntegration] Played card removed from hand")
 	assertTest(#pStateRun.DiscardPile == 1, "[RunIntegration] Played card placed in discard pile")
 
+	local handCountPlay = 0
+	for _ in pStateRun.Hand do
+		handCountPlay += 1
+	end
+	assertTest(handCountPlay == 3, "[RunIntegration] Hand count reduced by exactly 1 after play")
+	assertTest(#pStateRun.Deck + handCountPlay + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIntegration] Total card count across all piles remains 8 after play")
+
+	-- Exhaust moves exactly one card
 	local cardToExhaust = drawn[2]
 	CardService.exhaustCard(pStateRun, cardToExhaust.InstanceId)
 	assertTest(#pStateRun.ExhaustPile == 1, "[RunIntegration] Exhausted card placed in exhaust pile")
+
+	local handCountExhaust = 0
+	for _ in pStateRun.Hand do
+		handCountExhaust += 1
+	end
+	assertTest(handCountExhaust == 2, "[RunIntegration] Hand count reduced by exactly 1 after exhaust")
+	assertTest(#pStateRun.Deck + handCountExhaust + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIntegration] Total card count across all piles remains 8 after exhaust")
 
 	-- 5. Strict Invariant Verification: Persistent SavedDeck and Collection remain 100% untouched
 	local savedDeckAfterCombat = DeckService.getDeck(runPlayer, runDeck.DeckId)
@@ -4465,7 +4498,11 @@ function TestRunner.runAllTests(): boolean
 
 	-- 6. Mutating saved deck mid-run does NOT affect the active run
 	DeckService.saveDeck(runPlayer, runDeck.DeckId, { ["Strike"] = 3, ["Defend"] = 5 })
-	assertTest(#pStateRun.Deck + #drawn + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIsolation] Active run deck cardinality preserved despite persistent deck edit")
+	local handCountMidRun = 0
+	for _ in pStateRun.Hand do
+		handCountMidRun += 1
+	end
+	assertTest(#pStateRun.Deck + handCountMidRun + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIsolation] Active run deck cardinality preserved despite persistent deck edit")
 
 	----------------------------------------------------------------------------
 	-- [Suite 58] Phase 4 Network Security & Remote Contract Hardening
@@ -4508,6 +4545,174 @@ function TestRunner.runAllTests(): boolean
 	mockPlrInstance.UserId = 85001
 	local limitOk = NetworkService.checkRateLimit(mockPlrInstance, "General")
 	assertTest(limitOk == true, "[NetSecurity] General rate limiter permits standard requests")
+
+	----------------------------------------------------------------------------
+	-- [Suite 59] Phase 4.1 Persistence Safety, Migration Hardening & Security Audit
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 59] Phase 4.1 Persistence Safety, Migration Hardening & Security Audit ---")
+
+	-- 1. Load failure fail-closed behavior:
+	local failUserId = 86001
+	local failPlayer = { UserId = failUserId, Name = "FailTester" }
+	PersistenceService.resetForTesting(failUserId)
+	PersistenceService.setMockGetAsyncFailureForTesting(true)
+	local loadedProfile = PersistenceService.loadProfile(failPlayer)
+	assertTest(loadedProfile == nil, "[FailClosed] DataStore load failure returns nil profile")
+	assertTest(PersistenceService.getLoadState(failUserId) == "LoadFailed", "[FailClosed] Profile load state is LoadFailed")
+	assertTest(PersistenceService.isProfileLoaded(failPlayer) == false, "[FailClosed] isProfileLoaded returns false on load failure")
+
+	-- Attempting to save a failed profile must be rejected
+	local okSaveFailed, errSaveFailed = PersistenceService.saveProfile(failPlayer)
+	assertTest(okSaveFailed == false and string.find(errSaveFailed or "", "Cannot save") ~= nil, "[FailClosed] saveProfile rejected on LoadFailed state")
+
+	-- onPlayerRemoving must refuse to save when load failed
+	local okRemoveFailed, _ = PersistenceService.onPlayerRemoving(failPlayer)
+	assertTest(okRemoveFailed == false, "[FailClosed] onPlayerRemoving refuses to save on LoadFailed state")
+
+	-- Reset mock failure
+	PersistenceService.setMockGetAsyncFailureForTesting(false)
+	PersistenceService.resetForTesting(failUserId)
+
+	-- 2. Reconciliation rejects fractional card quantities in collection (e.g. 2.5)
+	local fractionalCollectionData = {
+		ProfileVersion = 1,
+		CardCollection = {
+			["Strike"] = 2.5,
+			["Defend"] = 4,
+		},
+	}
+	local reconciledFractionalCol = PersistenceService.reconcileForTesting(fractionalCollectionData, 86002)
+	assertTest(reconciledFractionalCol.CardCollection["Strike"] == nil, "[Reconciliation] Fractional card count in collection is rejected")
+	assertTest(reconciledFractionalCol.CardCollection["Defend"] == 4, "[Reconciliation] Valid integer card count in collection is preserved")
+
+	-- 3. Reconciliation rejects fractional card quantities in saved decks (e.g. 1.5)
+	local fractionalDeckData = {
+		ProfileVersion = 1,
+		Decks = {
+			["deck_frac_1"] = {
+				DeckId = "deck_frac_1",
+				Name = "Fractional Deck",
+				ClassId = "Knight",
+				Cards = {
+					["Strike"] = 1.5,
+					["Defend"] = 3,
+				},
+				CreatedAt = 1000,
+				UpdatedAt = 1000,
+			}
+		}
+	}
+	local reconciledFractionalDeck = PersistenceService.reconcileForTesting(fractionalDeckData, 86003)
+	assertTest(reconciledFractionalDeck.Decks["deck_frac_1"].Cards["Strike"] == nil, "[Reconciliation] Fractional card count in saved deck is rejected")
+	assertTest(reconciledFractionalDeck.Decks["deck_frac_1"].Cards["Defend"] == 3, "[Reconciliation] Valid integer card count in saved deck is preserved")
+
+	-- 4. Reconciliation repairs corrupt deck names (empty/whitespace -> "Custom Deck")
+	local blankNameDeckData = {
+		ProfileVersion = 1,
+		Decks = {
+			["deck_blank_1"] = {
+				DeckId = "deck_blank_1",
+				Name = "   ",
+				ClassId = "Knight",
+				Cards = { ["Strike"] = 5, ["Defend"] = 5 },
+				CreatedAt = 1000,
+				UpdatedAt = 1000,
+			}
+		}
+	}
+	local reconciledBlankDeck = PersistenceService.reconcileForTesting(blankNameDeckData, 86004)
+	assertTest(reconciledBlankDeck.Decks["deck_blank_1"].Name == "Custom Deck", "[Reconciliation] Blank/whitespace deck name repaired to Custom Deck")
+
+	-- 5. Reconciliation strips unknown cards from saved decks
+	local unknownCardDeckData = {
+		ProfileVersion = 1,
+		Decks = {
+			["deck_unknown_1"] = {
+				DeckId = "deck_unknown_1",
+				Name = "Exotic Deck",
+				ClassId = "Knight",
+				Cards = {
+					["NonExistentCard_XYZ"] = 3,
+					["Strike"] = 5,
+					["Defend"] = 5,
+				},
+				CreatedAt = 1000,
+				UpdatedAt = 1000,
+			}
+		}
+	}
+	local reconciledUnknownDeck = PersistenceService.reconcileForTesting(unknownCardDeckData, 86005)
+	assertTest(reconciledUnknownDeck.Decks["deck_unknown_1"].Cards["NonExistentCard_XYZ"] == nil, "[Reconciliation] Unknown card stripped from saved deck")
+	assertTest(reconciledUnknownDeck.Decks["deck_unknown_1"].Cards["Strike"] == 5, "[Reconciliation] Known cards retained in saved deck")
+
+	-- 6. Reconciliation repairs invalid DeckSlotEntitlement (e.g. -5 -> clamped to valid range)
+	local invalidSlotData = {
+		ProfileVersion = 1,
+		DeckSlotEntitlement = -5,
+	}
+	local reconciledSlotData = PersistenceService.reconcileForTesting(invalidSlotData, 86006)
+	assertTest(reconciledSlotData.DeckSlotEntitlement == GameConfig.Deck.BaseDeckSlots, "[Reconciliation] Negative DeckSlotEntitlement clamped to BaseDeckSlots")
+
+	local excessiveSlotData = {
+		ProfileVersion = 1,
+		DeckSlotEntitlement = 99999,
+	}
+	local reconciledExcessive = PersistenceService.reconcileForTesting(excessiveSlotData, 86007)
+	assertTest(reconciledExcessive.DeckSlotEntitlement == GameConfig.Deck.MaxPurchasableDeckSlots, "[Reconciliation] Excessive DeckSlotEntitlement clamped to MaxPurchasableDeckSlots")
+
+	-- 7. Active-deck fallback when active deck is invalid:
+	local fallbackPlayer = { UserId = 86008, Name = "FallbackTester" }
+	PersistenceService.resetForTesting(86008)
+	local okD1, _, deck1 = DeckService.createDeck(fallbackPlayer, "Valid Deck 1", { ["Strike"] = 5, ["Defend"] = 5 }, "Knight")
+	local okD2, _, deck2 = DeckService.createDeck(fallbackPlayer, "Valid Deck 2", { ["Strike"] = 4, ["Defend"] = 6 }, "Knight")
+	assert(okD1 and deck1 and okD2 and deck2, "Both fallback test decks created")
+
+	DeckService.setActiveDeck(fallbackPlayer, deck2.DeckId)
+	local fbProfile = PersistenceService.getProfile(fallbackPlayer)
+	-- Corrupt deck2 cards directly in profile to be invalid (< MinDeckSize cards)
+	fbProfile.Decks[deck2.DeckId].Cards = { ["Strike"] = 1 }
+
+	-- getActiveDeck must detect deck2 is invalid and fall back to valid deck1
+	local resolvedActive = DeckService.getActiveDeck(fallbackPlayer)
+	assertTest(resolvedActive ~= nil and resolvedActive.DeckId == deck1.DeckId, "[ActiveDeckFallback] Invalid active deck falls back to valid deck")
+	assertTest(fbProfile.ActiveDeckId == deck2.DeckId, "[ActiveDeckFallback] Read does not mutate persistent ActiveDeckId")
+
+	-- If all decks are invalid, getActiveDeck returns nil
+	fbProfile.Decks[deck1.DeckId].Cards = { ["Strike"] = 1 }
+	local noneActive = DeckService.getActiveDeck(fallbackPlayer)
+	assertTest(noneActive == nil, "[ActiveDeckFallback] Returns nil when zero decks are valid")
+
+	-- 8. Concurrency / UpdateAsync safety:
+	local olderProfile = {
+		ProfileVersion = 1,
+		AetherShards = 100,
+		LastSavedTimestamp = 1000,
+	} :: any
+	local newerRemoteData = {
+		ProfileVersion = 1,
+		AetherShards = 250,
+		LastSavedTimestamp = 2000,
+	}
+	local resolvedConflictData, appliedConflict = PersistenceService.resolveUpdateConflict(newerRemoteData, olderProfile)
+	assertTest(appliedConflict == false, "[ConcurrencySafety] Older session profile cannot overwrite newer remote DataStore data")
+	assertTest(resolvedConflictData.AetherShards == 250, "[ConcurrencySafety] Newer remote data is preserved")
+
+	local newerProfile = {
+		ProfileVersion = 1,
+		AetherShards = 300,
+		LastSavedTimestamp = 3000,
+	} :: any
+	local olderRemoteData = {
+		ProfileVersion = 1,
+		AetherShards = 250,
+		LastSavedTimestamp = 2000,
+	}
+	local resolvedNewerData, appliedNewer = PersistenceService.resolveUpdateConflict(olderRemoteData, newerProfile)
+	assertTest(appliedNewer == true, "[ConcurrencySafety] Newer session profile is permitted to update older remote DataStore data")
+	assertTest(resolvedNewerData.AetherShards == 300, "[ConcurrencySafety] Newer session profile applied")
+
+	-- 9. Remote security check: UnlockSkillEvent rejects client requests
+	assertTest(NetworkService.UnlockSkillEvent ~= nil, "[RemoteSecurity] UnlockSkillEvent exists")
 
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2, 3 & PHASE 4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))

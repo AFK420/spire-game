@@ -378,21 +378,32 @@ function DeckService.setActiveDeck(player: any, deckId: string): (boolean, strin
 	end)
 end
 
--- Returns the player's active saved deck, falling back safely if invalid or missing
+-- Returns the player's active saved deck if valid; otherwise finds a valid fallback deck, or returns nil
 function DeckService.getActiveDeck(player: any): StateTypes.SavedDeck?
 	local profile = PersistenceService.getProfile(player)
 	local activeId = profile.ActiveDeckId
 
+	-- 1. If active deck exists, check if it is structurally and playably valid
 	if activeId and profile.Decks[activeId] then
-		return deepCopy(profile.Decks[activeId])
+		local candidate = profile.Decks[activeId]
+		local isValid, _ = DeckService.validateDeck(player, candidate.Cards, candidate.ClassId)
+		if isValid then
+			return deepCopy(candidate)
+		end
 	end
 
-	-- Safe fallback: return first available deck
-	local firstDeckId, firstDeck = next(profile.Decks)
-	if firstDeck then
-		return deepCopy(firstDeck)
+	-- 2. Otherwise, deterministically find a valid fallback deck
+	local sortedDecks = DeckService.listDecks(player)
+	for _, deck in sortedDecks do
+		if deck.DeckId ~= activeId then
+			local isValid, _ = DeckService.validateDeck(player, deck.Cards, deck.ClassId)
+			if isValid then
+				return deepCopy(deck)
+			end
+		end
 	end
 
+	-- 3. If no valid saved deck exists, return nil (ClassService will use default class starter deck)
 	return nil
 end
 

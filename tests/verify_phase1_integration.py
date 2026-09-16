@@ -865,6 +865,54 @@ test("[NetSecurity] Saving card count exceeding collection ownership rejected" i
 test("[NetSecurity] Saving into non-existent deck rejected" in testrunner_src, "Suite 58 tests non-existent deck save rejection")
 test("[NetSecurity] General rate limiter permits standard requests" in testrunner_src, "Suite 58 tests rate limiting on Phase 4 requests")
 
+# 49. Phase 4.1 Persistence Safety, Migration Hardening & Deck Audit
+print("\n--- [Check 49] Phase 4.1 Persistence Safety, Migration Hardening & Security Audit ---")
+persistence_service_src = (ROOT / "src/server/services/PersistenceService.luau").read_text(encoding="utf-8")
+deck_service_src = (ROOT / "src/server/services/DeckService.luau").read_text(encoding="utf-8")
+
+# PersistenceService fail-closed & concurrency invariants
+test("ProfileLoadState" in persistence_service_src, "PersistenceService defines ProfileLoadState type")
+test("PersistenceService.getLoadState(" in persistence_service_src, "PersistenceService implements getLoadState")
+test("PersistenceService.isProfileLoaded(" in persistence_service_src, "PersistenceService implements isProfileLoaded")
+test("PersistenceService.onPlayerRemoving(" in persistence_service_src, "PersistenceService implements onPlayerRemoving")
+test("PersistenceService.resolveUpdateConflict(" in persistence_service_src, "PersistenceService implements resolveUpdateConflict")
+test("UpdateAsync(" in persistence_service_src, "PersistenceService uses UpdateAsync for concurrency safety")
+test('loadState ~= "Loaded" and loadState ~= "New"' in persistence_service_src, "PersistenceService enforces fail-closed save guard")
+
+# DeckService active deck fallback
+test("function DeckService.getActiveDeck(" in deck_service_src, "DeckService implements getActiveDeck")
+test("DeckService.validateDeck(player, candidate.Cards, candidate.ClassId)" in deck_service_src, "getActiveDeck validates active candidate")
+test("DeckService.listDecks(player)" in deck_service_src, "getActiveDeck searches sorted decks on fallback")
+
+# Network / ServerInit skill minting protection
+test("UnlockSkillEvent rejected: client-authoritative skill unlocking is disabled" in server_init_src, "init.server.luau rejects client UnlockSkillEvent requests")
+
+# Suite 57 regression fix & Suite 59 checks in TestRunner
+test("local handCountDraw = 0" in testrunner_src, "Suite 57 computes dynamic active handCount after draw")
+test("Total card count across all piles remains 8 after draw" in testrunner_src, "Suite 57 tests draw cardinality invariant")
+test("Zero overlapping GUIDs between draw deck and hand" in testrunner_src, "Suite 57 tests draw uniqueness invariant")
+test("Hand count reduced by exactly 1 after play" in testrunner_src, "Suite 57 tests play cardinality invariant")
+test("Hand count reduced by exactly 1 after exhaust" in testrunner_src, "Suite 57 tests exhaust cardinality invariant")
+
+test("--- [Suite 59] Phase 4.1 Persistence Safety, Migration Hardening & Security Audit" in testrunner_src, "TestRunner includes Suite 59: Persistence Safety & Audit")
+test("[FailClosed] DataStore load failure returns nil profile" in testrunner_src, "Suite 59 tests load failure returns nil")
+test("[FailClosed] Profile load state is LoadFailed" in testrunner_src, "Suite 59 tests ProfileLoadState is LoadFailed")
+test("[FailClosed] isProfileLoaded returns false on load failure" in testrunner_src, "Suite 59 tests isProfileLoaded returns false on failure")
+test("[FailClosed] saveProfile rejected on LoadFailed state" in testrunner_src, "Suite 59 tests saveProfile fail-closed rejection")
+test("[FailClosed] onPlayerRemoving refuses to save on LoadFailed state" in testrunner_src, "Suite 59 tests onPlayerRemoving refuses save on failure")
+test("[Reconciliation] Fractional card count in collection is rejected" in testrunner_src, "Suite 59 tests collection fractional card rejection")
+test("[Reconciliation] Fractional card count in saved deck is rejected" in testrunner_src, "Suite 59 tests saved deck fractional card rejection")
+test("[Reconciliation] Blank/whitespace deck name repaired to Custom Deck" in testrunner_src, "Suite 59 tests blank deck name auto-repair")
+test("[Reconciliation] Unknown card stripped from saved deck" in testrunner_src, "Suite 59 tests unknown card stripping during reconcile")
+test("[Reconciliation] Negative DeckSlotEntitlement clamped to BaseDeckSlots" in testrunner_src, "Suite 59 tests negative slot entitlement clamping")
+test("[Reconciliation] Excessive DeckSlotEntitlement clamped to MaxPurchasableDeckSlots" in testrunner_src, "Suite 59 tests excessive slot entitlement clamping")
+test("[ActiveDeckFallback] Invalid active deck falls back to valid deck" in testrunner_src, "Suite 59 tests active deck invalid fallback")
+test("[ActiveDeckFallback] Read does not mutate persistent ActiveDeckId" in testrunner_src, "Suite 59 tests active deck read non-mutating")
+test("[ActiveDeckFallback] Returns nil when zero decks are valid" in testrunner_src, "Suite 59 tests active deck returns nil when no valid decks")
+test("[ConcurrencySafety] Older session profile cannot overwrite newer remote DataStore data" in testrunner_src, "Suite 59 tests concurrency timestamp conflict detection")
+test("[ConcurrencySafety] Newer session profile is permitted to update older remote DataStore data" in testrunner_src, "Suite 59 tests concurrency timestamp update success")
+test("[RemoteSecurity] UnlockSkillEvent exists" in testrunner_src, "Suite 59 tests UnlockSkillEvent existence")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")
