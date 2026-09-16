@@ -137,17 +137,29 @@ Suite 44 in `TestRunner.luau` verifies the complete end-to-end flow:
 
 ## 4. Test Suite Summary
 
-The test runner now covers **44 distinct test suites** and **332 automated assertions**:
+The test runner now covers **50 distinct test suites** and **395 automated assertions**:
 
 - **Suite 40**: Phase 3 Equipment Foundation (Creation, slot assignment, equip/unequip lifecycle, single-slot replacement, inventory tracking, owner mismatch rejection, modifier aggregation).
 - **Suite 41**: Phase 3 Centralized Stat Resolution (Base class stats, additive stacking, multiplicative stacking, absolute override precedence, stat bounds clamping, derived stat synchronization).
 - **Suite 42**: Phase 3 Passive Tree & Graph Validation (Canonical DAG validation, cycle detection, self-cycle rejection, missing prerequisite rejection, duplicate ID rejection, player unlock lifecycle, prerequisite enforcement, point deduction, class mismatch rejection).
 - **Suite 43**: Phase 3 Active Skills Runtime (Creation, class eligibility, slot equipping, authoritative execution, energy deduction, cooldown setting, cooldown prevention, turn start decrements, energy exhaustion rejection).
 - **Suite 44**: Complete Vertical Slice End-to-End Test (Full chain integration from player state, equipment, passives, active skills, damage pipeline, to combat state updates).
+- **Suite 45**: Phase 3.1 Equipment Authority Hardening (Forged slot tampering rejection, inventory absence rejection, authoritative provisioning via `grantEquipment`, duplicate equipped instance prevention, slot replacement preservation, deterministic modifier ordering).
+- **Suite 46**: Phase 3.1 Active Skill Ownership & Cooldown Hardening (Unowned skill equip rejection, authoritative unlock via `unlockSkill`, runtime `SkillSlot` validation, class restriction enforcement, duplicate equipped instance rejection, runtime cooldown isolation).
+- **Suite 47**: Phase 3.1 Passive Tree Hardening & Negative Modifier Stacking (Empty string ID rejection, non-array prerequisite rejection, empty string prerequisite rejection, keystone `TitanStance` negative MaxEnergy stacking, derived stat synchronization, deterministic modifier sorting).
+- **Suite 48**: Phase 3.1 Active Skill Transactional Execution (Disconnected player rejection, downed player rejection, non-PlayerPhase rejection, target failure zero-cost & zero-cooldown rollback, defeated enemy rejection, successful execution).
+- **Suite 49**: Phase 3.1 Network Contracts & Remote Event Authority (All 6 RemoteEvents registered in `NetworkService`, category rate limiting enforcement, player-inferred sender authority).
+- **Suite 50**: Phase 3.1 Extended Vertical Slice End-to-End (Complete expedition lifecycle: gear provisioning & equipping, passive unlocks, skill unlocks, transactional execution, cooldown enforcement and turn reset, and gear unequip modifier cleanup with zero stale leaks).
 
 ---
 
-## 5. Scope Boundaries & Intentional Deferrals
+## 5. Phase 3.1 Hardening Architecture
+
+For complete details on Phase 3.1 hardening changes, state boundaries (ephemeral run vs persistent account profile), and formal stat semantics, see [PHASE_3.1_HARDENING.md](file:///c:/Users/owner/Documents/spire-game/PHASE_3.1_HARDENING.md).
+
+---
+
+## 6. Scope Boundaries & Intentional Deferrals
 
 To maintain surgical focus and avoid content sprawl, the following systems remain intentionally unstarted and deferred to subsequent phases:
 
@@ -155,4 +167,5 @@ To maintain surgical focus and avoid content sprawl, the following systems remai
 - 100s of equipment items (only representative Weapon, Armor, and Accessory definitions are instantiated).
 - Full skill rosters (only representative attack, defense, buff, and class skills are instantiated).
 - CraftingService, MonetizationService, BattlePassService (verified absent by verification suite).
+- Persistent Account Profiles (deferred to Phase 4+; clear state boundaries established in `StateTypes.luau`).
 - Complex UI visualizers for skill bars and passive trees (visual presentation deferred to client polish pass).

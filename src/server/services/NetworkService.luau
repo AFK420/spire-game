@@ -54,6 +54,14 @@ NetworkService.ClaimRewardCardEvent = getOrCreateRemoteEvent("ClaimRewardCard")
 NetworkService.ContinueFromRewardsEvent = getOrCreateRemoteEvent("ContinueFromRewards")
 NetworkService.RequestStateSyncEvent = getOrCreateRemoteEvent("RequestStateSync")
 
+-- Phase 3.1 RPG Foundation Action Events
+NetworkService.EquipEquipmentEvent = getOrCreateRemoteEvent("EquipEquipment")
+NetworkService.UnequipEquipmentEvent = getOrCreateRemoteEvent("UnequipEquipment")
+NetworkService.EquipSkillEvent = getOrCreateRemoteEvent("EquipSkill")
+NetworkService.UnequipSkillEvent = getOrCreateRemoteEvent("UnequipSkill")
+NetworkService.UnlockPassiveEvent = getOrCreateRemoteEvent("UnlockPassive")
+NetworkService.UseSkillEvent = getOrCreateRemoteEvent("UseSkill")
+
 -- Server -> Client State & Feedback Events
 NetworkService.RunStateUpdateEvent = getOrCreateRemoteEvent("RunStateUpdate")
 NetworkService.CombatStateUpdateEvent = getOrCreateRemoteEvent("CombatStateUpdate")

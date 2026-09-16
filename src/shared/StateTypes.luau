@@ -86,11 +86,23 @@ export type PlayerState = {
 	IsDowned: boolean,
 	IsConnected: boolean?,
 	VotedNodeId: string?,
-	-- Phase 3 Run-Scoped Equipment
+	-- =========================================================================
+	-- Phase 3 / 3.1 Run-Scoped Progression State
+	-- These fields are ephemeral and bound strictly to the current expedition run.
+	--
+	-- FUTURE PERSISTENT ACCOUNT PROFILE STATE (DEFERRED TO PHASE 4+):
+	-- The following systems are NOT run-scoped and must eventually reside in
+	-- PersistenceService profile data once designed:
+	--   * Permanent Card Collection & Deck Presets/Slots
+	--   * Account Equipment Armory / Collection
+	--   * Permanent Skill Mastery / Unlock Entitlements
+	--   * Class Meta-Progression / Permanent Talent Trees
+	--   * Permanent Currencies (Aether Shards, Gems) & Gacha Pity Banners
+	-- =========================================================================
 	EquippedItems: { [EquipmentSlot]: EquipmentInstance }?,
 	EquipmentInventory: { EquipmentInstance }?,
-	-- Phase 3 Run-Scoped Skills & Passives
 	EquippedSkills: { [SkillSlot]: SkillInstance }?,
+	UnlockedSkills: { [string]: boolean }?, -- Skills legitimately unlocked for this run
 	UnlockedPassives: { [string]: boolean }?,
 	PassivePoints: number?,
 }

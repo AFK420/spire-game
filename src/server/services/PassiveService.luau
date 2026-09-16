@@ -117,6 +117,14 @@ function PassiveService.collectModifiers(playerState: StateTypes.PlayerState): {
 		end
 	end
 
+	-- Sort deterministically: Priority ascending, then Id alphabetical
+	table.sort(modifiers, function(a, b)
+		if a.Priority == b.Priority then
+			return a.Id < b.Id
+		end
+		return a.Priority < b.Priority
+	end)
+
 	return modifiers
 end
 

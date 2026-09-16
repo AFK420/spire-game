@@ -3,10 +3,78 @@
 	StatResolver ModuleScript
 	Mapped to: ServerScriptService.Server.services.StatResolver
 
-	Centralized deterministic calculation layer for player and entity stats (Phase 3).
+	Centralized deterministic calculation layer for player and entity stats (Phase 3 / 3.1):
 	Pipeline: Base Stat -> Additive Modifiers -> Multiplicative Modifiers -> Clamped Final Stat.
 	Supports absolute Override precedence.
 	Aggregates modifiers across Equipment, Class Passives, and active Combat modifiers.
+
+	=============================================================================
+	STAT SEMANTICS SPECIFICATION (9 Supported ModifierStats):
+	-----------------------------------------------------------------------------
+	1. "Damage"
+	   - Base: Raw damage from card/skill action or 0 for player bonus attack.
+	   - Add: Flat bonus/penalty. Negative additives supported (e.g. weakness debuffs).
+	   - Multiply: Percentage scaling factor (e.g. 1.5 for +50% vulnerable).
+	   - Override: Forces fixed damage value directly (e.g. execute effects).
+	   - Final: Clamped to math.max(0, math.floor(val + 0.5)).
+
+	2. "Shield"
+	   - Base: Raw shield value from defensive card/skill.
+	   - Add: Flat bonus shield from passives, relics, or synergies.
+	   - Multiply: Percentage scaling factor.
+	   - Override: Forces fixed shield value.
+	   - Final: Clamped to math.max(0, math.floor(val + 0.5)).
+
+	3. "ShieldGain"
+	   - Base: 0 (player baseline shield gain bonus).
+	   - Add: Flat bonus shield added to all shield-granting actions (e.g. armor +4).
+	   - Multiply: Scaling factor.
+	   - Override: Fixed bonus shield gain.
+	   - Final: Clamped to math.max(0, math.floor(val + 0.5)).
+
+	4. "Healing"
+	   - Base: Raw healing from support card/skill or 0 for player bonus healing.
+	   - Add: Flat bonus healing.
+	   - Multiply: Percentage scaling factor.
+	   - Override: Fixed healing value.
+	   - Final: Clamped to math.max(0, math.floor(val + 0.5)).
+
+	5. "Cost"
+	   - Base: Action base energy cost (e.g. 2) or 0 for player flat cost reduction.
+	   - Add: Energy adjustments. Negative additives represent cost reductions (e.g. -1).
+	          Positive additives represent energy tax/curse penalties (e.g. +1).
+	   - Multiply: Multiplier scaling on cost.
+	   - Override: Fixed cost override (e.g. 0 for free action gimmick).
+	   - Final: Strictly clamped to math.max(0, math.floor(val + 0.5)). Negative costs are forbidden.
+
+	6. "MaxHP"
+	   - Base: HeroClass.MaxHp (e.g. Warlord 110).
+	   - Add: Flat MaxHP adjustments (e.g. gear +10, passive +15). Negative additives supported.
+	   - Multiply: Percentage MaxHP scaling.
+	   - Override: Fixed MaxHP.
+	   - Final: Strictly clamped to math.max(1, math.floor(val + 0.5)). MaxHP can never drop below 1.
+
+	7. "MaxEnergy"
+	   - Base: HeroClass.StartingEnergy (e.g. 3).
+	   - Add: Flat energy adjustments. Negative additives supported (e.g. TitanStance -1 MaxEnergy).
+	   - Multiply: Energy multiplier.
+	   - Override: Fixed MaxEnergy.
+	   - Final: Strictly clamped to math.max(0, math.floor(val + 0.5)).
+
+	8. "CritChance"
+	   - Base: Default baseline 0.05 (5%).
+	   - Add: Flat crit chance bonus (e.g. +0.10 for +10%).
+	   - Multiply: Scaling factor on crit chance.
+	   - Override: Fixed crit chance (e.g. 1.0 for guaranteed critical hit).
+	   - Final: Floating point clamped to [0.0, 1.0] range.
+
+	9. "CritMultiplier"
+	   - Base: Default baseline 1.5 (150% crit damage).
+	   - Add: Flat crit damage bonus (e.g. +0.5 for 200% total crit damage).
+	   - Multiply: Multiplier on crit damage scaling.
+	   - Override: Fixed crit multiplier.
+	   - Final: Floating point clamped to math.max(1.0, val). Crit damage can never fall below 100%.
+	=============================================================================
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -31,7 +99,7 @@ local function getEquipmentService(): any?
 	return nil
 end
 
--- Safely requires PassiveService (available in Commit 4)
+-- Safely requires PassiveService
 local function getPassiveService(): any?
 	local mod = Services:FindFirstChild("PassiveService")
 	if mod and mod:IsA("ModuleScript") then
@@ -102,7 +170,7 @@ function StatResolver.resolveStat(
 		currentValue = overrideMod.Value
 		table.insert(applied, overrideMod)
 	else
-		-- 4. Apply Additive Modifiers
+		-- 4. Apply Additive Modifiers (negative additives are permitted where intentionally supported)
 		for _, mod in applicable do
 			if mod.Operation == "Add" then
 				currentValue += mod.Value
@@ -169,6 +237,14 @@ function StatResolver.collectPlayerModifiers(
 		end
 	end
 
+	-- Sort all collected modifiers deterministically
+	table.sort(allModifiers, function(a, b)
+		if a.Priority == b.Priority then
+			return a.Id < b.Id
+		end
+		return a.Priority < b.Priority
+	end)
+
 	return allModifiers
 end
 
@@ -231,7 +307,7 @@ function StatResolver.syncPlayerDerivedStats(playerState: StateTypes.PlayerState
 end
 
 function StatResolver.init()
-	print("[StatResolver] Initialized centralized stat resolution engine.")
+	print("[StatResolver] Initialized centralized stat resolution engine with Phase 3.1 hardening.")
 end
 
 return StatResolver

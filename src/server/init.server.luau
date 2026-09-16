@@ -25,6 +25,9 @@ local DungeonService = require(services:WaitForChild("DungeonService") :: Module
 local ArenaVisualizer = require(services:WaitForChild("ArenaVisualizer") :: ModuleScript)
 local CombatService = require(services:WaitForChild("CombatService") :: ModuleScript)
 local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
+local EquipmentService = require(services:WaitForChild("EquipmentService") :: ModuleScript)
+local SkillService = require(services:WaitForChild("SkillService") :: ModuleScript)
+local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
 local TestRunner = require(services:WaitForChild("TestRunner") :: ModuleScript)
 
 print("============================================================")
@@ -42,6 +45,9 @@ CardService.init()
 EffectResolver.init()
 ClassService.init()
 RelicService.init()
+EquipmentService.init()
+SkillService.init()
+PassiveService.init()
 DungeonService.init()
 ArenaVisualizer.init()
 CombatService.init()
@@ -153,6 +159,100 @@ NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Play
 	local combatSnapshot = CombatService.getCombatSnapshotForPlayer(player)
 	if combatSnapshot then
 		NetworkService.sendCombatState(player, combatSnapshot)
+	end
+end)
+
+-- 10. Equip Equipment
+NetworkService.EquipEquipmentEvent.OnServerEvent:Connect(function(player: Player, equipmentInstanceId: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(equipmentInstanceId) ~= "string" then return end
+
+	local pState = RunManager.getPlayerState(player.UserId)
+	if not pState then return end
+
+	local success, err = EquipmentService.equipItem(pState, equipmentInstanceId)
+	if success then
+		RunManager.broadcastRunSnapshots(string.format("%s equipped gear.", player.DisplayName))
+	elseif err then
+		warn(string.format("[Server] EquipEquipment failed for %s: %s", player.Name, err))
+	end
+end)
+
+-- 11. Unequip Equipment
+NetworkService.UnequipEquipmentEvent.OnServerEvent:Connect(function(player: Player, slot: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(slot) ~= "string" then return end
+
+	local pState = RunManager.getPlayerState(player.UserId)
+	if not pState then return end
+
+	local success, err = EquipmentService.unequipItem(pState, slot :: any)
+	if success then
+		RunManager.broadcastRunSnapshots(string.format("%s unequipped %s.", player.DisplayName, tostring(slot)))
+	elseif err then
+		warn(string.format("[Server] UnequipEquipment failed for %s: %s", player.Name, err))
+	end
+end)
+
+-- 12. Equip Skill
+NetworkService.EquipSkillEvent.OnServerEvent:Connect(function(player: Player, skillDefId: any, slot: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(skillDefId) ~= "string" or typeof(slot) ~= "string" then return end
+
+	local pState = RunManager.getPlayerState(player.UserId)
+	if not pState then return end
+
+	local skillInst = SkillService.createInstance(skillDefId, player.UserId, slot :: any)
+	if not skillInst then return end
+
+	local success, err = SkillService.equipSkill(pState, skillInst)
+	if success then
+		RunManager.broadcastRunSnapshots(string.format("%s equipped skill %s.", player.DisplayName, skillDefId))
+	elseif err then
+		warn(string.format("[Server] EquipSkill failed for %s: %s", player.Name, err))
+	end
+end)
+
+-- 13. Unequip Skill
+NetworkService.UnequipSkillEvent.OnServerEvent:Connect(function(player: Player, slot: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(slot) ~= "string" then return end
+
+	local pState = RunManager.getPlayerState(player.UserId)
+	if not pState then return end
+
+	local success, err = SkillService.unequipSkill(pState, slot :: any)
+	if success then
+		RunManager.broadcastRunSnapshots(string.format("%s unequipped skill %s.", player.DisplayName, tostring(slot)))
+	elseif err then
+		warn(string.format("[Server] UnequipSkill failed for %s: %s", player.Name, err))
+	end
+end)
+
+-- 14. Unlock Passive Node
+NetworkService.UnlockPassiveEvent.OnServerEvent:Connect(function(player: Player, nodeId: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(nodeId) ~= "string" then return end
+
+	local pState = RunManager.getPlayerState(player.UserId)
+	if not pState then return end
+
+	local success, err = PassiveService.unlockNode(pState, nodeId)
+	if success then
+		RunManager.broadcastRunSnapshots(string.format("%s unlocked passive node %s.", player.DisplayName, nodeId))
+	elseif err then
+		warn(string.format("[Server] UnlockPassive failed for %s: %s", player.Name, err))
+	end
+end)
+
+-- 15. Use Skill in Combat
+NetworkService.UseSkillEvent.OnServerEvent:Connect(function(player: Player, slot: any, targetParam: any)
+	if not NetworkService.checkRateLimit(player, "Combat") then return end
+	if typeof(slot) ~= "string" then return end
+
+	local success, err = CombatService.useSkill(player, slot :: any, targetParam)
+	if not success and err then
+		warn(string.format("[Server] UseSkill failed for %s: %s", player.Name, err))
 	end
 end)
 

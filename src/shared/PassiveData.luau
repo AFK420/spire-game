@@ -179,6 +179,9 @@ function PassiveData.validateNodes(nodes: { PassiveNodeDefinition }): (boolean, 
 
 	-- 1. Check for duplicate IDs and build map
 	for _, node in nodes do
+		if not node.Id or typeof(node.Id) ~= "string" or node.Id == "" then
+			return false, "Node ID must be a non-empty string."
+		end
 		if seenIds[node.Id] then
 			return false, string.format("Duplicate node Id '%s' detected.", node.Id)
 		end
@@ -188,7 +191,13 @@ function PassiveData.validateNodes(nodes: { PassiveNodeDefinition }): (boolean, 
 
 	-- 2. Check for broken / missing prerequisites
 	for _, node in nodes do
+		if typeof(node.Prerequisites) ~= "table" then
+			return false, string.format("Node '%s' has malformed Prerequisites array (must be a table).", node.Id)
+		end
 		for _, prereqId in node.Prerequisites do
+			if typeof(prereqId) ~= "string" or prereqId == "" then
+				return false, string.format("Node '%s' contains invalid non-empty string prerequisite identifier.", node.Id)
+			end
 			if prereqId == node.Id then
 				return false, string.format("Node '%s' cannot have itself as a prerequisite (self-cycle).", node.Id)
 			end

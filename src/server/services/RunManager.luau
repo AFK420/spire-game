@@ -193,6 +193,12 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		EquippedItems = {},
 		EquipmentInventory = {},
 		EquippedSkills = {},
+		UnlockedSkills = {
+			["HeroicStrike"] = true,
+			["AegisBarrier"] = true,
+			["BattleRally"] = true,
+			["Whirlwind"] = true,
+		},
 		UnlockedPassives = {},
 		PassivePoints = 0,
 	}

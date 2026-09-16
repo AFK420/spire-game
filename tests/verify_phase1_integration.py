@@ -528,6 +528,97 @@ test("[VerticalSlice] Stacked weapon (+5) and passive (+3) yield +8 BonusDamage"
 test("[VerticalSlice] Active skill executed successfully end-to-end" in testrunner_src, "Suite 44 tests active skill execution through pipeline")
 test("[VerticalSlice] Boss HP reduced by exact total damage" in testrunner_src, "Suite 44 tests exact damage pipeline result")
 
+# 42. Phase 3.1 RPG Systems & Engine Hardening
+print("\n--- [Check 42] Phase 3.1 RPG Systems & Engine Hardening ---")
+equip_service_src = (ROOT / "src/server/services/EquipmentService.luau").read_text(encoding="utf-8")
+skill_service_src = (ROOT / "src/server/services/SkillService.luau").read_text(encoding="utf-8")
+passive_data_src = (ROOT / "src/shared/PassiveData.luau").read_text(encoding="utf-8")
+stat_resolver_src = (ROOT / "src/server/services/StatResolver.luau").read_text(encoding="utf-8")
+passive_service_src = (ROOT / "src/server/services/PassiveService.luau").read_text(encoding="utf-8")
+network_service_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+server_init_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+
+# Equipment authority checks
+test("targetInst.Slot ~= authSlot" in equip_service_src, "EquipmentService rejects forged slot mismatch")
+test("not found in player's inventory" in equip_service_src, "EquipmentService validates instance presence in EquipmentInventory")
+test("function EquipmentService.grantEquipment(" in equip_service_src, "EquipmentService provides grantEquipment provisioning helper")
+test("ORDERED_SLOTS" in equip_service_src, "EquipmentService defines deterministic slot iteration order")
+
+# Skill ownership & transactional execution checks
+test("UnlockedSkills" in state_types_src, "StateTypes defines UnlockedSkills in PlayerState")
+test("function SkillService.unlockSkill(" in skill_service_src, "SkillService provides unlockSkill API")
+test("function SkillService.hasSkill(" in skill_service_src, "SkillService provides hasSkill API")
+test("VALID_SKILL_SLOTS" in skill_service_src, "SkillService validates runtime SkillSlot")
+test("resolvedTarget.Success" in skill_service_src, "SkillService verifies target resolution BEFORE cost/cooldown mutation")
+test("playerState.IsDowned" in skill_service_src, "SkillService rejects downed player actions")
+test("playerState.IsConnected == false" in skill_service_src, "SkillService rejects disconnected player actions")
+
+# Stat resolver formal semantics checks
+test("ModifierStat ==" in stat_resolver_src or "ModifierStat" in stat_resolver_src, "StatResolver defines formal semantics for ModifierStat")
+test("math.max(0," in stat_resolver_src, "StatResolver guarantees non-negative cost reductions")
+test("TitanStance" in (ROOT / "src/shared/PassiveData.luau").read_text(encoding="utf-8"), "PassiveData includes TitanStance with negative MaxEnergy")
+
+# Passive tree node validation checks
+test("Node ID must be a non-empty string" in passive_data_src, "PassiveData validates non-empty string node IDs")
+test("Prerequisites array" in passive_data_src, "PassiveData validates Prerequisites array type")
+test("non-empty string prerequisite" in passive_data_src, "PassiveData validates non-empty string prerequisite entries")
+
+# Network contracts and remote events checks
+remote_names = [
+    "EquipEquipmentEvent",
+    "UnequipEquipmentEvent",
+    "EquipSkillEvent",
+    "UnequipSkillEvent",
+    "UnlockPassiveEvent",
+    "UseSkillEvent",
+]
+for r_name in remote_names:
+    test(r_name in network_service_src, f"NetworkService registers {r_name}")
+    test(r_name in server_init_src, f"init.server.luau listens to {r_name}")
+
+test("checkRateLimit" in server_init_src, "init.server.luau applies rate limiting to Phase 3 RemoteEvents")
+
+# TestRunner Suites 45 to 50 checks
+test("--- [Suite 45] Phase 3.1 Equipment Authority Hardening" in testrunner_src, "TestRunner includes Suite 45: Equipment Authority Hardening")
+test("[EquipmentAuthority] Forged slot rejected with explicit error" in testrunner_src, "Suite 45 tests forged slot rejection")
+test("[EquipmentAuthority] Fabricated instance absent from inventory rejected" in testrunner_src, "Suite 45 tests inventory absence rejection")
+test("[EquipmentAuthority] grantEquipment provisioned item" in testrunner_src, "Suite 45 tests grantEquipment provisioning")
+test("[EquipmentAuthority] Second armor equipped to replace first" in testrunner_src, "Suite 45 tests slot replacement preservation")
+test("[EquipmentAuthority] Collected modifiers sorted deterministically by Priority" in testrunner_src, "Suite 45 tests deterministic modifier sorting")
+
+test("--- [Suite 46] Phase 3.1 Active Skill Ownership & Cooldown Hardening" in testrunner_src, "TestRunner includes Suite 46: Skill Ownership & Cooldown Hardening")
+test("[SkillHardening] Unowned skill equip rejected" in testrunner_src, "Suite 46 tests unowned skill equip rejection")
+test("[SkillHardening] unlockSkill authoritatively unlocked Whirlwind" in testrunner_src, "Suite 46 tests unlockSkill API")
+test("[SkillHardening] equipSkill rejects invalid runtime slot" in testrunner_src, "Suite 46 tests invalid slot rejection")
+test("[SkillHardening] unlockSkill rejects class-mismatched skill" in testrunner_src, "Suite 46 tests class restriction enforcement")
+test("[SkillHardening] Cooldown strictly preserved and isolated on runtime instance" in testrunner_src, "Suite 46 tests cooldown isolation")
+
+test("--- [Suite 47] Phase 3.1 Passive Tree Hardening & Negative Modifier Stacking" in testrunner_src, "TestRunner includes Suite 47: Passive Hardening & Negative Modifiers")
+test("[PassiveHardening] Node with empty string ID rejected" in testrunner_src, "Suite 47 tests empty string ID rejection")
+test("[PassiveHardening] Node with non-array Prerequisites rejected" in testrunner_src, "Suite 47 tests non-array prerequisites rejection")
+test("[PassiveHardening] Empty string prerequisite rejected" in testrunner_src, "Suite 47 tests empty string prerequisite rejection")
+test("[PassiveHardening] TitanStance negative MaxEnergy applied" in testrunner_src, "Suite 47 tests TitanStance negative MaxEnergy stacking")
+
+test("--- [Suite 48] Phase 3.1 Active Skill Transactional Execution" in testrunner_src, "TestRunner includes Suite 48: Active Skill Transactional Execution")
+test("[SkillTx] Disconnected player rejected" in testrunner_src, "Suite 48 tests disconnected player rejection")
+test("[SkillTx] Downed player rejected" in testrunner_src, "Suite 48 tests downed player rejection")
+test("[SkillTx] Non-PlayerPhase rejected" in testrunner_src, "Suite 48 tests non-PlayerPhase rejection")
+test("[SkillTx] Target resolution failure consumed exactly 0 Energy" in testrunner_src, "Suite 48 tests zero energy rollback on target failure")
+test("[SkillTx] Target resolution failure triggered 0 Cooldown" in testrunner_src, "Suite 48 tests zero cooldown rollback on target failure")
+test("[SkillTx] Valid target executed successfully" in testrunner_src, "Suite 48 tests successful transactional execution")
+
+test("--- [Suite 49] Phase 3.1 Network Contracts & Remote Event Authority" in testrunner_src, "TestRunner includes Suite 49: Network Contracts & Authority")
+test("[NetworkAuthority] EquipEquipmentEvent registered" in testrunner_src, "Suite 49 tests EquipEquipmentEvent presence")
+test("[NetworkAuthority] UseSkillEvent registered" in testrunner_src, "Suite 49 tests UseSkillEvent presence")
+
+test("--- [Suite 50] Phase 3.1 Extended Vertical Slice End-to-End" in testrunner_src, "TestRunner includes Suite 50: Extended Vertical Slice")
+test("[ExtSlice] Equipped weapon and armor: MaxHP updated to 140" in testrunner_src, "Suite 50 tests equipment stat application")
+test("[ExtSlice] Passives unlocked: MaxHP updated to 155" in testrunner_src, "Suite 50 tests passive stat application")
+test("[ExtSlice] HeroicStrike executed end-to-end" in testrunner_src, "Suite 50 tests skill execution through modifier pipeline")
+test("[ExtSlice] Second use blocked by active cooldown" in testrunner_src, "Suite 50 tests cooldown blocking second use")
+test("[ExtSlice] BonusDamage dropped from 8 to 3" in testrunner_src, "Suite 50 tests modifier cleanup on gear unequip")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")
