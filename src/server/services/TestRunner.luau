@@ -2553,8 +2553,218 @@ function TestRunner.runAllTests(): boolean
 	assertTest(bonusShieldResults[1].Success == true, "[E2E BonusShield] Shield effect executed successfully")
 	assertTest(e2eCaster.Resources.Shield == 12, string.format("[E2E BonusShield] Bonus Shield correctly added once without duplication: base 8 + 4 = 12 (Actual: %d)", e2eCaster.Resources.Shield))
 
+	----------------------------------------------------------------------------
+	-- TEST 39: Final Schema Strictness & Resource Boundary Safety
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 39] Final Schema Strictness & Resource Boundary Safety ---")
+
+	local schemaPlayer: StateTypes.PlayerState = {
+		UserId = 39001,
+		PlayerInstance = nil,
+		DisplayName = "SchemaTester",
+		ClassId = "Warrior",
+		SubclassId = "Juggernaut",
+		Resources = { HP = 70, MaxHP = 80, Shield = 5, Energy = 1, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 50,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local schemaAlly: StateTypes.PlayerState = {
+		UserId = 39002,
+		PlayerInstance = nil,
+		DisplayName = "SchemaAlly",
+		ClassId = "Ranger",
+		SubclassId = "Marksman",
+		Resources = { HP = 60, MaxHP = 80, Shield = 0, Energy = 1, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 30,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local schemaParty: { [number]: StateTypes.PlayerState } = {
+		[39001] = schemaPlayer,
+		[39002] = schemaAlly,
+	}
+
+	local schemaCombatState: StateTypes.CombatState = {
+		CombatId = "combat_schema_suite39",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = os.clock(),
+		TurnDuration = 45,
+		Participants = { 39001, 39002 },
+		Enemies = {},
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+
+	local schemaCtxSelf: EffectResolver.ActionContext = {
+		SourcePlayer = schemaPlayer,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Player",
+			EnemyTarget = nil,
+			PlayerTarget = schemaPlayer,
+			TargetId = "39001",
+			TargetName = schemaPlayer.DisplayName,
+		},
+		CombatState = schemaCombatState,
+		Party = schemaParty,
+		Modifiers = {},
+	}
+
+	local schemaCtxAlly: EffectResolver.ActionContext = {
+		SourcePlayer = schemaPlayer,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Player",
+			EnemyTarget = nil,
+			PlayerTarget = schemaAlly,
+			TargetId = "39002",
+			TargetName = schemaAlly.DisplayName,
+		},
+		CombatState = schemaCombatState,
+		Party = schemaParty,
+		Modifiers = {},
+	}
+
+	-- 1. CreateCard: Valid Deck destination
+	local effDeck: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = "Deck" }
+	local resDeck = EffectResolver.resolveEffects({ effDeck }, schemaCtxSelf)
+	assertTest(#resDeck == 1 and resDeck[1].Success == true, "[CreateCard] Valid Deck destination succeeds")
+	assertTest(#schemaPlayer.Deck == 1, "[CreateCard] Card inserted into Deck")
+
+	-- 2. CreateCard: Valid Hand destination
+	local effHand: CardData.Effect = { Type = "CreateCard", CardDefId = "Defend", DestinationPile = "Hand" }
+	local resHand = EffectResolver.resolveEffects({ effHand }, schemaCtxSelf)
+	assertTest(#resHand == 1 and resHand[1].Success == true, "[CreateCard] Valid Hand destination succeeds")
+	local handCount = 0
+	for _ in schemaPlayer.Hand do handCount += 1 end
+	assertTest(handCount == 1, "[CreateCard] Card inserted into Hand")
+
+	-- 3. CreateCard: Valid DiscardPile destination
+	local effDiscard: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = "DiscardPile" }
+	local resDiscard = EffectResolver.resolveEffects({ effDiscard }, schemaCtxSelf)
+	assertTest(#resDiscard == 1 and resDiscard[1].Success == true, "[CreateCard] Valid DiscardPile destination succeeds")
+	assertTest(#schemaPlayer.DiscardPile == 1, "[CreateCard] Card inserted into DiscardPile")
+
+	-- 4. CreateCard: Valid ExhaustPile destination
+	local effExhaust: CardData.Effect = { Type = "CreateCard", CardDefId = "Defend", DestinationPile = "ExhaustPile" }
+	local resExhaust = EffectResolver.resolveEffects({ effExhaust }, schemaCtxSelf)
+	assertTest(#resExhaust == 1 and resExhaust[1].Success == true, "[CreateCard] Valid ExhaustPile destination succeeds")
+	assertTest(#schemaPlayer.ExhaustPile == 1, "[CreateCard] Card inserted into ExhaustPile")
+
+	-- 5. CreateCard: Default nil DestinationPile defaults to Deck
+	local effNilDest: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = nil }
+	local resNilDest = EffectResolver.resolveEffects({ effNilDest }, schemaCtxSelf)
+	assertTest(#resNilDest == 1 and resNilDest[1].Success == true, "[CreateCard] Nil DestinationPile defaults to Deck successfully")
+	assertTest(#schemaPlayer.Deck == 2, "[CreateCard] Card inserted into Deck by default")
+
+	-- 6. CreateCard: Invalid DestinationPile 'Banana' rejected with Success=false and zero cards created
+	local deckCountBefore = #schemaPlayer.Deck
+	local discardCountBefore = #schemaPlayer.DiscardPile
+	local exhaustCountBefore = #schemaPlayer.ExhaustPile
+	local handCountBefore = 0
+	for _ in schemaPlayer.Hand do handCountBefore += 1 end
+
+	local effBanana: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = "Banana" }
+	local resBanana = EffectResolver.resolveEffects({ effBanana }, schemaCtxSelf)
+	assertTest(#resBanana == 1 and resBanana[1].Success == false, "[CreateCard] Invalid 'Banana' destination rejected with Success=false")
+	local handCountAfterBanana = 0
+	for _ in schemaPlayer.Hand do handCountAfterBanana += 1 end
+	assertTest(
+		#schemaPlayer.Deck == deckCountBefore
+		and #schemaPlayer.DiscardPile == discardCountBefore
+		and #schemaPlayer.ExhaustPile == exhaustCountBefore
+		and handCountAfterBanana == handCountBefore,
+		"[CreateCard] Invalid 'Banana' created zero cards in any pile"
+	)
+
+	-- 7. CreateCard: Empty string DestinationPile rejected with Success=false and zero cards created
+	local effEmptyDest: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = "" }
+	local resEmptyDest = EffectResolver.resolveEffects({ effEmptyDest }, schemaCtxSelf)
+	assertTest(#resEmptyDest == 1 and resEmptyDest[1].Success == false, "[CreateCard] Empty string destination rejected with Success=false")
+	local handCountAfterEmpty = 0
+	for _ in schemaPlayer.Hand do handCountAfterEmpty += 1 end
+	assertTest(
+		#schemaPlayer.Deck == deckCountBefore
+		and #schemaPlayer.DiscardPile == discardCountBefore
+		and #schemaPlayer.ExhaustPile == exhaustCountBefore
+		and handCountAfterEmpty == handCountBefore,
+		"[CreateCard] Empty string destination created zero cards in any pile"
+	)
+
+	-- 8. Card Pile Invariant Verification
+	local okSchemaInv, errSchemaInv = CardService.validatePileInvariants(schemaPlayer)
+	assertTest(okSchemaInv == true and errSchemaInv == nil, "[CreateCard] Pile invariants preserved with exact single ownership")
+
+	-- 9. ModifyResource: Missing Resource (nil) fails with Success=false and zero Gold modification
+	local goldBefore = schemaPlayer.Gold
+	local effMissingRes: CardData.Effect = { Type = "ModifyResource", Resource = nil, Value = 50, Target = "Self" }
+	local resMissingRes = EffectResolver.resolveEffects({ effMissingRes }, schemaCtxSelf)
+	assertTest(#resMissingRes == 1 and resMissingRes[1].Success == false, "[ModifyResource] Missing Resource rejected with Success=false")
+	assertTest(schemaPlayer.Gold == goldBefore, "[ModifyResource] Missing Resource did NOT accidentally modify Gold")
+
+	-- 10. ModifyResource: Empty string Resource fails with Success=false and zero Gold modification
+	local effEmptyRes: CardData.Effect = { Type = "ModifyResource", Resource = "" :: any, Value = 50, Target = "Self" }
+	local resEmptyRes = EffectResolver.resolveEffects({ effEmptyRes }, schemaCtxSelf)
+	assertTest(#resEmptyRes == 1 and resEmptyRes[1].Success == false, "[ModifyResource] Empty string Resource rejected with Success=false")
+	assertTest(schemaPlayer.Gold == goldBefore, "[ModifyResource] Empty string Resource did NOT accidentally modify Gold")
+
+	-- 11. ModifyResource: Invalid Resource ('InvalidResourceXYZ') fails with Success=false and zero Gold modification
+	local effInvalidRes: CardData.Effect = { Type = "ModifyResource", Resource = "InvalidResourceXYZ" :: any, Value = 50, Target = "Self" }
+	local resInvalidRes = EffectResolver.resolveEffects({ effInvalidRes }, schemaCtxSelf)
+	assertTest(#resInvalidRes == 1 and resInvalidRes[1].Success == false, "[ModifyResource] Invalid Resource rejected with Success=false")
+	assertTest(schemaPlayer.Gold == goldBefore, "[ModifyResource] Invalid Resource did NOT accidentally modify Gold")
+
+	-- 12. ModifyResource: Valid Gold modifies Gold normally
+	local effValidGold: CardData.Effect = { Type = "ModifyResource", Resource = "Gold", Value = 25, Target = "Self" }
+	local resValidGold = EffectResolver.resolveEffects({ effValidGold }, schemaCtxSelf)
+	assertTest(#resValidGold == 1 and resValidGold[1].Success == true, "[ModifyResource] Valid Gold executes normally")
+	assertTest(schemaPlayer.Gold == goldBefore + 25, string.format("[ModifyResource] Gold modified to %d", schemaPlayer.Gold))
+
+	-- 13. ModifyResource: Valid Energy modifies Energy normally
+	schemaPlayer.Resources.Energy = 1
+	local effValidEnergy: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 1, Target = "Self" }
+	local resValidEnergy = EffectResolver.resolveEffects({ effValidEnergy }, schemaCtxSelf)
+	assertTest(#resValidEnergy == 1 and resValidEnergy[1].Success == true, "[ModifyResource] Valid Energy executes normally")
+	assertTest(schemaPlayer.Resources.Energy == 2, "[ModifyResource] Energy increased from 1 to 2")
+
+	-- 14. ModifyResource: Valid Self Energy modifies caster only, ally untouched
+	schemaPlayer.Resources.Energy = 1
+	schemaAlly.Resources.Energy = 1
+	local effSelfEnergy: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 1, Target = "Self" }
+	local resSelfEnergy = EffectResolver.resolveEffects({ effSelfEnergy }, schemaCtxSelf)
+	assertTest(#resSelfEnergy == 1 and resSelfEnergy[1].Success == true, "[ModifyResource] Valid Self Energy executes normally")
+	assertTest(schemaPlayer.Resources.Energy == 2, "[ModifyResource] Caster Energy increased from 1 to 2")
+	assertTest(schemaAlly.Resources.Energy == 1, "[ModifyResource] Ally Energy remained 1")
+
+	-- 15. ModifyResource: Valid Ally Energy modifies ally only, caster untouched
+	schemaPlayer.Resources.Energy = 2
+	schemaAlly.Resources.Energy = 1
+	local effAllyEnergy: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 2, Target = "Ally" }
+	local resAllyEnergy = EffectResolver.resolveEffects({ effAllyEnergy }, schemaCtxAlly)
+	assertTest(#resAllyEnergy == 1 and resAllyEnergy[1].Success == true, "[ModifyResource] Valid Ally Energy executes normally")
+	assertTest(schemaAlly.Resources.Energy == 3, "[ModifyResource] Ally Energy increased from 1 to 3")
+	assertTest(schemaPlayer.Resources.Energy == 2, "[ModifyResource] Caster Energy remained 2")
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 2, 2.1, 2.2 & 2.3 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 2, 2.1, 2.2, 2.3 & 2.4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end
