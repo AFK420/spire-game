@@ -123,14 +123,18 @@ end
 --------------------------------------------------------------------------------
 
 function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
-	local userId = player.UserId
+	local userId = (typeof(player) == "table" and player.UserId) or (typeof(player) == "Instance" and player.UserId) or player
+	local runToRead = currentRun
+	if isIsolatedTesting and (typeof(player) == "Instance" and player:IsA("Player")) and liveRun.PartyMembers[userId] then
+		runToRead = liveRun
+	end
 	local actName = "Act 1: The Forsaken Ascent"
 	if internalDungeonRun and internalDungeonRun.Acts[internalDungeonRun.CurrentActIndex] then
 		actName = internalDungeonRun.Acts[internalDungeonRun.CurrentActIndex].Name
 	end
 
 	local partyViews: { [string]: StateTypes.PlayerView } = {}
-	for pUserId, pState in currentRun.PartyMembers do
+	for pUserId, pState in runToRead.PartyMembers do
 		local handCount = 0
 		for _ in pState.Hand do handCount += 1 end
 
@@ -212,14 +216,14 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 	end
 
 	return {
-		RunId = currentRun.RunId,
-		Phase = currentRun.Phase,
-		ActIndex = currentRun.ActIndex,
+		RunId = runToRead.RunId,
+		Phase = runToRead.Phase,
+		ActIndex = runToRead.ActIndex,
 		ActName = actName,
-		CurrentTier = currentRun.CurrentTier,
-		CurrentNodeId = currentRun.CurrentNodeId,
-		ClearedNodeIds = currentRun.ClearedNodeIds,
-		AvailableNodeIds = currentRun.AvailableNodeIds,
+		CurrentTier = runToRead.CurrentTier,
+		CurrentNodeId = runToRead.CurrentNodeId,
+		ClearedNodeIds = runToRead.ClearedNodeIds,
+		AvailableNodeIds = runToRead.AvailableNodeIds,
 		Party = partyViews,
 		Rewards = rewardView,
 		Message = nil,
@@ -227,8 +231,9 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 end
 
 function RunManager.broadcastRunSnapshots(message: string?)
-	if isIsolatedTesting then return end
-	for _, player in Players:GetPlayers() do
+	local players = Players:GetPlayers()
+	if #players == 0 then return end
+	for _, player in players do
 		local snapshot = RunManager.getRunSnapshotForPlayer(player)
 		snapshot.Message = message
 		NetworkService.sendRunState(player, snapshot)
@@ -236,7 +241,8 @@ function RunManager.broadcastRunSnapshots(message: string?)
 end
 
 function RunManager.sendRunSnapshot(player: any, message: string?)
-	if isIsolatedTesting then return end
+	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
+	if isIsolatedTesting and not isRealPlayer then return end
 	local snapshot = RunManager.getRunSnapshotForPlayer(player)
 	snapshot.Message = message
 	NetworkService.sendRunState(player, snapshot)
@@ -249,11 +255,21 @@ end
 function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	local userId = player.UserId
 	local displayName = player.DisplayName or player.Name or ("Player_" .. tostring(userId))
+	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
 
 	-- Player rejoining existing run: reattach instance without corrupting state
 	if currentRun.PartyMembers[userId] then
 		local existing = currentRun.PartyMembers[userId]
-		existing.PlayerInstance = (typeof(player) == "Instance" and player:IsA("Player")) and player or nil
+		existing.PlayerInstance = isRealPlayer and player or nil
+		existing.DisplayName = displayName
+		existing.IsConnected = true
+		RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
+		return existing
+	end
+
+	if isIsolatedTesting and liveRun.PartyMembers[userId] then
+		local existing = liveRun.PartyMembers[userId]
+		existing.PlayerInstance = isRealPlayer and player or nil
 		existing.DisplayName = displayName
 		existing.IsConnected = true
 		RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
@@ -262,7 +278,7 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 
 	local pState: StateTypes.PlayerState = {
 		UserId = userId,
-		PlayerInstance = (typeof(player) == "Instance" and player:IsA("Player")) and player or nil,
+		PlayerInstance = isRealPlayer and player or nil,
 		DisplayName = displayName,
 		ClassId = "Warlord",
 		SubclassId = "Berserker",
@@ -299,6 +315,10 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	SkillService.unlockSkill(pState, "Whirlwind")
 
 	currentRun.PartyMembers[userId] = pState
+	if isIsolatedTesting and isRealPlayer then
+		local realMembers = liveRun.PartyMembers
+		realMembers[userId] = pState
+	end
 	ClassService.initializePlayerForRun(pState)
 
 	RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName))
@@ -652,6 +672,9 @@ function RunManager.getPlayerState(playerOrUserId: any): StateTypes.PlayerState?
 		uid = playerOrUserId.UserId
 	end
 	if uid then
+		if isIsolatedTesting and liveRun.PartyMembers[uid] and not (isolatedTestRun and isolatedTestRun.PartyMembers[uid]) then
+			return liveRun.PartyMembers[uid]
+		end
 		return currentRun.PartyMembers[uid]
 	end
 	return nil

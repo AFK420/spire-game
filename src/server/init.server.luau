@@ -77,18 +77,16 @@ RunManager.init()
 print("[Server] All core services deterministically initialized.")
 
 -- 2. Execute Phase 1 automated verification test suite
-task.spawn(function()
-	local success, err = pcall(function()
-		TestRunner.runAllTests()
-	end)
-	-- Defensive invariant: Isolation must NEVER remain active on live server
-	if RunManager.isTestIsolationActive() then
-		RunManager.endTestIsolation()
-	end
-	if not success then
-		warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
-	end
+local success, err = pcall(function()
+	TestRunner.runAllTests()
 end)
+-- Defensive invariant: Isolation must NEVER remain active on live server
+if RunManager.isTestIsolationActive() then
+	RunManager.endTestIsolation()
+end
+if not success then
+	warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
+end
 
 --------------------------------------------------------------------------------
 -- Remote Event Network Dispatchers

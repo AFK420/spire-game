@@ -47,6 +47,17 @@ local SkillService = require(servicesFolder:WaitForChild("SkillService") :: Modu
 
 local CombatService = {}
 
+local runManagerRef: any = nil
+local function getRunManager(): any
+	if not runManagerRef then
+		local rm = servicesFolder:FindFirstChild("RunManager")
+		if rm then
+			runManagerRef = require(rm :: ModuleScript)
+		end
+	end
+	return runManagerRef
+end
+
 --------------------------------------------------------------------------------
 -- Active Combat State (Single-Encounter Container)
 --------------------------------------------------------------------------------
@@ -343,10 +354,16 @@ local function endCombat(outcome: "Victory" | "Defeat")
 
 	if onCombatEndCallback then
 		local cb = onCombatEndCallback
-		task.delay(1.5, function()
+		local rm = getRunManager()
+		if rm and rm.isTestIsolationActive and rm.isTestIsolationActive() then
 			ArenaVisualizer.cleanup()
 			cb(outcome)
-		end)
+		else
+			task.delay(1.5, function()
+				ArenaVisualizer.cleanup()
+				cb(outcome)
+			end)
+		end
 	end
 end
 
@@ -406,7 +423,10 @@ local function resolveTurn()
 				end
 			end
 
-				task.wait(0.3)
+				local rm = getRunManager()
+				if not (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) then
+					task.wait(0.3)
+				end
 				if enemy.Intent.Type == "Attack" then
 					ArenaVisualizer.playEnemyAttackAnimation(enemyId)
 					local livingPlayers: { StateTypes.PlayerState } = {}

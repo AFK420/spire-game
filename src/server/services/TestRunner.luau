@@ -429,7 +429,7 @@ function TestRunner.runAllTests(): boolean
 
 	-- Simulate automatic timer timeout resolution
 	CombatService.forceTurnTimeout()
-	task.wait(0.5)
+	task.wait()
 	assertTest(combat.TurnNumber == 2, "Turn number advanced to 2 after turn timeout resolution")
 	assertTest(combat.Phase == "PlayerPhase", "Returned to PlayerPhase for Turn 2")
 
@@ -448,7 +448,7 @@ function TestRunner.runAllTests(): boolean
 	CombatService.playCard(player1, lethalCard.InstanceId, firstEnemy.InstanceId)
 
 	-- Wait for room completion callback
-	task.wait(2.0)
+	task.wait()
 	assertTest(runState.Phase == "Rewards", "Room cleared and run state transitioned to Rewards")
 	assertTest(runState.PendingRewards ~= nil, "PendingRewards populated in RunState")
 	assertTest(runState.PendingRewards.GoldAmount > 0, "Gold reward assigned")
@@ -590,7 +590,7 @@ function TestRunner.runAllTests(): boolean
 
 	-- Force turn resolution so enemy executes its attack intent
 	CombatService.forceTurnTimeout()
-	task.wait(0.6)
+	task.wait()
 
 	-- Disconnected Player 2 must have taken zero damage from enemy attack
 	assertTest(p2State.Resources.HP == p2HpPreAttack, "[Test B] Disconnected Player 2 HP unchanged (excluded from enemy attack targets)")
@@ -611,7 +611,7 @@ function TestRunner.runAllTests(): boolean
 	p1State.Hand[killCard.InstanceId] = killCard
 	p1State.Resources.Energy = 3
 	CombatService.playCard(player1, killCard.InstanceId, next(combat2Ref.Enemies))
-	task.wait(2.0)
+	task.wait()
 	assertTest(runState.Phase == "Rewards", "Combat #2 won and transitioned to Rewards")
 
 	-- Continue to MapSelect
@@ -669,7 +669,7 @@ function TestRunner.runAllTests(): boolean
 
 	-- Test C.1: Player 1 connected + alive => NO defeat occurs
 	CombatService.forceTurnTimeout()
-	task.wait(0.6)
+	task.wait()
 	assertTest(combat3Ref.Phase == "PlayerPhase", "[Test C] Combat continues while connected Player 1 is alive (disconnected players do not cause defeat)")
 
 	-- Test C.2: Down Player 1: all connected players are now downed
@@ -678,7 +678,7 @@ function TestRunner.runAllTests(): boolean
 
 	-- Trigger turn timeout so resolution check runs areAllPlayersDowned()
 	CombatService.forceTurnTimeout()
-	task.wait(2.0)
+	task.wait()
 	assertTest(runState.Phase == "RunDefeat", "[Test C] Defeat correctly triggered when all CONNECTED players downed (disconnected players did not keep combat alive)!")
 
 	----------------------------------------------------------------------------
@@ -714,7 +714,7 @@ function TestRunner.runAllTests(): boolean
 
 	-- Resolve poison tick via the real combat turn resolution pipeline
 	CombatService.forceTurnTimeout()
-	task.wait(0.6)
+	task.wait()
 
 	assertTest(testEnemy.HP == 95, string.format("[Poison Test A] HP decreased by exactly 5 (Expected: 95, Actual: %d)", testEnemy.HP))
 	assertTest(testEnemy.Shield == 20, string.format("[Poison Test A] Shield remained 20 without taking poison damage (Actual: %d)", testEnemy.Shield))
@@ -724,7 +724,7 @@ function TestRunner.runAllTests(): boolean
 	-- Tick 2: 95 HP / 4 Poison -> 91 HP / 3 Poison
 	testEnemy.Intent = { Type = "Defend", Value = 0, Description = "Waiting" }
 	CombatService.forceTurnTimeout()
-	task.wait(0.6)
+	task.wait()
 
 	assertTest(testEnemy.HP == 91, string.format("[Poison Test B] Second tick: 95 HP - 4 = 91 HP (Actual: %d)", testEnemy.HP))
 	assertTest(testEnemy.Shield == 20, "[Poison Test B] Shield remains 20 after second tick")
@@ -733,7 +733,7 @@ function TestRunner.runAllTests(): boolean
 	-- Tick 3: 91 HP / 3 Poison -> 88 HP / 2 Poison
 	testEnemy.Intent = { Type = "Defend", Value = 0, Description = "Waiting" }
 	CombatService.forceTurnTimeout()
-	task.wait(0.6)
+	task.wait()
 
 	assertTest(testEnemy.HP == 88, string.format("[Poison Test B] Third tick: 91 HP - 3 = 88 HP (Actual: %d)", testEnemy.HP))
 	assertTest(testEnemy.Shield == 20, "[Poison Test B] Shield remains 20 after third tick")
@@ -746,7 +746,7 @@ function TestRunner.runAllTests(): boolean
 	testEnemy.Intent = { Type = "Attack", Value = 10, Description = "Lethal Strike" }
 
 	CombatService.forceTurnTimeout()
-	task.wait(2.0)
+	task.wait()
 
 	assertTest(testEnemy.HP == 0, string.format("[Poison Test C] Lethal poison reduced HP to 0 (Actual: %d)", testEnemy.HP))
 	assertTest(runState.Phase == "Rewards", "[Poison Test C] Lethal poison triggered enemy death and transitioned combat to Rewards")

@@ -77,7 +77,11 @@ end
 -- Validates and updates a player's class & subclass
 function ClassService.selectClass(player: any, playerState: StateTypes.PlayerState, classId: string, subclassId: string): (boolean, string?)
 	local rm = getRunManager()
-	if rm and rm.getRunState and rm.getRunState().Phase ~= "Lobby" then
+	local activeRun = rm and rm.getRunState and rm.getRunState()
+	if rm and rm.isTestIsolationActive and rm.isTestIsolationActive() and (typeof(player) == "Instance" and player:IsA("Player")) then
+		activeRun = rm.getLiveRunState and rm.getLiveRunState() or activeRun
+	end
+	if activeRun and activeRun.Phase ~= "Lobby" then
 		warn(string.format("[ClassService] Cannot change class outside Lobby phase for %s", playerState.DisplayName))
 		return false, "Cannot change class outside Lobby phase."
 	end
