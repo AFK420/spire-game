@@ -44,6 +44,20 @@ export type EquipmentInstance = {
 }
 
 --------------------------------------------------------------------------------
+-- 1.2 Phase 3 Active Skill & Passive Types
+--------------------------------------------------------------------------------
+
+export type SkillSlot = "Skill1" | "Skill2" | "Skill3" | "Skill4"
+
+export type SkillInstance = {
+	InstanceId: string,
+	DefinitionId: string,
+	OwnerUserId: number,
+	Slot: SkillSlot,
+	CurrentCooldown: number,
+}
+
+--------------------------------------------------------------------------------
 -- 2. Player Canonical State Models
 --------------------------------------------------------------------------------
 
@@ -75,6 +89,10 @@ export type PlayerState = {
 	-- Phase 3 Run-Scoped Equipment
 	EquippedItems: { [EquipmentSlot]: EquipmentInstance }?,
 	EquipmentInventory: { EquipmentInstance }?,
+	-- Phase 3 Run-Scoped Skills & Passives
+	EquippedSkills: { [SkillSlot]: SkillInstance }?,
+	UnlockedPassives: { [string]: boolean }?,
+	PassivePoints: number?,
 }
 
 --------------------------------------------------------------------------------
