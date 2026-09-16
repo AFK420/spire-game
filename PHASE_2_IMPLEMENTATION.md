@@ -170,3 +170,66 @@ A surgical hardening pass was conducted across the Phase 2 combat foundation to 
 - **Suite 29 (Suite G)**: Modifier Pipeline Determinism, Id Sorting, Override Precedence, and Immutability.
 - **Offline Integration Verifier**: 207 / 207 Checks Passed (100% clean).
 
+---
+
+## 8. Phase 2.2 Correctness & Architecture Hardening Pass
+
+A follow-up surgical hardening pass was completed to resolve deeper multiplayer and edge-case correctness issues across Phase 2:
+
+### 1. True Target-Aware Generic Resource Modification
+- **Problem**: `EffectResolver.handlers["ModifyResource"]` resolved `recipient = resolvedTarget.PlayerTarget or context.SourcePlayer`, but branches for `Energy`, `MaxEnergy`, and `Gold` still mutated `context.SourcePlayer`.
+- **Resolution**: All resource branches (`HP`, `MaxHP`, `Shield`, `Energy`, `MaxEnergy`, `Gold`) now strictly mutate `recipient` (`resolvedTarget.PlayerTarget`). If targeting an ally, the ally receives the resource modification.
+- **Validation**: `ModifyResource` requires `resolvedTarget.Success == true` and `resolvedTarget.TargetKind == "Player"`. Invalid or missing targets return `{ Success = false }` with zero silent fallback to caster.
+
+### 2. RelicService Dispatch Failure Containment
+- **Problem**: In `EffectResolver.handlers["TriggerEvent"]`, calling `RelicService.triggerRelics` could throw if relic context had corrupt data or an unhandled exception occurred, failing to report clean failure.
+- **Resolution**: Wrapped `RelicService.triggerRelics` dispatch in `pcall`. If the trigger throws, an error is caught, warning logged, and `{ Success = false, Message = ... }` is returned truthfully.
+- **Recursion Safety**: Guaranteed restoration of `currentDepth` counter in `EffectResolver.resolveEffects` via `pcall`, ensuring recursion depth tracking is never corrupted.
+
+### 3. Strict Real-Target Context Resolution Without Dummy Synthesis
+- **Problem**: `resolveEffectTarget` synthesized fake dummy `CombatState` and `Party` structures when context was omitted, masking missing combat/run state and failing real multiplayer party contexts.
+- **Resolution**: Removed all dummy synthesis. `resolveEffectTarget` directly passes `context.CombatState` and `context.Party` to `TargetResolver.resolveTarget`.
+- **Target Legality**: `TargetResolver.resolveTarget` strictly checks for `combatState` on `Enemy` targets and `party` on `Ally` targets, returning clean errors if missing. Handlers for `Damage`, `Shield`, `Heal`, `Revive`, `ApplyStatus`, and `RemoveStatus` strictly reject non-matching target kinds or un-success results with zero silent fallbacks.
+
+### 4. Removal of CreateCard Prototype Fallbacks
+- **Problem**: `handlers["CreateCard"]` used `local cardDefId = effect.CardDefId or effect.StatusId or "Strike"`.
+- **Resolution**: Removed all fallbacks to `StatusId` and `"Strike"`. `CreateCard` now strictly requires `effect.CardDefId`.
+- **Verification**: If `effect.CardDefId` is missing, nil, empty, or unknown in `CardData`, the effect returns `Success = false` cleanly.
+- **Destination Pile**: Added typed `DestinationPile` to `CardData.Effect` (`"Deck"`, `"Hand"`, `"DiscardPile"`, `"ExhaustPile"`, defaulting to `"Deck"`).
+
+### 5. Card Pile Invariant Validator
+- **Helper**: Added `CardService.validatePileInvariants(playerState: StateTypes.PlayerState): (boolean, string?)`.
+- **Guarantees**:
+  - **Single Ownership**: Exact-one pile ownership per `CardInstance` across `Deck`, `Hand`, `DiscardPile`, `ExhaustPile` ($\sum \text{Locations} = 1$).
+  - **No Duplicates**: No duplicate `InstanceId` within any single pile or across piles.
+  - **Hand Integrity**: Every key in `Hand` dictionary matches `card.InstanceId`.
+  - **Player Ownership**: All card instances across all piles have `OwnerUserId == playerState.UserId`.
+  - **Type Safety**: All instances are valid tables with non-empty string `InstanceId` and `DefinitionId`.
+- **Audited Methods**: Verified invariant preservation across `drawCards`, `playCardFromHand`, `discardHand`, `exhaustCard`, and `resetCombatPiles`.
+
+### 6. Finalized Status Authority Boundary
+- **Status Authority**: `StatusService` is the sole canonical source of truth for active statuses, durations, and stacks. Projections like `enemy.Poison` are strictly outputs / read models.
+- **Ticking Contract**: `StatusService.tickStatuses` reads from `StatusService` first, decrements stacks/durations in `StatusService`, and writes back to `enemy.Poison` as an output. It does not overwrite internal state from projections.
+- **Legacy Compatibility**: `StatusService.syncEntityFromProjection` only applies when `StatusService` has no existing record of that entity's status.
+- **Rogue Mutation Cleanup**:
+  - In `RelicService`, `VenomVial` now calls `StatusService.applyStatus` directly instead of `context.Enemy.Poison += relic.Value`.
+  - In `CombatService`, enemy TurnStart status ticking invokes `StatusService.tickStatuses` directly without manual Poison checks or manual projection synchronization.
+
+### 7. Phase 2.2 Test Suite Expansion (36 Suites Total, 232 Verifier Checks)
+- **Suite 30 (ModifyResource Targeting)**: Verified caster vs. ally targeting for Energy, MaxEnergy, Shield, Gold, and clean rejection of invalid targets.
+- **Suite 31 (TriggerEvent Failure Semantics)**: Verified normal execution, missing EventId rejection, pcall error containment, and recursion depth safety.
+- **Suite 32 (Real Target Resolution Context)**: Verified Enemy target without CombatState rejection, Ally target without Party rejection, 4-player party resolution, multi-enemy targeting, and dead/disconnected entity rejection.
+- **Suite 33 (CreateCard Schema Strictness)**: Verified missing CardDefId rejection, unknown def rejection with zero Strike fallback, and destination pile placement (`Deck`, `Hand`).
+- **Suite 34 (Card Pile Invariant Validator)**: Verified valid states, duplicate detection across piles (Deck/Hand), duplicate detection within pile (Deck), owner mismatch rejection, and invariant preservation through draw, play, discard, exhaust, and reset.
+- **Suite 35 (Status Authority Boundary)**: Verified ticking reads StatusService ignoring rogue writes to `enemy.Poison`, projection updated as output, and backward compat sync when no record exists.
+- **Suite 36 (Cross-System Integration Chains)**: Verified Damage Enemy + Shield Self compound actions, Revive Ally, and CreateCard + Draw chains.
+- **Offline Integration Verifier**: 232 / 232 Checks Passed (100% clean).
+- **Rojo Compilation**: `rojo build -o test.rbxl` compiles cleanly with exit code 0.
+
+---
+
+## 9. Strict Scope Boundary Confirmation
+- Phase 2, Phase 2.1, and Phase 2.2 are complete and hardened.
+- Equipment systems, passive skill trees, active skill trees, and large content rosters were **NOT** started.
+- `PHASE 3 STARTED: NO`
+
