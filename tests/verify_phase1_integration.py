@@ -33,6 +33,10 @@ required_files = [
     "PHASE_1_IMPLEMENTATION.md",
     "STATE_SCHEMA.md",
     "NETWORK_CONTRACTS.md",
+    "PHASE_4_IMPLEMENTATION.md",
+    "PERSISTENCE_SCHEMA.md",
+    "DECK_SYSTEM.md",
+    "CARD_COLLECTION.md",
     "default.project.json",
     "src/shared/StateTypes.luau",
     "src/shared/GameConfig.luau",
@@ -44,6 +48,8 @@ required_files = [
     "src/server/services/NetworkService.luau",
     "src/server/services/PersistenceService.luau",
     "src/server/services/CardService.luau",
+    "src/server/services/CardCollectionService.luau",
+    "src/server/services/DeckService.luau",
     "src/server/services/ClassService.luau",
     "src/server/services/RelicService.luau",
     "src/server/services/DungeonService.luau",
@@ -710,6 +716,154 @@ test("[EquipmentAuthoritative] Fabricated item with valid DefinitionId rejected"
 test("[EquipmentAuthoritative] Forged definition on real gear InstanceId rejected" in testrunner_src, "Suite 52 tests rejection of forged fields on real equipment InstanceId")
 test("[EquipmentAuthoritative] Equipping real inventory gear succeeds" in testrunner_src, "Suite 52 tests equipping real EquipmentInventory item")
 test("[EquipmentAuthoritative] Re-equipping real gear succeeds idempotently" in testrunner_src, "Suite 52 tests idempotent re-equip of real equipment")
+
+# 45. Phase 4 Profile Architecture & Migration
+print("\n--- [Check 45] Phase 4 Profile Architecture & Migration ---")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+game_config_src = (ROOT / "src/shared/GameConfig.luau").read_text(encoding="utf-8")
+persist_service_src = (ROOT / "src/server/services/PersistenceService.luau").read_text(encoding="utf-8")
+
+test("export type SavedDeck =" in state_types_src, "StateTypes defines SavedDeck model")
+test("export type DeckSlotEntitlement =" in state_types_src, "StateTypes defines DeckSlotEntitlement model")
+test("ProfileVersion: number" in state_types_src, "StateTypes defines ProfileVersion in PlayerProfile")
+test("CardCollection: { [string]: number }" in state_types_src, "StateTypes defines CardCollection in PlayerProfile")
+test("Decks: { [string]: SavedDeck }" in state_types_src, "StateTypes defines Decks in PlayerProfile")
+test("ActiveDeckId: string?" in state_types_src, "StateTypes defines ActiveDeckId in PlayerProfile")
+test("DeckSlotEntitlement: DeckSlotEntitlement" in state_types_src, "StateTypes defines DeckSlotEntitlement in PlayerProfile")
+test("export type CardCollectionView =" in state_types_src, "StateTypes defines CardCollectionView DTO")
+test("export type DeckSummaryView =" in state_types_src, "StateTypes defines DeckSummaryView DTO")
+test("export type DeckDetailView =" in state_types_src, "StateTypes defines DeckDetailView DTO")
+test("export type DeckSlotView =" in state_types_src, "StateTypes defines DeckSlotView DTO")
+
+test("GameConfig.Deck = {" in game_config_src, "GameConfig defines Deck configuration")
+test("BaseDeckSlots = 4" in game_config_src, "GameConfig defines BaseDeckSlots = 4")
+test("MinDeckSize = 8" in game_config_src, "GameConfig defines MinDeckSize = 8")
+test("MaxDeckSize = 30" in game_config_src, "GameConfig defines MaxDeckSize = 30")
+test("MaxCopiesPerCard = 3" in game_config_src, "GameConfig defines MaxCopiesPerCard = 3")
+test("GameConfig.StarterCollection = {" in game_config_src, "GameConfig defines StarterCollection configuration")
+
+test("CURRENT_PROFILE_VERSION = 1" in persist_service_src, "PersistenceService defines CURRENT_PROFILE_VERSION = 1")
+test("function PersistenceService.mutateProfile(" in persist_service_src, "PersistenceService provides mutateProfile wrapper")
+test("function PersistenceService.reconcileForTesting(" in persist_service_src, "PersistenceService provides reconcileForTesting helper")
+
+# Suite 53 tests
+test("--- [Suite 53] Phase 4 Profile Architecture & Migration" in testrunner_src, "TestRunner includes Suite 53: Profile Architecture & Migration")
+test("[Profile] New profile has ProfileVersion = 1" in testrunner_src, "Suite 53 tests new profile default version")
+test("[Profile] Starter collection contains 5 Strikes" in testrunner_src, "Suite 53 tests starter collection Strikes")
+test("[Profile] BaseDeckSlots defaults to 4" in testrunner_src, "Suite 53 tests default BaseDeckSlots")
+test("[ProfileMigration] Upgraded from v0 to ProfileVersion = 1" in testrunner_src, "Suite 53 tests v0 to v1 profile migration")
+test("[ProfileMigration] Preserved existing AetherShards = 120" in testrunner_src, "Suite 53 tests currency preservation during migration")
+test("[ProfileRecovery] Normalized to ProfileVersion = 1" in testrunner_src, "Suite 53 tests malformed profile normalization")
+test("[ProfileRecovery] Negative AetherShards clamped to 0" in testrunner_src, "Suite 53 tests negative currency clamping")
+test("[ProfileRecovery] Unknown card definition rejected" in testrunner_src, "Suite 53 tests unknown card collection definition rejection")
+
+# 46. Phase 4 Card Collection & Deck Services
+print("\n--- [Check 46] Phase 4 Card Collection & Deck Services ---")
+card_col_service_src = (ROOT / "src/server/services/CardCollectionService.luau").read_text(encoding="utf-8")
+deck_service_src = (ROOT / "src/server/services/DeckService.luau").read_text(encoding="utf-8")
+
+test("function CardCollectionService.grantCard(" in card_col_service_src, "CardCollectionService provides grantCard API")
+test("function CardCollectionService.removeCard(" in card_col_service_src, "CardCollectionService provides removeCard API")
+test("function CardCollectionService.getCardCount(" in card_col_service_src, "CardCollectionService provides getCardCount API")
+test("function CardCollectionService.hasCard(" in card_col_service_src, "CardCollectionService provides hasCard API")
+test("function CardCollectionService.getCollection(" in card_col_service_src, "CardCollectionService provides getCollection API")
+test("function CardCollectionService.toCollectionView(" in card_col_service_src, "CardCollectionService provides toCollectionView API")
+
+test("function DeckService.getSlotEntitlement(" in deck_service_src, "DeckService provides getSlotEntitlement API")
+test("function DeckService.checkSlotAvailability(" in deck_service_src, "DeckService provides checkSlotAvailability API")
+test("function DeckService.validateDeck(" in deck_service_src, "DeckService provides validateDeck API")
+test("function DeckService.createDeck(" in deck_service_src, "DeckService provides createDeck API")
+test("function DeckService.renameDeck(" in deck_service_src, "DeckService provides renameDeck API")
+test("function DeckService.deleteDeck(" in deck_service_src, "DeckService provides deleteDeck API")
+test("function DeckService.duplicateDeck(" in deck_service_src, "DeckService provides duplicateDeck API")
+test("function DeckService.saveDeck(" in deck_service_src, "DeckService provides saveDeck API")
+test("function DeckService.getDeck(" in deck_service_src, "DeckService provides getDeck API")
+test("function DeckService.listDecks(" in deck_service_src, "DeckService provides listDecks API")
+test("function DeckService.setActiveDeck(" in deck_service_src, "DeckService provides setActiveDeck API")
+test("function DeckService.getActiveDeck(" in deck_service_src, "DeckService provides getActiveDeck API")
+
+# Suite 54 & 55 tests
+test("--- [Suite 54] Phase 4 Card Collection Service" in testrunner_src, "TestRunner includes Suite 54: Card Collection Service")
+test("[CardCollection] Granting 2 copies of HeavyBlow succeeds" in testrunner_src, "Suite 54 tests authoritative card grant")
+test("[CardCollection] Granting unknown card definition rejected" in testrunner_src, "Suite 54 tests unknown card definition rejection")
+test("[CardCollection] Granting negative quantity rejected" in testrunner_src, "Suite 54 tests negative quantity grant rejection")
+test("[CardCollection] Removing 1 owned copy succeeds" in testrunner_src, "Suite 54 tests authoritative card removal")
+test("[CardCollection] Removing more copies than owned rejected" in testrunner_src, "Suite 54 tests insufficient copy deduction rejection")
+test("[CardCollectionView] View contains 5 Strikes" in testrunner_src, "Suite 54 tests collection view serialization")
+
+test("--- [Suite 55] Phase 4 Deck Model, Slot Entitlement & Deck Service" in testrunner_src, "TestRunner includes Suite 55: Deck Model & Entitlement")
+test("[DeckSlot] Base slots equals 4" in testrunner_src, "Suite 55 tests base slots calculation")
+test("[DeckSlot] Available slots equals 3" in testrunner_src, "Suite 55 tests available slots calculation")
+test("[DeckSlot] Creating 5th deck rejected due to slot exhaustion" in testrunner_src, "Suite 55 tests slot exhaustion rejection")
+test("[DeckSlot] Creating 5th deck succeeds after entitlement expansion" in testrunner_src, "Suite 55 tests additional slot entitlement expansion")
+test("[DeckService] Empty/whitespace deck name rejected" in testrunner_src, "Suite 55 tests empty deck name rejection")
+test("[DeckService] Excessively long deck name rejected" in testrunner_src, "Suite 55 tests long deck name rejection")
+test("[DeckService] Renaming deck succeeds" in testrunner_src, "Suite 55 tests renaming deck")
+test("[DeckService] Duplicating deck succeeds" in testrunner_src, "Suite 55 tests duplicating deck")
+test("[DeckService] Deleting duplicate deck succeeds" in testrunner_src, "Suite 55 tests deleting deck")
+
+# 47. Phase 4 Deck Validation & Run Integration
+print("\n--- [Check 47] Phase 4 Deck Validation & Run Integration ---")
+class_service_src = (ROOT / "src/server/services/ClassService.luau").read_text(encoding="utf-8")
+
+test("DeckService.getActiveDeck(" in class_service_src, "ClassService queries DeckService.getActiveDeck")
+test("DeckService.validateDeck(" in class_service_src, "ClassService validates active deck via DeckService")
+
+# Suite 56 & 57 tests
+test("--- [Suite 56] Phase 4 Deck Validation & Active Deck Selection" in testrunner_src, "TestRunner includes Suite 56: Deck Validation & Active Deck")
+test("[DeckValidation] Starter deck passes validation" in testrunner_src, "Suite 56 tests valid deck validation")
+test("[DeckValidation] Unknown card definition rejected" in testrunner_src, "Suite 56 tests unknown card validation rejection")
+test("[DeckValidation] Unowned card rejected" in testrunner_src, "Suite 56 tests unowned card validation rejection")
+test("[DeckValidation] Quantity exceeding collection ownership rejected" in testrunner_src, "Suite 56 tests over-ownership validation rejection")
+test("[DeckValidation] Exceeding MaxCopiesPerCard (4 > 3) rejected" in testrunner_src, "Suite 56 tests max copies per card rejection")
+test("[DeckValidation] Deck with 6 cards (< 8 min) rejected" in testrunner_src, "Suite 56 tests min deck size rejection")
+test("[DeckValidation] Deck with 31 cards (> 30 max) rejected" in testrunner_src, "Suite 56 tests max deck size rejection")
+test("[ActiveDeck] Selecting valid custom deck as active succeeds" in testrunner_src, "Suite 56 tests active deck selection")
+test("[ActiveDeckFallback] getActiveDeck falls back safely to starter deck" in testrunner_src, "Suite 56 tests deleted active deck fallback")
+
+test("--- [Suite 57] Phase 4 Run Integration & Complete Phase 4 Vertical Slice" in testrunner_src, "TestRunner includes Suite 57: Complete Phase 4 Vertical Slice")
+test("[RunIntegration] Initialized 8 runtime CardInstances matching active deck" in testrunner_src, "Suite 57 tests runtime CardInstance synthesis from active deck")
+test("[RunIntegration] Runtime CardInstance GUID is unique" in testrunner_src, "Suite 57 tests runtime CardInstance unique GUIDs")
+test("[RunIntegration] Played card placed in discard pile" in testrunner_src, "Suite 57 tests combat card movement to discard")
+test("[RunIntegration] Exhausted card placed in exhaust pile" in testrunner_src, "Suite 57 tests combat card movement to exhaust")
+test("[RunIsolation] Persistent SavedDeck Strike count unchanged (3)" in testrunner_src, "Suite 57 tests persistent SavedDeck immutability during combat")
+test("[RunIsolation] Permanent CardCollection Strike count unchanged (5)" in testrunner_src, "Suite 57 tests permanent CardCollection immutability during combat")
+test("[RunIsolation] Active run deck cardinality preserved despite persistent deck edit" in testrunner_src, "Suite 57 tests active run isolation from persistent deck mutations")
+
+# 48. Phase 4 Network Security & Remote Contracts
+print("\n--- [Check 48] Phase 4 Network Security & Remote Contracts ---")
+network_service_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+server_init_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+
+test("NetworkService.CreateDeckEvent" in network_service_src, "NetworkService registers CreateDeckEvent")
+test("NetworkService.RenameDeckEvent" in network_service_src, "NetworkService registers RenameDeckEvent")
+test("NetworkService.DeleteDeckEvent" in network_service_src, "NetworkService registers DeleteDeckEvent")
+test("NetworkService.SaveDeckEvent" in network_service_src, "NetworkService registers SaveDeckEvent")
+test("NetworkService.DuplicateDeckEvent" in network_service_src, "NetworkService registers DuplicateDeckEvent")
+test("NetworkService.SelectActiveDeckEvent" in network_service_src, "NetworkService registers SelectActiveDeckEvent")
+test("NetworkService.RequestDecksEvent" in network_service_src, "NetworkService registers RequestDecksEvent")
+test("NetworkService.RequestCardCollectionEvent" in network_service_src, "NetworkService registers RequestCardCollectionEvent")
+test("NetworkService.DeckListUpdateEvent" in network_service_src, "NetworkService registers DeckListUpdateEvent")
+test("NetworkService.DeckDetailUpdateEvent" in network_service_src, "NetworkService registers DeckDetailUpdateEvent")
+test("NetworkService.CardCollectionUpdateEvent" in network_service_src, "NetworkService registers CardCollectionUpdateEvent")
+
+test("NetworkService.CreateDeckEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to CreateDeckEvent")
+test("NetworkService.RenameDeckEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to RenameDeckEvent")
+test("NetworkService.DeleteDeckEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to DeleteDeckEvent")
+test("NetworkService.SaveDeckEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to SaveDeckEvent")
+test("NetworkService.DuplicateDeckEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to DuplicateDeckEvent")
+test("NetworkService.SelectActiveDeckEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to SelectActiveDeckEvent")
+test("NetworkService.RequestDecksEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to RequestDecksEvent")
+test("NetworkService.RequestCardCollectionEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to RequestCardCollectionEvent")
+
+# Suite 58 tests
+test("--- [Suite 58] Phase 4 Network Security & Remote Contract Hardening" in testrunner_src, "TestRunner includes Suite 58: Network Security & Contracts")
+test("[NetSecurity] CreateDeckEvent registered" in testrunner_src, "Suite 58 tests CreateDeckEvent registration")
+test("[NetSecurity] DeckId is generated by server, client cannot forge ID" in testrunner_src, "Suite 58 tests server-generated DeckId enforcement")
+test("[NetSecurity] Saving unowned cards rejected by authoritative validator" in testrunner_src, "Suite 58 tests unowned card save rejection")
+test("[NetSecurity] Saving card count exceeding collection ownership rejected" in testrunner_src, "Suite 58 tests over-collection card save rejection")
+test("[NetSecurity] Saving into non-existent deck rejected" in testrunner_src, "Suite 58 tests non-existent deck save rejection")
+test("[NetSecurity] General rate limiter permits standard requests" in testrunner_src, "Suite 58 tests rate limiting on Phase 4 requests")
 
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")

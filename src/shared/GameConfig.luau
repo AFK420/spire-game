@@ -83,4 +83,41 @@ GameConfig.NetworkLimits = {
 	General = { MaxTokens = 4, RefillRate = 2.0 },
 }
 
+--------------------------------------------------------------------------------
+-- Phase 4 Deck & Collection System Configuration
+--------------------------------------------------------------------------------
+
+GameConfig.Deck = {
+	BaseDeckSlots = 4,            -- Free base deck slots granted to all accounts
+	MaxDeckSlots = 20,           -- Maximum entitlement cap for safety
+	MinDeckSize = 8,             -- Minimum cards required in a valid playable deck
+	MaxDeckSize = 30,            -- Maximum cards allowed in a deck
+	MaxCopiesPerCard = 3,        -- Maximum copies of the same card allowed in a deck
+	MaxDeckNameLength = 30,      -- Maximum character length for deck names
+}
+
+GameConfig.StarterCollection = {
+	-- Default starter card definitions and quantities granted to new accounts
+	DefaultCards = {
+		["Strike"] = 5,
+		["Defend"] = 5,
+		["HeavyBlow"] = 2,
+		["RageSlash"] = 2,
+		["ShieldSlam"] = 2,
+		["FirstAid"] = 2,
+		["PoisonDart"] = 2,
+	} :: { [string]: number },
+
+	-- Default starter deck configuration
+	DefaultDeckName = "Starter Deck",
+	DefaultDeckClass = "Warlord",
+	DefaultDeckCards = {
+		["Strike"] = 3,
+		["Defend"] = 2,
+		["HeavyBlow"] = 1,
+		["RageSlash"] = 1,
+		["ShieldSlam"] = 1,
+	} :: { [string]: number },
+}
+
 return GameConfig

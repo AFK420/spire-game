@@ -431,4 +431,86 @@ export type RunSnapshot = {
 	Message: string?,
 }
 
+--------------------------------------------------------------------------------
+-- 6. Phase 4 Persistent Account Profile & Deck Models
+--------------------------------------------------------------------------------
+
+-- Persistent saved deck definition (references CardDefinition IDs + quantities, NEVER CardInstances)
+export type SavedDeck = {
+	DeckId: string,               -- Server-generated GUID (e.g. "deck_10001_1_a8f9c2")
+	Name: string,                 -- Player deck name (trimmed, 1 to MaxDeckNameLength)
+	Cards: { [string]: number },  -- CardDefinition ID -> Quantity owned/slotted
+	ClassId: string?,             -- Optional target class binding (e.g. "Warlord")
+	CreatedAt: number,            -- Timestamp created
+	UpdatedAt: number,            -- Timestamp last edited
+}
+
+-- Configurable deck slot entitlement model
+export type DeckSlotEntitlement = {
+	BaseDeckSlots: number,        -- Base free slots (default 4 from GameConfig)
+	AdditionalDeckSlots: number,  -- Additional slots unlocked via progression/purchases (default 0)
+}
+
+-- Authoritative persistent player profile (DataStore persistence)
+export type PlayerProfile = {
+	ProfileVersion: number,                    -- Schema migration version (current: 1)
+	AetherShards: number,                      -- Meta currency earned from runs
+	PremiumCurrency: number,                   -- Placeholder schema for future currency (default 0)
+	UnlockedClasses: { string },               -- Canonical unlocked HeroClass IDs
+	TotalVictories: number,                    -- Lifetime run victories
+	TotalRuns: number,                         -- Lifetime runs started
+	LastSavedTimestamp: number,                -- os.time() of last persistence save
+	CardCollection: { [string]: number },      -- CardDefinition ID -> Permanent quantity owned
+	Decks: { [string]: SavedDeck },            -- Keyed by server-generated DeckId
+	ActiveDeckId: string?,                     -- Selected starting deck for runs
+	DeckSlotEntitlement: DeckSlotEntitlement,  -- Configurable deck slot capacity
+	UnlockedSkills: { [string]: boolean },     -- Account-wide unlocked skill IDs
+	EquipmentCollection: { [string]: any },    -- Future equipment collection schema placeholder
+	GachaBanners: { [string]: any },           -- Future banner/pity schema placeholder
+}
+
+--------------------------------------------------------------------------------
+-- 7. Phase 4 Client View Models / DTOs
+--------------------------------------------------------------------------------
+
+-- Summary of player's permanent card collection
+export type CardCollectionView = {
+	Cards: { [string]: number },  -- CardDefinition ID -> Count owned
+	TotalUniqueCards: number,
+	TotalCardCopies: number,
+}
+
+-- Lightweight deck summary for deck selection / lists
+export type DeckSummaryView = {
+	DeckId: string,
+	Name: string,
+	CardCount: number,
+	ClassId: string?,
+	CreatedAt: number,
+	UpdatedAt: number,
+	IsValid: boolean,
+}
+
+-- Detailed deck view for Deck Builder editing
+export type DeckDetailView = {
+	DeckId: string,
+	Name: string,
+	Cards: { [string]: number },
+	CardCount: number,
+	ClassId: string?,
+	CreatedAt: number,
+	UpdatedAt: number,
+	IsValid: boolean,
+	ValidationErrors: { string }?,
+}
+
+-- Deck slot capacity view
+export type DeckSlotView = {
+	BaseSlots: number,
+	AdditionalSlots: number,
+	TotalSlots: number,
+	UsedSlots: number,
+	AvailableSlots: number,
+}
+
 return StateTypes

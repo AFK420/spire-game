@@ -28,6 +28,8 @@ local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
 local EquipmentService = require(services:WaitForChild("EquipmentService") :: ModuleScript)
 local SkillService = require(services:WaitForChild("SkillService") :: ModuleScript)
 local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
+local CardCollectionService = require(services:WaitForChild("CardCollectionService") :: ModuleScript)
+local DeckService = require(services:WaitForChild("DeckService") :: ModuleScript)
 local TestRunner = require(services:WaitForChild("TestRunner") :: ModuleScript)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -61,6 +63,8 @@ StatusService.init()
 CardService.init()
 EffectResolver.init()
 ClassService.init()
+CardCollectionService.init()
+DeckService.init()
 RelicService.init()
 EquipmentService.init()
 SkillService.init()
@@ -304,6 +308,125 @@ NetworkService.UseSkillEvent.OnServerEvent:Connect(function(player: Player, slot
 	if not success and err then
 		warn(string.format("[Server] UseSkill failed for %s: %s", player.Name, err))
 	end
+end)
+
+--------------------------------------------------------------------------------
+-- Phase 4 Deck & Collection Network Dispatchers
+--------------------------------------------------------------------------------
+
+local function sendDeckListUpdate(player: Player)
+	local decks = DeckService.listDecks(player)
+	local summaries = {}
+	for _, d in decks do
+		table.insert(summaries, DeckService.toDeckSummaryView(player, d))
+	end
+	local active = DeckService.getActiveDeck(player)
+	local activeId = active and active.DeckId or ""
+	local slotInfo = DeckService.getSlotEntitlement(player)
+	NetworkService.DeckListUpdateEvent:FireClient(player, summaries, activeId, slotInfo)
+end
+
+-- 17. Create Deck
+NetworkService.CreateDeckEvent.OnServerEvent:Connect(function(player: Player, name: any, cards: any, classId: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(name) ~= "string" or #name == 0 then return end
+	if cards ~= nil and typeof(cards) ~= "table" then return end
+	if classId ~= nil and (typeof(classId) ~= "string" or #classId == 0) then return end
+
+	local success, err, createdDeck = DeckService.createDeck(player, name, cards, classId)
+	if success and createdDeck then
+		sendDeckListUpdate(player)
+		local detailView = DeckService.toDeckDetailView(player, createdDeck)
+		NetworkService.DeckDetailUpdateEvent:FireClient(player, detailView)
+	elseif err then
+		warn(string.format("[Server] CreateDeck rejected for %s: %s", player.Name, err))
+	end
+end)
+
+-- 18. Rename Deck
+NetworkService.RenameDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any, newName: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(deckId) ~= "string" or #deckId == 0 then return end
+	if typeof(newName) ~= "string" or #newName == 0 then return end
+
+	local success, err = DeckService.renameDeck(player, deckId, newName)
+	if success then
+		sendDeckListUpdate(player)
+	elseif err then
+		warn(string.format("[Server] RenameDeck rejected for %s: %s", player.Name, err))
+	end
+end)
+
+-- 19. Delete Deck
+NetworkService.DeleteDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(deckId) ~= "string" or #deckId == 0 then return end
+
+	local success, err = DeckService.deleteDeck(player, deckId)
+	if success then
+		sendDeckListUpdate(player)
+	elseif err then
+		warn(string.format("[Server] DeleteDeck rejected for %s: %s", player.Name, err))
+	end
+end)
+
+-- 20. Save / Update Deck
+NetworkService.SaveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any, cards: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(deckId) ~= "string" or #deckId == 0 then return end
+	if typeof(cards) ~= "table" then return end
+
+	local success, err = DeckService.saveDeck(player, deckId, cards)
+	if success then
+		sendDeckListUpdate(player)
+		local updatedDeck = DeckService.getDeck(player, deckId)
+		if updatedDeck then
+			local detailView = DeckService.toDeckDetailView(player, updatedDeck)
+			NetworkService.DeckDetailUpdateEvent:FireClient(player, detailView)
+		end
+	elseif err then
+		warn(string.format("[Server] SaveDeck rejected for %s: %s", player.Name, err))
+	end
+end)
+
+-- 21. Duplicate Deck
+NetworkService.DuplicateDeckEvent.OnServerEvent:Connect(function(player: Player, sourceDeckId: any, newName: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(sourceDeckId) ~= "string" or #sourceDeckId == 0 then return end
+	local optName = (typeof(newName) == "string" and #newName > 0) and newName or nil
+
+	local success, err = DeckService.duplicateDeck(player, sourceDeckId, optName)
+	if success then
+		sendDeckListUpdate(player)
+	elseif err then
+		warn(string.format("[Server] DuplicateDeck rejected for %s: %s", player.Name, err))
+	end
+end)
+
+-- 22. Select Active Deck
+NetworkService.SelectActiveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(deckId) ~= "string" or #deckId == 0 then return end
+
+	local success, err = DeckService.setActiveDeck(player, deckId)
+	if success then
+		sendDeckListUpdate(player)
+	elseif err then
+		warn(string.format("[Server] SelectActiveDeck rejected for %s: %s", player.Name, err))
+	end
+end)
+
+-- 23. Request Decks
+NetworkService.RequestDecksEvent.OnServerEvent:Connect(function(player: Player)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	sendDeckListUpdate(player)
+end)
+
+-- 24. Request Card Collection
+NetworkService.RequestCardCollectionEvent.OnServerEvent:Connect(function(player: Player)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	local collectionView = CardCollectionService.toCollectionView(player)
+	NetworkService.CardCollectionUpdateEvent:FireClient(player, collectionView)
 end)
 
 print("[Server] Game network listeners successfully registered.")

@@ -63,12 +63,25 @@ NetworkService.UnlockPassiveEvent = getOrCreateRemoteEvent("UnlockPassive")
 NetworkService.UnlockSkillEvent = getOrCreateRemoteEvent("UnlockSkill")
 NetworkService.UseSkillEvent = getOrCreateRemoteEvent("UseSkill")
 
+-- Phase 4 Deck & Collection Action Events (Client -> Server)
+NetworkService.CreateDeckEvent = getOrCreateRemoteEvent("CreateDeck")
+NetworkService.RenameDeckEvent = getOrCreateRemoteEvent("RenameDeck")
+NetworkService.DeleteDeckEvent = getOrCreateRemoteEvent("DeleteDeck")
+NetworkService.SaveDeckEvent = getOrCreateRemoteEvent("SaveDeck")
+NetworkService.DuplicateDeckEvent = getOrCreateRemoteEvent("DuplicateDeck")
+NetworkService.SelectActiveDeckEvent = getOrCreateRemoteEvent("SelectActiveDeck")
+NetworkService.RequestDecksEvent = getOrCreateRemoteEvent("RequestDecks")
+NetworkService.RequestCardCollectionEvent = getOrCreateRemoteEvent("RequestCardCollection")
+
 -- Server -> Client State & Feedback Events
 NetworkService.RunStateUpdateEvent = getOrCreateRemoteEvent("RunStateUpdate")
 NetworkService.CombatStateUpdateEvent = getOrCreateRemoteEvent("CombatStateUpdate")
 NetworkService.CombatEventLoggedEvent = getOrCreateRemoteEvent("CombatEventLogged")
 NetworkService.AnnouncementEvent = getOrCreateRemoteEvent("Announcement")
 NetworkService.RelicNotificationEvent = getOrCreateRemoteEvent("RelicNotification")
+NetworkService.DeckListUpdateEvent = getOrCreateRemoteEvent("DeckListUpdate")
+NetworkService.DeckDetailUpdateEvent = getOrCreateRemoteEvent("DeckDetailUpdate")
+NetworkService.CardCollectionUpdateEvent = getOrCreateRemoteEvent("CardCollectionUpdate")
 
 --------------------------------------------------------------------------------
 -- Token-Bucket Rate Limiting Engine

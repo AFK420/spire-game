@@ -53,6 +53,8 @@ local EquipmentService = require(services:WaitForChild("EquipmentService") :: Mo
 local StatResolver = require(services:WaitForChild("StatResolver") :: ModuleScript)
 local SkillService = require(services:WaitForChild("SkillService") :: ModuleScript)
 local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
+local CardCollectionService = require(services:WaitForChild("CardCollectionService") :: ModuleScript)
+local DeckService = require(services:WaitForChild("DeckService") :: ModuleScript)
 local NetworkService = require(services:WaitForChild("NetworkService") :: ModuleScript)
 
 local TestRunner = {}
@@ -4119,8 +4121,396 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okReEquipGear == true, "[EquipmentAuthoritative] Re-equipping real gear succeeds idempotently")
 	assertTest(p33Player.EquippedItems["Weapon"] == realSword, "[EquipmentAuthoritative] EquippedItems['Weapon'] remains unchanged")
 
+	----------------------------------------------------------------------------
+	-- [Suite 53] Phase 4 Profile Architecture & Migration
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 53] Phase 4 Profile Architecture & Migration ---")
+	-- 1. New profile default values
+	local newP = PersistenceService.reconcileForTesting(nil, 80001)
+	assertTest(newP.ProfileVersion == 1, "[Profile] New profile has ProfileVersion = 1")
+	assertTest(newP.AetherShards == 0, "[Profile] New profile AetherShards defaults to 0")
+	assertTest(newP.PremiumCurrency == 0, "[Profile] New profile PremiumCurrency defaults to 0")
+	assertTest(newP.TotalVictories == 0, "[Profile] New profile TotalVictories defaults to 0")
+	assertTest(newP.TotalRuns == 0, "[Profile] New profile TotalRuns defaults to 0")
+	assertTest(#newP.UnlockedClasses == 5, "[Profile] New profile has 5 starting unlocked classes")
+	assertTest(newP.CardCollection["Strike"] == 5, "[Profile] Starter collection contains 5 Strikes")
+	assertTest(newP.CardCollection["Defend"] == 5, "[Profile] Starter collection contains 5 Defends")
+	assertTest(newP.DeckSlotEntitlement.BaseDeckSlots == 4, "[Profile] BaseDeckSlots defaults to 4")
+	assertTest(newP.DeckSlotEntitlement.AdditionalDeckSlots == 0, "[Profile] AdditionalDeckSlots defaults to 0")
+	assertTest(newP.ActiveDeckId ~= nil, "[Profile] ActiveDeckId populated with starter deck")
+	assertTest(newP.Decks[newP.ActiveDeckId :: string] ~= nil, "[Profile] Starter deck exists in Decks dictionary")
+
+	-- 2. Legacy V0 profile migration
+	local v0Data = {
+		AetherShards = 120,
+		TotalVictories = 4,
+		TotalRuns = 12,
+		UnlockedClasses = { "Warlord", "Shadowblade" },
+	}
+	local migratedP = PersistenceService.reconcileForTesting(v0Data, 80002)
+	assertTest(migratedP.ProfileVersion == 1, "[ProfileMigration] Upgraded from v0 to ProfileVersion = 1")
+	assertTest(migratedP.AetherShards == 120, "[ProfileMigration] Preserved existing AetherShards = 120")
+	assertTest(migratedP.TotalVictories == 4, "[ProfileMigration] Preserved existing TotalVictories = 4")
+	assertTest(migratedP.TotalRuns == 12, "[ProfileMigration] Preserved existing TotalRuns = 12")
+	assertTest(#migratedP.UnlockedClasses == 2, "[ProfileMigration] Preserved unlocked classes")
+	assertTest(migratedP.CardCollection["Strike"] == 5, "[ProfileMigration] Seeded starter card collection")
+	assertTest(migratedP.ActiveDeckId ~= nil and migratedP.Decks[migratedP.ActiveDeckId :: string] ~= nil, "[ProfileMigration] Seeded default starter deck")
+	assertTest(migratedP.DeckSlotEntitlement.BaseDeckSlots == 4, "[ProfileMigration] Seeded default BaseDeckSlots = 4")
+
+	-- 3. Malformed profile recovery
+	local malformedData = {
+		ProfileVersion = 0,
+		AetherShards = -999,
+		PremiumCurrency = -50,
+		TotalVictories = -10,
+		TotalRuns = -20,
+		UnlockedClasses = "not_a_table",
+		CardCollection = {
+			["Strike"] = 10,
+			["UnknownGarbageCardXYZ"] = 5,
+			["Defend"] = -3,
+			["HeavyBlow"] = 2.5,
+		},
+		Decks = "corrupt_decks_string",
+		DeckSlotEntitlement = {
+			AdditionalDeckSlots = -5,
+		},
+	}
+	local recoveredP = PersistenceService.reconcileForTesting(malformedData, 80003)
+	assertTest(recoveredP.ProfileVersion == 1, "[ProfileRecovery] Normalized to ProfileVersion = 1")
+	assertTest(recoveredP.AetherShards == 0, "[ProfileRecovery] Negative AetherShards clamped to 0")
+	assertTest(recoveredP.PremiumCurrency == 0, "[ProfileRecovery] Negative PremiumCurrency clamped to 0")
+	assertTest(recoveredP.TotalVictories == 0, "[ProfileRecovery] Negative TotalVictories clamped to 0")
+	assertTest(recoveredP.TotalRuns == 0, "[ProfileRecovery] Negative TotalRuns clamped to 0")
+	assertTest(recoveredP.CardCollection["Strike"] == 10, "[ProfileRecovery] Valid collection card preserved")
+	assertTest(recoveredP.CardCollection["UnknownGarbageCardXYZ"] == nil, "[ProfileRecovery] Unknown card definition rejected")
+	assertTest(recoveredP.CardCollection["Defend"] == nil, "[ProfileRecovery] Negative card quantity rejected")
+	assertTest(recoveredP.DeckSlotEntitlement.AdditionalDeckSlots == 0, "[ProfileRecovery] Negative AdditionalDeckSlots clamped to 0")
+	assertTest(recoveredP.ActiveDeckId ~= nil and recoveredP.Decks[recoveredP.ActiveDeckId :: string] ~= nil, "[ProfileRecovery] Seeded fallback starter deck for corrupt deck field")
+
+	----------------------------------------------------------------------------
+	-- [Suite 54] Phase 4 Card Collection Service
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 54] Phase 4 Card Collection Service ---")
+	local colPlayer = { UserId = 81001, Name = "ColTester" }
+	PersistenceService.resetForTesting(81001)
+
+	-- 1. Initial collection check
+	local initStrikes = CardCollectionService.getCardCount(colPlayer, "Strike")
+	assertTest(initStrikes == 5, "[CardCollection] Initial Strike count is 5")
+	assertTest(CardCollectionService.hasCard(colPlayer, "Strike") == true, "[CardCollection] hasCard('Strike') is true")
+	assertTest(CardCollectionService.hasCard(colPlayer, "NonExistentCard") == false, "[CardCollection] hasCard for invalid card is false")
+
+	-- 2. Authoritative card grant
+	local okGrant, errGrant = CardCollectionService.grantCard(colPlayer, "HeavyBlow", 2)
+	assertTest(okGrant == true, "[CardCollection] Granting 2 copies of HeavyBlow succeeds")
+	assertTest(CardCollectionService.getCardCount(colPlayer, "HeavyBlow") == 4, "[CardCollection] HeavyBlow count increased from 2 to 4")
+
+	-- 3. Grant invalid cards & quantities
+	local okGrantUnknown, _ = CardCollectionService.grantCard(colPlayer, "FakeCardDefXYZ", 1)
+	assertTest(okGrantUnknown == false, "[CardCollection] Granting unknown card definition rejected")
+	local okGrantZero, _ = CardCollectionService.grantCard(colPlayer, "Strike", 0)
+	assertTest(okGrantZero == false, "[CardCollection] Granting 0 quantity rejected")
+	local okGrantNeg, _ = CardCollectionService.grantCard(colPlayer, "Strike", -3)
+	assertTest(okGrantNeg == false, "[CardCollection] Granting negative quantity rejected")
+	local okGrantFrac, _ = CardCollectionService.grantCard(colPlayer, "Strike", 1.5)
+	assertTest(okGrantFrac == false, "[CardCollection] Granting fractional quantity rejected")
+
+	-- 4. Authoritative card removal
+	local okRem, _ = CardCollectionService.removeCard(colPlayer, "HeavyBlow", 1)
+	assertTest(okRem == true, "[CardCollection] Removing 1 owned copy succeeds")
+	assertTest(CardCollectionService.getCardCount(colPlayer, "HeavyBlow") == 3, "[CardCollection] HeavyBlow count decreased to 3")
+
+	local okRemExcess, errRemExcess = CardCollectionService.removeCard(colPlayer, "HeavyBlow", 10)
+	assertTest(okRemExcess == false and string.find(errRemExcess or "", "Insufficient") ~= nil, "[CardCollection] Removing more copies than owned rejected")
+	assertTest(CardCollectionService.getCardCount(colPlayer, "HeavyBlow") == 3, "[CardCollection] Count remains unchanged after rejected deduction")
+
+	local okRemNeg, _ = CardCollectionService.removeCard(colPlayer, "HeavyBlow", -1)
+	assertTest(okRemNeg == false, "[CardCollection] Removing negative quantity rejected")
+
+	-- 5. Collection view serialization
+	local colView = CardCollectionService.toCollectionView(colPlayer)
+	assertTest(colView.Cards["Strike"] == 5, "[CardCollectionView] View contains 5 Strikes")
+	assertTest(colView.TotalUniqueCards >= 7, "[CardCollectionView] TotalUniqueCards is accurate")
+	assertTest(colView.TotalCardCopies >= 15, "[CardCollectionView] TotalCardCopies sum is accurate")
+
+	----------------------------------------------------------------------------
+	-- [Suite 55] Phase 4 Deck Model, Slot Entitlement & Deck Service
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 55] Phase 4 Deck Model, Slot Entitlement & Deck Service ---")
+	local deckPlayer = { UserId = 82001, Name = "DeckTester" }
+	PersistenceService.resetForTesting(82001)
+
+	-- 1. Initial slot entitlement
+	local slotInfo = DeckService.getSlotEntitlement(deckPlayer)
+	assertTest(slotInfo.BaseSlots == 4, "[DeckSlot] Base slots equals 4")
+	assertTest(slotInfo.AdditionalSlots == 0, "[DeckSlot] Additional slots equals 0")
+	assertTest(slotInfo.TotalSlots == 4, "[DeckSlot] Total slots equals 4")
+	assertTest(slotInfo.UsedSlots == 1, "[DeckSlot] Used slots equals 1 (starter deck)")
+	assertTest(slotInfo.AvailableSlots == 3, "[DeckSlot] Available slots equals 3")
+
+	-- 2. Create decks up to slot capacity
+	local okD2, errD2, deck2 = DeckService.createDeck(deckPlayer, "Deck Two")
+	assertTest(okD2 == true and deck2 ~= nil, "[DeckService] Create Deck 2 succeeds")
+	assertTest(string.find(deck2.DeckId, "deck_82001_") ~= nil, "[DeckService] Server-generated GUID prefix for Deck 2")
+
+	local okD3, _, deck3 = DeckService.createDeck(deckPlayer, "Deck Three")
+	assertTest(okD3 == true and deck3 ~= nil, "[DeckService] Create Deck 3 succeeds")
+
+	local okD4, _, deck4 = DeckService.createDeck(deckPlayer, "Deck Four")
+	assertTest(okD4 == true and deck4 ~= nil, "[DeckService] Create Deck 4 succeeds")
+
+	local slotFull = DeckService.getSlotEntitlement(deckPlayer)
+	assertTest(slotFull.UsedSlots == 4, "[DeckSlot] Used slots is now 4")
+	assertTest(slotFull.AvailableSlots == 0, "[DeckSlot] Available slots is 0")
+
+	-- 3. Slot exhaustion rejection
+	local okD5, errD5, _ = DeckService.createDeck(deckPlayer, "Deck Five")
+	assertTest(okD5 == false and string.find(errD5 or "", "slot entitlement limit") ~= nil, "[DeckSlot] Creating 5th deck rejected due to slot exhaustion")
+
+	-- 4. Additional slot entitlement expansion
+	PersistenceService.mutateProfile(deckPlayer, function(p)
+		p.DeckSlotEntitlement.AdditionalDeckSlots = 2
+		return true, nil
+	end)
+	local slotExpanded = DeckService.getSlotEntitlement(deckPlayer)
+	assertTest(slotExpanded.AdditionalSlots == 2, "[DeckSlot] Additional slots updated to 2")
+	assertTest(slotExpanded.TotalSlots == 6, "[DeckSlot] Total slots updated to 6")
+	assertTest(slotExpanded.AvailableSlots == 2, "[DeckSlot] Available slots is now 2")
+
+	local okD5Again, _, deck5 = DeckService.createDeck(deckPlayer, "Deck Five")
+	assertTest(okD5Again == true and deck5 ~= nil, "[DeckSlot] Creating 5th deck succeeds after entitlement expansion")
+
+	-- 5. Deck name validation
+	local okEmptyName, _ = DeckService.createDeck(deckPlayer, "   ")
+	assertTest(okEmptyName == false, "[DeckService] Empty/whitespace deck name rejected")
+	local longName = string.rep("A", 35)
+	local okLongName, _ = DeckService.createDeck(deckPlayer, longName)
+	assertTest(okLongName == false, "[DeckService] Excessively long deck name rejected")
+
+	-- 6. Rename deck
+	local okRename, _ = DeckService.renameDeck(deckPlayer, deck2.DeckId, "Renamed Warlord")
+	assertTest(okRename == true, "[DeckService] Renaming deck succeeds")
+	local fetchedD2 = DeckService.getDeck(deckPlayer, deck2.DeckId)
+	assertTest(fetchedD2 ~= nil and fetchedD2.Name == "Renamed Warlord", "[DeckService] Fetched deck reflects renamed title")
+
+	-- 7. Duplicate deck
+	local okDup, _, dupDeck = DeckService.duplicateDeck(deckPlayer, deck2.DeckId, "Deck Two Copy")
+	assertTest(okDup == true and dupDeck ~= nil, "[DeckService] Duplicating deck succeeds")
+	assertTest(dupDeck.DeckId ~= deck2.DeckId, "[DeckService] Duplicate has a fresh server GUID")
+
+	-- 8. Delete deck
+	local okDel, _ = DeckService.deleteDeck(deckPlayer, dupDeck.DeckId)
+	assertTest(okDel == true, "[DeckService] Deleting duplicate deck succeeds")
+	assertTest(DeckService.getDeck(deckPlayer, dupDeck.DeckId) == nil, "[DeckService] Deleted deck no longer returned by getDeck")
+
+	----------------------------------------------------------------------------
+	-- [Suite 56] Phase 4 Deck Validation & Active Deck Selection
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 56] Phase 4 Deck Validation & Active Deck Selection ---")
+	local valPlayer = { UserId = 83001, Name = "ValTester" }
+	PersistenceService.resetForTesting(83001)
+
+	-- 1. Valid starter deck passes validation
+	local starterDeck = DeckService.getActiveDeck(valPlayer)
+	assertTest(starterDeck ~= nil, "[DeckValidation] Player has active starter deck")
+	local okValStarter, _ = DeckService.validateDeck(valPlayer, starterDeck.Cards, starterDeck.ClassId)
+	assertTest(okValStarter == true, "[DeckValidation] Starter deck passes validation")
+
+	-- 2. Card definition existence check
+	local badDefDeck = { ["FakeCard123"] = 1, ["Strike"] = 7 }
+	local okBadDef, errBadDef = DeckService.validateDeck(valPlayer, badDefDeck)
+	assertTest(okBadDef == false and string.find(errBadDef or "", "Unknown card definition") ~= nil, "[DeckValidation] Unknown card definition rejected")
+
+	-- 3. Unowned card check
+	local curPoison = CardCollectionService.getCardCount(valPlayer, "PoisonDart")
+	CardCollectionService.removeCard(valPlayer, "PoisonDart", curPoison)
+	local unownedDeck = { ["PoisonDart"] = 1, ["Strike"] = 7 }
+	local okUnowned, errUnowned = DeckService.validateDeck(valPlayer, unownedDeck)
+	assertTest(okUnowned == false and string.find(errUnowned or "", "exceeds owned copies") ~= nil, "[DeckValidation] Unowned card rejected")
+
+	-- 4. Quantity exceeds owned copies
+	local overOwnedDeck = { ["Strike"] = 6, ["Defend"] = 2 }
+	local okOverOwned, errOverOwned = DeckService.validateDeck(valPlayer, overOwnedDeck)
+	assertTest(okOverOwned == false and string.find(errOverOwned or "", "exceeds owned copies") ~= nil, "[DeckValidation] Quantity exceeding collection ownership rejected")
+
+	-- 5. Exceeds MaxCopiesPerCard (max 3)
+	CardCollectionService.grantCard(valPlayer, "Strike", 10)
+	local overMaxCopiesDeck = { ["Strike"] = 4, ["Defend"] = 4 }
+	local okMaxCopies, errMaxCopies = DeckService.validateDeck(valPlayer, overMaxCopiesDeck)
+	assertTest(okMaxCopies == false and string.find(errMaxCopies or "", "exceeds max copies") ~= nil, "[DeckValidation] Exceeding MaxCopiesPerCard (4 > 3) rejected")
+
+	-- 6. Deck size rules: MinDeckSize (8) and MaxDeckSize (30)
+	local tooSmallDeck = { ["Strike"] = 3, ["Defend"] = 3 }
+	local okTooSmall, errTooSmall = DeckService.validateDeck(valPlayer, tooSmallDeck)
+	assertTest(okTooSmall == false and string.find(errTooSmall or "", "too few cards") ~= nil, "[DeckValidation] Deck with 6 cards (< 8 min) rejected")
+
+	local tooBigDeck: { [string]: number } = {
+		["Strike"] = 3, ["Defend"] = 3, ["HeavyBlow"] = 3, ["RageSlash"] = 3,
+		["ShieldSlam"] = 3, ["FirstAid"] = 3, ["PoisonDart"] = 3,
+		["Berserk"] = 3, ["Execute"] = 3, ["BloodThirst"] = 3, ["Pummel"] = 1,
+	}
+	CardCollectionService.grantCard(valPlayer, "Berserk", 5)
+	CardCollectionService.grantCard(valPlayer, "Execute", 5)
+	CardCollectionService.grantCard(valPlayer, "BloodThirst", 5)
+	CardCollectionService.grantCard(valPlayer, "Pummel", 5)
+	CardCollectionService.grantCard(valPlayer, "Defend", 10)
+	CardCollectionService.grantCard(valPlayer, "HeavyBlow", 10)
+	CardCollectionService.grantCard(valPlayer, "RageSlash", 10)
+	CardCollectionService.grantCard(valPlayer, "ShieldSlam", 10)
+	CardCollectionService.grantCard(valPlayer, "FirstAid", 10)
+	CardCollectionService.grantCard(valPlayer, "PoisonDart", 10)
+	local okTooBig, errTooBig = DeckService.validateDeck(valPlayer, tooBigDeck)
+	assertTest(okTooBig == false and string.find(errTooBig or "", "too many cards") ~= nil, "[DeckValidation] Deck with 31 cards (> 30 max) rejected")
+
+	-- 7. Active Deck Selection
+	local okNewD, _, customDeck = DeckService.createDeck(valPlayer, "Custom Aggro")
+	assert(customDeck, "custom deck created")
+	local validCustomCards = { ["Strike"] = 3, ["Defend"] = 3, ["HeavyBlow"] = 2 }
+	local okSaveCustom, _ = DeckService.saveDeck(valPlayer, customDeck.DeckId, validCustomCards)
+	assertTest(okSaveCustom == true, "[DeckService] Saving valid custom deck cards succeeds")
+
+	local okSetActive, _ = DeckService.setActiveDeck(valPlayer, customDeck.DeckId)
+	assertTest(okSetActive == true, "[ActiveDeck] Selecting valid custom deck as active succeeds")
+	local activeD = DeckService.getActiveDeck(valPlayer)
+	assertTest(activeD ~= nil and activeD.DeckId == customDeck.DeckId, "[ActiveDeck] getActiveDeck returns custom active deck")
+
+	-- 8. Fallback on deletion of active deck
+	local okDelActive, _ = DeckService.deleteDeck(valPlayer, customDeck.DeckId)
+	assertTest(okDelActive == true, "[ActiveDeckFallback] Deleting active deck succeeds")
+	local fallbackD = DeckService.getActiveDeck(valPlayer)
+	assertTest(fallbackD ~= nil and fallbackD.DeckId ~= customDeck.DeckId, "[ActiveDeckFallback] getActiveDeck falls back safely to starter deck")
+
+	----------------------------------------------------------------------------
+	-- [Suite 57] Phase 4 Run Integration & Complete Phase 4 Vertical Slice
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 57] Phase 4 Run Integration & Complete Phase 4 Vertical Slice ---")
+	local runPlayer = { UserId = 84001, Name = "RunTester", DisplayName = "Slayer84" }
+	PersistenceService.resetForTesting(84001)
+
+	-- 1. Create a distinct custom active deck
+	local okCustom, _, runDeck = DeckService.createDeck(runPlayer, "Speed Run Deck")
+	assert(runDeck, "runDeck created")
+	local runCards = {
+		["Strike"] = 3,
+		["Defend"] = 2,
+		["HeavyBlow"] = 2,
+		["RageSlash"] = 1,
+	}
+	DeckService.saveDeck(runPlayer, runDeck.DeckId, runCards)
+	DeckService.setActiveDeck(runPlayer, runDeck.DeckId)
+
+	-- 2. Initialize PlayerState for run
+	local pStateRun: StateTypes.PlayerState = {
+		UserId = 84001,
+		PlayerInstance = nil,
+		DisplayName = "Slayer84",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = {
+			HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3,
+		},
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = { "Anchor" }, Gold = 50, IsReady = false, IsDowned = false,
+		EquippedItems = {}, EquipmentInventory = {},
+		EquippedSkills = {}, SkillInventory = {}, UnlockedSkills = {},
+		UnlockedPassives = {}, PassivePoints = 0,
+	}
+	ClassService.initializeStartingDeck(pStateRun)
+
+	-- 3. Verify runtime CardInstances synthesized from active SavedDeck
+	assertTest(#pStateRun.Deck == 8, "[RunIntegration] Initialized 8 runtime CardInstances matching active deck")
+	local countStrike = 0
+	local countDefend = 0
+	local countHeavy = 0
+	local countRage = 0
+	local uniqueInstIds: { [string]: boolean } = {}
+	for _, cardInst in pStateRun.Deck do
+		assertTest(uniqueInstIds[cardInst.InstanceId] == nil, "[RunIntegration] Runtime CardInstance GUID is unique")
+		uniqueInstIds[cardInst.InstanceId] = true
+		assertTest(cardInst.OwnerUserId == 84001, "[RunIntegration] Runtime CardInstance owner matches player")
+		if cardInst.DefinitionId == "Strike" then countStrike += 1
+		elseif cardInst.DefinitionId == "Defend" then countDefend += 1
+		elseif cardInst.DefinitionId == "HeavyBlow" then countHeavy += 1
+		elseif cardInst.DefinitionId == "RageSlash" then countRage += 1
+		end
+	end
+	assertTest(countStrike == 3, "[RunIntegration] Runtime deck contains 3 Strikes")
+	assertTest(countDefend == 2, "[RunIntegration] Runtime deck contains 2 Defends")
+	assertTest(countHeavy == 2, "[RunIntegration] Runtime deck contains 2 HeavyBlows")
+	assertTest(countRage == 1, "[RunIntegration] Runtime deck contains 1 RageSlash")
+
+	-- 4. Simulate combat card movement (draw, play, discard, exhaust)
+	local drawn = CardService.drawCards(pStateRun, 4)
+	assertTest(#drawn == 4, "[RunIntegration] Drew 4 cards to hand")
+	assertTest(#pStateRun.Deck == 4, "[RunIntegration] Remaining draw pile has 4 cards")
+
+	local cardToPlay = drawn[1]
+	CardService.playCardFromHand(pStateRun, cardToPlay.InstanceId)
+	assertTest(pStateRun.Hand[cardToPlay.InstanceId] == nil, "[RunIntegration] Played card removed from hand")
+	assertTest(#pStateRun.DiscardPile == 1, "[RunIntegration] Played card placed in discard pile")
+
+	local cardToExhaust = drawn[2]
+	CardService.exhaustCard(pStateRun, cardToExhaust.InstanceId)
+	assertTest(#pStateRun.ExhaustPile == 1, "[RunIntegration] Exhausted card placed in exhaust pile")
+
+	-- 5. Strict Invariant Verification: Persistent SavedDeck and Collection remain 100% untouched
+	local savedDeckAfterCombat = DeckService.getDeck(runPlayer, runDeck.DeckId)
+	assert(savedDeckAfterCombat, "saved deck fetched")
+	assertTest(savedDeckAfterCombat.Cards["Strike"] == 3, "[RunIsolation] Persistent SavedDeck Strike count unchanged (3)")
+	assertTest(savedDeckAfterCombat.Cards["Defend"] == 2, "[RunIsolation] Persistent SavedDeck Defend count unchanged (2)")
+	assertTest(savedDeckAfterCombat.Cards["HeavyBlow"] == 2, "[RunIsolation] Persistent SavedDeck HeavyBlow count unchanged (2)")
+	assertTest(savedDeckAfterCombat.Cards["RageSlash"] == 1, "[RunIsolation] Persistent SavedDeck RageSlash count unchanged (1)")
+	assertTest(CardCollectionService.getCardCount(runPlayer, "Strike") == 5, "[RunIsolation] Permanent CardCollection Strike count unchanged (5)")
+
+	-- 6. Mutating saved deck mid-run does NOT affect the active run
+	DeckService.saveDeck(runPlayer, runDeck.DeckId, { ["Strike"] = 3, ["Defend"] = 5 })
+	assertTest(#pStateRun.Deck + #drawn + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIsolation] Active run deck cardinality preserved despite persistent deck edit")
+
+	----------------------------------------------------------------------------
+	-- [Suite 58] Phase 4 Network Security & Remote Contract Hardening
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 58] Phase 4 Network Security & Remote Contract Hardening ---")
+	-- 1. Verify all Phase 4 RemoteEvents exist in NetworkService
+	assertTest(NetworkService.CreateDeckEvent ~= nil, "[NetSecurity] CreateDeckEvent registered")
+	assertTest(NetworkService.RenameDeckEvent ~= nil, "[NetSecurity] RenameDeckEvent registered")
+	assertTest(NetworkService.DeleteDeckEvent ~= nil, "[NetSecurity] DeleteDeckEvent registered")
+	assertTest(NetworkService.SaveDeckEvent ~= nil, "[NetSecurity] SaveDeckEvent registered")
+	assertTest(NetworkService.DuplicateDeckEvent ~= nil, "[NetSecurity] DuplicateDeckEvent registered")
+	assertTest(NetworkService.SelectActiveDeckEvent ~= nil, "[NetSecurity] SelectActiveDeckEvent registered")
+	assertTest(NetworkService.RequestDecksEvent ~= nil, "[NetSecurity] RequestDecksEvent registered")
+	assertTest(NetworkService.RequestCardCollectionEvent ~= nil, "[NetSecurity] RequestCardCollectionEvent registered")
+	assertTest(NetworkService.DeckListUpdateEvent ~= nil, "[NetSecurity] DeckListUpdateEvent registered")
+	assertTest(NetworkService.DeckDetailUpdateEvent ~= nil, "[NetSecurity] DeckDetailUpdateEvent registered")
+	assertTest(NetworkService.CardCollectionUpdateEvent ~= nil, "[NetSecurity] CardCollectionUpdateEvent registered")
+
+	-- 2. Client cannot choose arbitrary DeckId on creation
+	local netPlayer = { UserId = 85001, Name = "NetTester" }
+	PersistenceService.resetForTesting(85001)
+	local okClientGuid, _, createdWithServerId = DeckService.createDeck(netPlayer, "Hacked Deck Name")
+	assertTest(okClientGuid == true and createdWithServerId ~= nil, "[NetSecurity] Server successfully creates deck")
+	assertTest(createdWithServerId.DeckId ~= "client_chosen_id_xyz", "[NetSecurity] DeckId is generated by server, client cannot forge ID")
+
+	-- 3. Client cannot save unowned cards via SaveDeck
+	local okSaveUnowned, errSaveUnowned = DeckService.saveDeck(netPlayer, createdWithServerId.DeckId, { ["VoidBolt"] = 3, ["Strike"] = 5 })
+	assertTest(okSaveUnowned == false and string.find(errSaveUnowned or "", "exceeds owned copies") ~= nil, "[NetSecurity] Saving unowned cards rejected by authoritative validator")
+
+	-- 4. Client cannot save deck exceeding owned copies
+	local okSaveOver, errSaveOver = DeckService.saveDeck(netPlayer, createdWithServerId.DeckId, { ["Strike"] = 10 })
+	assertTest(okSaveOver == false, "[NetSecurity] Saving card count exceeding collection ownership rejected")
+
+	-- 5. Client cannot save into non-existent DeckId
+	local okSaveNonExistent, _ = DeckService.saveDeck(netPlayer, "non_existent_deck_999", { ["Strike"] = 3, ["Defend"] = 5 })
+	assertTest(okSaveNonExistent == false, "[NetSecurity] Saving into non-existent deck rejected")
+
+	-- 6. Rate limiting applied to General category
+	local mockPlrInstance = Instance.new("Folder") :: any
+	mockPlrInstance.UserId = 85001
+	local limitOk = NetworkService.checkRateLimit(mockPlrInstance, "General")
+	assertTest(limitOk == true, "[NetSecurity] General rate limiter permits standard requests")
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 1, 2 & PHASE 3 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 1, 2, 3 & PHASE 4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end

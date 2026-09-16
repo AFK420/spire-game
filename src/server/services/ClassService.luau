@@ -16,6 +16,7 @@ local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local servicesFolder = script.Parent
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
 local PersistenceService = require(servicesFolder:WaitForChild("PersistenceService") :: ModuleScript)
+local DeckService = require(servicesFolder:WaitForChild("DeckService") :: ModuleScript)
 
 local ClassService = {}
 
@@ -124,14 +125,33 @@ end
 
 -- Generates runtime CardInstances for starting deck (Only called when initializing a new player/deck in Lobby)
 function ClassService.initializeStartingDeck(playerState: StateTypes.PlayerState)
-	local heroClass = ClassData.getClass(playerState.ClassId) or ClassData.getClass("Warlord") :: ClassData.HeroClass
-
 	table.clear(playerState.Deck)
 	table.clear(playerState.Hand)
 	table.clear(playerState.DiscardPile)
 	table.clear(playerState.ExhaustPile)
 
-	for _, cardDefId in heroClass.StartingDeck do
+	local playerRef = playerState.PlayerInstance or { UserId = playerState.UserId }
+	local activeDeck = DeckService.getActiveDeck(playerRef)
+
+	local cardList: { string } = {}
+	if activeDeck and activeDeck.Cards and next(activeDeck.Cards) ~= nil then
+		local isValid, _ = DeckService.validateDeck(playerRef, activeDeck.Cards, activeDeck.ClassId)
+		if isValid then
+			for cardDefId, count in activeDeck.Cards do
+				for _ = 1, count do
+					table.insert(cardList, cardDefId)
+				end
+			end
+		end
+	end
+
+	-- Fallback to hero class starting deck if active deck was missing or invalid
+	if #cardList == 0 then
+		local heroClass = ClassData.getClass(playerState.ClassId) or ClassData.getClass("Warlord") :: ClassData.HeroClass
+		cardList = heroClass.StartingDeck
+	end
+
+	for _, cardDefId in cardList do
 		local inst = CardService.createCardInstance(cardDefId, playerState.UserId)
 		if inst then
 			table.insert(playerState.Deck, inst)
