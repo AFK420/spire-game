@@ -139,6 +139,14 @@ function SkillService.unlockSkill(
 		end
 	end
 
+	-- Check if an unactivated instance already exists in SkillInventory
+	for _, item in ipairs(playerState.SkillInventory) do
+		if item.DefinitionId == definitionId and item.OwnerUserId == playerState.UserId then
+			playerState.UnlockedSkills[definitionId] = true
+			return true, nil, item
+		end
+	end
+
 	local instance = SkillService.createInstance(definitionId, playerState.UserId, nil)
 	if not instance then
 		return false, "Failed to instantiate skill.", nil
@@ -149,78 +157,115 @@ function SkillService.unlockSkill(
 	return true, nil, instance
 end
 
+-- Dedicated test/provisioning helper that authoritatively creates and registers an instance in SkillInventory
+function SkillService.grantSkillForTesting(
+	playerState: StateTypes.PlayerState,
+	definitionId: string,
+	slot: StateTypes.SkillSlot?
+): StateTypes.SkillInstance?
+	if not playerState then return nil end
+	local def = SkillData.getSkill(definitionId)
+	if not def then return nil end
+
+	if not playerState.UnlockedSkills then
+		playerState.UnlockedSkills = {}
+	end
+	if not playerState.SkillInventory then
+		playerState.SkillInventory = {}
+	end
+
+	local instance = SkillService.createInstance(definitionId, playerState.UserId, slot)
+	if not instance then return nil end
+
+	playerState.UnlockedSkills[definitionId] = true
+	table.insert(playerState.SkillInventory, instance)
+	return instance
+end
+
 -- Equips a skill into the designated skill slot on the player's state
--- Accepts either an owned SkillInstance table or an identifier (InstanceId / DefinitionId)
+-- Accepts either an existing InstanceId string, DefinitionId string, or an authoritative SkillInstance proven to exist in SkillInventory
 function SkillService.equipSkill(
 	playerState: StateTypes.PlayerState,
-	skillInstOrId: any,
+	skillIdentifier: any,
 	targetSlot: StateTypes.SkillSlot?
 ): (boolean, string?)
 	if not playerState then
 		return false, "Player state is nil."
 	end
-	if not skillInstOrId then
+	if not skillIdentifier then
 		return false, "Skill parameter is nil."
 	end
 
+	local targetInst: StateTypes.SkillInstance? = nil
+
+	if typeof(skillIdentifier) == "string" then
+		targetInst = SkillService.getOwnedSkill(playerState, skillIdentifier)
+		if not targetInst then
+			return false, string.format("Player %d does not own or has not unlocked skill '%s'.", playerState.UserId, skillIdentifier)
+		end
+	elseif typeof(skillIdentifier) == "table" and skillIdentifier.InstanceId then
+		local supplied = skillIdentifier :: StateTypes.SkillInstance
+
+		-- Look up strictly within player's authoritative SkillInventory or already-equipped EquippedSkills
+		local authInst: StateTypes.SkillInstance? = nil
+		if playerState.SkillInventory then
+			for _, item in ipairs(playerState.SkillInventory) do
+				if item.InstanceId == supplied.InstanceId then
+					authInst = item
+					break
+				end
+			end
+		end
+		if not authInst and playerState.EquippedSkills then
+			for _, item in playerState.EquippedSkills do
+				if item and item.InstanceId == supplied.InstanceId then
+					authInst = item
+					break
+				end
+			end
+		end
+
+		if not authInst then
+			-- REJECT IMMEDIATELY. Never insert supplied candidate into SkillInventory.
+			return false, string.format("Skill instance '%s' not found in player's skill inventory.", tostring(supplied.InstanceId))
+		end
+
+		-- Verify ownership
+		if authInst.OwnerUserId ~= playerState.UserId then
+			return false, string.format("Skill instance owner %d does not match player %d.", authInst.OwnerUserId, playerState.UserId)
+		end
+
+		-- Verify caller's supplied table matches authoritative stored record
+		if supplied.DefinitionId ~= authInst.DefinitionId
+			or supplied.OwnerUserId ~= authInst.OwnerUserId
+		then
+			return false, string.format("Supplied skill instance '%s' does not match authoritative inventory record.", supplied.InstanceId)
+		end
+
+		-- Verify definition entitlement
+		if not SkillService.hasSkill(playerState, authInst.DefinitionId) then
+			return false, string.format("Player %d has not unlocked skill '%s'.", playerState.UserId, authInst.DefinitionId)
+		end
+
+		-- Use strictly the authoritative instance, preserving its runtime CurrentCooldown
+		targetInst = authInst
+	else
+		return false, "Invalid skill parameter: expected SkillInstance or string identifier (InstanceId / DefinitionId)."
+	end
+
+	assert(targetInst ~= nil, "Target skill instance must be resolved.")
+
 	local resolvedSlot: StateTypes.SkillSlot? = targetSlot
-	if not resolvedSlot and typeof(skillInstOrId) == "table" and skillInstOrId.Slot then
-		resolvedSlot = skillInstOrId.Slot
+	if not resolvedSlot and typeof(skillIdentifier) == "table" and skillIdentifier.Slot then
+		resolvedSlot = skillIdentifier.Slot
+	end
+	if not resolvedSlot and targetInst.Slot then
+		resolvedSlot = targetInst.Slot
 	end
 
 	if not resolvedSlot or not VALID_SKILL_SLOTS[resolvedSlot] then
 		return false, string.format("Invalid skill slot '%s'. Must be Skill1, Skill2, Skill3, or Skill4.", tostring(resolvedSlot))
 	end
-
-	local targetInst: StateTypes.SkillInstance? = nil
-
-	if typeof(skillInstOrId) == "string" then
-		targetInst = SkillService.getOwnedSkill(playerState, skillInstOrId)
-		if not targetInst then
-			return false, string.format("Player %d has not unlocked skill '%s'.", playerState.UserId, skillInstOrId)
-		end
-	elseif typeof(skillInstOrId) == "table" and skillInstOrId.InstanceId then
-		local candidate = skillInstOrId :: StateTypes.SkillInstance
-		if candidate.OwnerUserId ~= playerState.UserId then
-			return false, string.format("Skill instance owner %d does not match player %d.", candidate.OwnerUserId, playerState.UserId)
-		end
-		if not SkillService.hasSkill(playerState, candidate.DefinitionId) then
-			local def = SkillData.getSkill(candidate.DefinitionId)
-			local name = def and def.Name or candidate.DefinitionId
-			return false, string.format("Player %d has not unlocked skill '%s'.", playerState.UserId, name)
-		end
-
-		local foundInInv = false
-		if playerState.SkillInventory then
-			for _, item in ipairs(playerState.SkillInventory) do
-				if item.InstanceId == candidate.InstanceId then
-					foundInInv = true
-					break
-				end
-			end
-		end
-		if not foundInInv and playerState.EquippedSkills then
-			for _, item in playerState.EquippedSkills do
-				if item and item.InstanceId == candidate.InstanceId then
-					foundInInv = true
-					break
-				end
-			end
-		end
-
-		if not foundInInv then
-			if playerState.SkillInventory then
-				table.insert(playerState.SkillInventory, candidate)
-			else
-				playerState.SkillInventory = { candidate }
-			end
-		end
-		targetInst = candidate
-	else
-		return false, "Invalid skill parameter: expected SkillInstance or string identifier."
-	end
-
-	assert(targetInst ~= nil, "Target skill instance must be resolved.")
 
 	-- Class requirement check
 	local def = SkillData.getSkill(targetInst.DefinitionId)

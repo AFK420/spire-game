@@ -3069,12 +3069,15 @@ function TestRunner.runAllTests(): boolean
 			["HeroicStrike"] = true,
 			["Whirlwind"] = true,
 		},
+		SkillInventory = {},
 	}
 
 	-- 1. Create skill instance
 	local skillInst1 = SkillService.createInstance("HeroicStrike", skillUser, "Skill1")
 	assertTest(skillInst1 ~= nil and skillInst1.DefinitionId == "HeroicStrike", "[SkillService] createInstance created HeroicStrike")
 	assertTest(skillInst1 ~= nil and skillInst1.CurrentCooldown == 0, "[SkillService] Created skill instance starts with 0 cooldown")
+	assert(skillInst1, "skillInst1 created")
+	table.insert(skillPlayer.SkillInventory, skillInst1)
 
 	-- 2. Unknown skill ID rejected
 	local badSkillInst = SkillService.createInstance("NonExistentSkillXYZ", skillUser, "Skill1")
@@ -3084,6 +3087,7 @@ function TestRunner.runAllTests(): boolean
 	skillPlayer.ClassId = "AetherMage"
 	local classSkillInst = SkillService.createInstance("Whirlwind", skillUser, "Skill2")
 	assert(classSkillInst, "classSkillInst must be non-nil")
+	table.insert(skillPlayer.SkillInventory, classSkillInst)
 	local okClassSkill, errClassSkill = SkillService.equipSkill(skillPlayer, classSkillInst)
 	assertTest(okClassSkill == false and string.find(errClassSkill or "", "requires class") ~= nil, "[SkillService] Warlord skill rejected for AetherMage")
 	skillPlayer.ClassId = "Warlord"
@@ -3201,6 +3205,8 @@ function TestRunner.runAllTests(): boolean
 	-- 5. Equip active skill HeroicStrike (Base 12 Dmg, 1 Energy, 1 Turn CD)
 	local sliceSkill = SkillService.createInstance("HeroicStrike", sliceUser, "Skill1")
 	assert(sliceSkill, "sliceSkill must be created")
+	slicePlayer.SkillInventory = { sliceSkill }
+	slicePlayer.UnlockedSkills = { ["HeroicStrike"] = true }
 	SkillService.equipSkill(slicePlayer, sliceSkill)
 	assertTest(slicePlayer.EquippedSkills ~= nil and slicePlayer.EquippedSkills["Skill1"] == sliceSkill, "[VerticalSlice] HeroicStrike equipped in Skill1")
 
@@ -3360,11 +3366,13 @@ function TestRunner.runAllTests(): boolean
 		IsConnected = true,
 		EquippedSkills = {},
 		UnlockedSkills = {},
+		SkillInventory = {},
 	}
 
 	-- 1. Unlocked Check: Equipping unowned skill rejected
 	local whirlSkill = SkillService.createInstance("Whirlwind", skillAuthUser, "Skill2")
 	assert(whirlSkill, "whirlSkill created")
+	table.insert(skillAuthPlayer.SkillInventory, whirlSkill)
 	local okUnowned, errUnowned = SkillService.equipSkill(skillAuthPlayer, whirlSkill)
 	assertTest(okUnowned == false and string.find(errUnowned or "", "unlocked") ~= nil, "[SkillHardening] Unowned skill equip rejected")
 
@@ -3544,9 +3552,11 @@ function TestRunner.runAllTests(): boolean
 		IsConnected = true,
 		EquippedSkills = {},
 		UnlockedSkills = { ["HeroicStrike"] = true },
+		SkillInventory = {},
 	}
 	local txSkill = SkillService.createInstance("HeroicStrike", txUser, "Skill1")
 	assert(txSkill, "txSkill created")
+	table.insert(txPlayer.SkillInventory, txSkill)
 	SkillService.equipSkill(txPlayer, txSkill)
 
 	local txCombat: StateTypes.CombatState = {
@@ -3699,10 +3709,10 @@ function TestRunner.runAllTests(): boolean
 	assertTest(extPassiveStats.BonusDamage == 8, "[ExtSlice] Stacked weapon (+5) and passive (+3) yield +8 BonusDamage")
 
 	-- 4. Authoritative skill unlock and equip
-	local okExtSkillUnlock, _ = SkillService.unlockSkill(extPlayer, "HeroicStrike")
+	local okExtSkillUnlock, _, extSkillInst = SkillService.unlockSkill(extPlayer, "HeroicStrike")
 	assertTest(okExtSkillUnlock == true, "[ExtSlice] HeroicStrike authoritatively unlocked")
-	local extSkillInst = SkillService.createInstance("HeroicStrike", extUser, "Skill1")
 	assert(extSkillInst, "extSkillInst created")
+	extSkillInst.Slot = "Skill1"
 	local okExtSkillEquip, _ = SkillService.equipSkill(extPlayer, extSkillInst)
 	assertTest(okExtSkillEquip == true, "[ExtSlice] HeroicStrike equipped in Skill1")
 
@@ -3867,8 +3877,10 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okUnlockP2 == true and p2SkillInst ~= nil, "[NetBoundary] Player 2 unlocked HeroicStrike")
 	local foreignLookup = SkillService.getOwnedSkill(netPlayer1, (p2SkillInst :: any).InstanceId)
 	assertTest(foreignLookup == nil, "[NetBoundary] Player 1 cannot look up Player 2's skill instance via getOwnedSkill")
+	table.insert(netPlayer1.SkillInventory, p2SkillInst)
 	local okForeignEquip, errForeignEquip = SkillService.equipSkill(netPlayer1, p2SkillInst, "Skill1")
 	assertTest(okForeignEquip == false and string.find(errForeignEquip or "", "does not match player") ~= nil, "[NetBoundary] Foreign skill instance rejected by equipSkill")
+	table.remove(netPlayer1.SkillInventory, #netPlayer1.SkillInventory)
 	assertTest(netPlayer1.EquippedSkills["Skill1"] == nil, "[NetBoundary] Zero state mutation on foreign skill equip")
 
 	-- 3d. Authoritative unlock of skill for player 1
@@ -3952,6 +3964,160 @@ function TestRunner.runAllTests(): boolean
 	assertTest(pView.SkillInventory ~= nil and #pView.SkillInventory == 1 and pView.SkillInventory[1] == "HeroicStrike", "[NetSnapshot] Run snapshot serializes skill inventory array")
 	assertTest(pView.UnlockedPassives ~= nil and pView.UnlockedPassives["Warlord_IronSkin"] == true, "[NetSnapshot] Run snapshot serializes unlocked passives set")
 	assertTest(pView.PassivePoints == 0, "[NetSnapshot] Run snapshot serializes accurate remaining passive points")
+
+	----------------------------------------------------------------------------
+	-- TEST 52: Phase 3.3 Strict Instance Validation & Fabricated Object Rejection
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 52] Phase 3.3 Strict Instance Validation & Fabricated Object Rejection ---")
+	local p33User = 9301
+	local p33Player: StateTypes.PlayerState = {
+		UserId = p33User,
+		DisplayName = "InvariantHero",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		EquippedItems = {},
+		EquipmentInventory = {},
+		EquippedSkills = {},
+		SkillInventory = {},
+		UnlockedSkills = {},
+		UnlockedPassives = {},
+		PassivePoints = 0,
+	}
+
+	-- 1. Fabricated SkillInstance table with correct OwnerUserId -> rejected with zero inventory mutation
+	local fakeSkillOwnerOnly = {
+		InstanceId = "forged_skill_owner_001",
+		DefinitionId = "HeroicStrike",
+		OwnerUserId = p33User,
+		Slot = "Skill1",
+		CurrentCooldown = 0,
+	}
+	local okFakeOwner, errFakeOwner = SkillService.equipSkill(p33Player, fakeSkillOwnerOnly, "Skill1")
+	assertTest(okFakeOwner == false and string.find(errFakeOwner or "", "not found in player's skill inventory") ~= nil, "[SkillAuthoritative] Fabricated instance with matching OwnerUserId rejected")
+	assertTest(#p33Player.SkillInventory == 0, "[SkillAuthoritative] Zero SkillInventory mutation on fabricated instance rejection")
+	assertTest(p33Player.EquippedSkills["Skill1"] == nil, "[SkillAuthoritative] EquippedSkills['Skill1'] remains nil")
+
+	-- 2. Fabricated SkillInstance table with valid DefinitionId -> rejected with zero inventory mutation
+	local fakeSkillDefOnly = {
+		InstanceId = "forged_skill_def_002",
+		DefinitionId = "HeroicStrike",
+		OwnerUserId = 9999,
+		Slot = "Skill1",
+		CurrentCooldown = 0,
+	}
+	local okFakeDef, _ = SkillService.equipSkill(p33Player, fakeSkillDefOnly, "Skill1")
+	assertTest(okFakeDef == false, "[SkillAuthoritative] Fabricated instance with valid DefinitionId rejected")
+	assertTest(#p33Player.SkillInventory == 0, "[SkillAuthoritative] Zero SkillInventory mutation on valid DefinitionId forgery")
+
+	-- 3. Fabricated SkillInstance with unlocked DefinitionId -> rejected with zero inventory mutation
+	local okUnlockReal, _, realSkillInst = SkillService.unlockSkill(p33Player, "HeroicStrike")
+	assertTest(okUnlockReal == true and realSkillInst ~= nil, "[SkillAuthoritative] Authoritatively unlocked HeroicStrike")
+	assertTest(#p33Player.SkillInventory == 1, "[SkillAuthoritative] SkillInventory holds exactly 1 authoritative instance")
+
+	local fakeUnlockedDef = {
+		InstanceId = "forged_skill_unlocked_003",
+		DefinitionId = "HeroicStrike",
+		OwnerUserId = p33User,
+		Slot = "Skill1",
+		CurrentCooldown = 0,
+	}
+	local okFakeUnlocked, errFakeUnlocked = SkillService.equipSkill(p33Player, fakeUnlockedDef, "Skill1")
+	assertTest(okFakeUnlocked == false and string.find(errFakeUnlocked or "", "not found in player's skill inventory") ~= nil, "[SkillAuthoritative] Fabricated instance with unlocked definition rejected")
+	assertTest(#p33Player.SkillInventory == 1, "[SkillAuthoritative] SkillInventory size remains exactly 1 (forgery not inserted)")
+	assertTest(p33Player.EquippedSkills["Skill1"] == nil, "[SkillAuthoritative] EquippedSkills['Skill1'] remains nil")
+
+	-- 4. Fabricated SkillInstance with same InstanceId as a real skill but different fields -> rejected
+	local forgedFieldsSkill = {
+		InstanceId = (realSkillInst :: any).InstanceId,
+		DefinitionId = "Whirlwind",
+		OwnerUserId = p33User,
+		Slot = "Skill1",
+		CurrentCooldown = 0,
+	}
+	local okForgedFields, errForgedFields = SkillService.equipSkill(p33Player, forgedFieldsSkill, "Skill1")
+	assertTest(okForgedFields == false and string.find(errForgedFields or "", "does not match authoritative inventory record") ~= nil, "[SkillAuthoritative] Forged definition on real InstanceId rejected")
+	assertTest(#p33Player.SkillInventory == 1, "[SkillAuthoritative] SkillInventory untouched")
+	assertTest(p33Player.EquippedSkills["Skill1"] == nil, "[SkillAuthoritative] EquippedSkills['Skill1'] untouched")
+
+	-- 5. Real SkillInventory instance -> succeeds
+	local okRealEquip, _ = SkillService.equipSkill(p33Player, realSkillInst, "Skill1")
+	assertTest(okRealEquip == true, "[SkillAuthoritative] Equipping real SkillInventory instance succeeds")
+	assertTest(p33Player.EquippedSkills["Skill1"] == realSkillInst, "[SkillAuthoritative] EquippedSkills['Skill1'] holds real instance")
+	assertTest((realSkillInst :: any).Slot == "Skill1", "[SkillAuthoritative] Authoritative instance Slot is Skill1")
+
+	-- 6. Real equipped instance -> re-equip remains deterministic & preserves cooldown
+	(realSkillInst :: any).CurrentCooldown = 2
+	local okReEquipReal, _ = SkillService.equipSkill(p33Player, realSkillInst, "Skill1")
+	assertTest(okReEquipReal == true, "[SkillAuthoritative] Re-equipping real equipped instance succeeds idempotently")
+	assertTest((realSkillInst :: any).CurrentCooldown == 2, "[SkillAuthoritative] Authoritative CurrentCooldown preserved at 2")
+
+	-- 7. Failed equip causes zero SkillInventory mutation
+	local countBefore = #p33Player.SkillInventory
+	SkillService.equipSkill(p33Player, { InstanceId = "non_existent_999" }, "Skill1")
+	assertTest(#p33Player.SkillInventory == countBefore, "[SkillAuthoritative] Failed equip caused exactly zero SkillInventory mutations")
+
+	-- 8. Equivalent fabricated EquipmentInstance cases -> rejected with zero inventory mutation
+	-- 8a. Fabricated EquipmentInstance with matching OwnerUserId -> rejected
+	local fakeArmorOwner = {
+		InstanceId = "fake_armor_owner_001",
+		DefinitionId = "ReinforcedPlate",
+		OwnerUserId = p33User,
+		Slot = "Armor",
+		Level = 1,
+	}
+	local okFakeArmor, errFakeArmor = EquipmentService.equipItem(p33Player, fakeArmorOwner)
+	assertTest(okFakeArmor == false and string.find(errFakeArmor or "", "not found in player's inventory") ~= nil, "[EquipmentAuthoritative] Fabricated item with matching OwnerUserId rejected")
+	assertTest(#p33Player.EquipmentInventory == 0, "[EquipmentAuthoritative] Zero EquipmentInventory mutation on forged item rejection")
+	assertTest(p33Player.EquippedItems["Armor"] == nil, "[EquipmentAuthoritative] EquippedItems['Armor'] remains nil")
+
+	-- 8b. Fabricated EquipmentInstance with valid DefinitionId -> rejected
+	local fakeSwordDef = {
+		InstanceId = "fake_sword_def_002",
+		DefinitionId = "IronBroadsword",
+		OwnerUserId = 8888,
+		Slot = "Weapon",
+		Level = 1,
+	}
+	local okFakeSword, _ = EquipmentService.equipItem(p33Player, fakeSwordDef)
+	assertTest(okFakeSword == false, "[EquipmentAuthoritative] Fabricated item with valid DefinitionId rejected")
+	assertTest(#p33Player.EquipmentInventory == 0, "[EquipmentAuthoritative] Zero EquipmentInventory mutation")
+
+	-- 8c. Fabricated EquipmentInstance with same InstanceId as real item but different fields -> rejected
+	local realSword = EquipmentService.grantEquipment(p33Player, "IronBroadsword")
+	assert(realSword, "realSword granted")
+	assertTest(#p33Player.EquipmentInventory == 1, "[EquipmentAuthoritative] EquipmentInventory holds granted sword")
+
+	local forgedFieldsGear = {
+		InstanceId = realSword.InstanceId,
+		DefinitionId = "ReinforcedPlate",
+		OwnerUserId = p33User,
+		Slot = "Armor",
+		Level = 1,
+	}
+	local okForgedGearFields, errForgedGearFields = EquipmentService.equipItem(p33Player, forgedFieldsGear)
+	assertTest(okForgedGearFields == false and string.find(errForgedGearFields or "", "does not match authoritative inventory record") ~= nil, "[EquipmentAuthoritative] Forged definition on real gear InstanceId rejected")
+	assertTest(#p33Player.EquipmentInventory == 1, "[EquipmentAuthoritative] EquipmentInventory untouched on forgery rejection")
+	assertTest(p33Player.EquippedItems["Weapon"] == nil, "[EquipmentAuthoritative] EquippedItems['Weapon'] untouched")
+
+	-- 8d. Real EquipmentInventory instance equip -> succeeds
+	local okRealGearEquip, _ = EquipmentService.equipItem(p33Player, realSword)
+	assertTest(okRealGearEquip == true, "[EquipmentAuthoritative] Equipping real inventory gear succeeds")
+	assertTest(p33Player.EquippedItems["Weapon"] == realSword, "[EquipmentAuthoritative] EquippedItems['Weapon'] holds real sword")
+
+	-- 8e. Real equipped gear re-equip remains deterministic
+	local okReEquipGear, _ = EquipmentService.equipItem(p33Player, realSword)
+	assertTest(okReEquipGear == true, "[EquipmentAuthoritative] Re-equipping real gear succeeds idempotently")
+	assertTest(p33Player.EquippedItems["Weapon"] == realSword, "[EquipmentAuthoritative] EquippedItems['Weapon'] remains unchanged")
 
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2 & PHASE 3 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))

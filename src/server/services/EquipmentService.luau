@@ -120,17 +120,40 @@ function EquipmentService.equipItem(
 			return false, string.format("Equipment instance '%s' not found in player's inventory.", equipInstOrId)
 		end
 	elseif typeof(equipInstOrId) == "table" and equipInstOrId.InstanceId then
-		targetInst = equipInstOrId :: StateTypes.EquipmentInstance
+		local supplied = equipInstOrId :: StateTypes.EquipmentInstance
+		local authItem: StateTypes.EquipmentInstance? = nil
+
 		for idx, item in ipairs(playerState.EquipmentInventory) do
-			if item.InstanceId == targetInst.InstanceId then
+			if item.InstanceId == supplied.InstanceId then
+				authItem = item
 				invIndex = idx
 				break
 			end
 		end
 
-		if not invIndex then
-			return false, string.format("Equipment instance '%s' not found in player's inventory.", targetInst.InstanceId)
+		-- Also allow re-equipping an already-equipped instance
+		if not authItem and playerState.EquippedItems then
+			for _, item in playerState.EquippedItems do
+				if item and item.InstanceId == supplied.InstanceId then
+					authItem = item
+					break
+				end
+			end
 		end
+
+		if not authItem then
+			return false, string.format("Equipment instance '%s' not found in player's inventory.", tostring(supplied.InstanceId))
+		end
+
+		-- Validate that supplied table matches stored authoritative record
+		if supplied.DefinitionId ~= authItem.DefinitionId
+			or supplied.OwnerUserId ~= authItem.OwnerUserId
+			or supplied.Slot ~= authItem.Slot
+		then
+			return false, string.format("Supplied equipment instance '%s' does not match authoritative inventory record.", supplied.InstanceId)
+		end
+
+		targetInst = authItem
 	else
 		return false, "Invalid equipment parameter: expected EquipmentInstance or InstanceId string."
 	end

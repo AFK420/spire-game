@@ -677,6 +677,40 @@ test("[NetSnapshot] Run snapshot serializes skill inventory array" in testrunner
 test("[NetSnapshot] Run snapshot serializes unlocked passives set" in testrunner_src, "Suite 51 tests run snapshot passives serialization")
 test("[NetSnapshot] Run snapshot serializes accurate remaining passive points" in testrunner_src, "Suite 51 tests run snapshot passive points serialization")
 
+# 44. Phase 3.3 Strict Instance Validation & Fabricated Object Rejection
+print("\n--- [Check 44] Phase 3.3 Strict Instance Validation & Fabricated Object Rejection ---")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+equip_service_src = (ROOT / "src/server/services/EquipmentService.luau").read_text(encoding="utf-8")
+skill_service_src = (ROOT / "src/server/services/SkillService.luau").read_text(encoding="utf-8")
+
+# Fabricated SkillInstance closure checks in SkillService
+test("table.insert(playerState.SkillInventory, candidate)" not in skill_service_src, "SkillService.equipSkill contains 0 auto-insertions of candidate into SkillInventory")
+test("supplied.DefinitionId ~= authInst.DefinitionId" in skill_service_src, "SkillService.equipSkill validates supplied DefinitionId against stored authoritative record")
+test("authInst.OwnerUserId ~= playerState.UserId" in skill_service_src, "SkillService.equipSkill validates authInst OwnerUserId against player")
+test("function SkillService.grantSkillForTesting(" in skill_service_src, "SkillService provides grantSkillForTesting helper")
+
+# Fabricated EquipmentInstance closure checks in EquipmentService
+test("supplied.DefinitionId ~= authItem.DefinitionId" in equip_service_src, "EquipmentService.equipItem validates supplied DefinitionId against stored authoritative record")
+test("supplied.OwnerUserId ~= authItem.OwnerUserId" in equip_service_src, "EquipmentService.equipItem validates supplied OwnerUserId against stored authoritative record")
+test("supplied.Slot ~= authItem.Slot" in equip_service_src, "EquipmentService.equipItem validates supplied Slot against stored authoritative record")
+
+# TestRunner Suite 52 checks
+test("--- [Suite 52] Phase 3.3 Strict Instance Validation & Fabricated Object Rejection" in testrunner_src, "TestRunner includes Suite 52: Strict Instance Validation & Fabricated Object Rejection")
+test("[SkillAuthoritative] Fabricated instance with matching OwnerUserId rejected" in testrunner_src, "Suite 52 tests rejection of fabricated skill with matching OwnerUserId")
+test("[SkillAuthoritative] Zero SkillInventory mutation on fabricated instance rejection" in testrunner_src, "Suite 52 tests zero SkillInventory mutation on rejected skill equip")
+test("[SkillAuthoritative] Fabricated instance with valid DefinitionId rejected" in testrunner_src, "Suite 52 tests rejection of fabricated skill with valid DefinitionId")
+test("[SkillAuthoritative] Fabricated instance with unlocked definition rejected" in testrunner_src, "Suite 52 tests rejection of fabricated skill with unlocked definition")
+test("[SkillAuthoritative] Forged definition on real InstanceId rejected" in testrunner_src, "Suite 52 tests rejection of forged fields on real skill InstanceId")
+test("[SkillAuthoritative] Equipping real SkillInventory instance succeeds" in testrunner_src, "Suite 52 tests equipping real SkillInventory instance")
+test("[SkillAuthoritative] Re-equipping real equipped instance succeeds idempotently" in testrunner_src, "Suite 52 tests idempotent re-equip of real skill")
+test("[SkillAuthoritative] Failed equip caused exactly zero SkillInventory mutations" in testrunner_src, "Suite 52 tests zero SkillInventory mutation on failed equip")
+test("[EquipmentAuthoritative] Fabricated item with matching OwnerUserId rejected" in testrunner_src, "Suite 52 tests rejection of fabricated equipment with matching OwnerUserId")
+test("[EquipmentAuthoritative] Zero EquipmentInventory mutation on forged item rejection" in testrunner_src, "Suite 52 tests zero EquipmentInventory mutation on rejected equipment equip")
+test("[EquipmentAuthoritative] Fabricated item with valid DefinitionId rejected" in testrunner_src, "Suite 52 tests rejection of fabricated equipment with valid DefinitionId")
+test("[EquipmentAuthoritative] Forged definition on real gear InstanceId rejected" in testrunner_src, "Suite 52 tests rejection of forged fields on real equipment InstanceId")
+test("[EquipmentAuthoritative] Equipping real inventory gear succeeds" in testrunner_src, "Suite 52 tests equipping real EquipmentInventory item")
+test("[EquipmentAuthoritative] Re-equipping real gear succeeds idempotently" in testrunner_src, "Suite 52 tests idempotent re-equip of real equipment")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")

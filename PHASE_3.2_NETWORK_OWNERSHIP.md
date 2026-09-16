@@ -109,10 +109,33 @@ Any malformed, non-string, unexpected, or out-of-range value immediately aborts 
 
 ---
 
-## 4. Verification & Testing Matrix
+## 4. Phase 3.3 Fabricated Instance Closure & State Invariants
 
-### 4.1 Test Suite 51 (TestRunner.luau)
-Suite 51 executes comprehensive integration assertions covering:
+In Phase 3.3, a critical invariant violation was audited and resolved in `SkillService.equipSkill`: previously, when an external caller passed a fabricated table, `equipSkill` would auto-insert that candidate into `playerState.SkillInventory`.
+
+### 4.1 Invariant Rules & Hardening
+1. **Zero External Mutation**: `SkillService.equipSkill()` NEVER inserts an externally supplied table into `SkillInventory`.
+2. **Authoritative Provisioning Only**: A `SkillInstance` enters `SkillInventory` solely through authoritative server provisioning (`unlockSkill` or server test helper `grantSkillForTesting`).
+3. **Strict In-Memory Resolution**:
+   - String identifier: resolved via `SkillService.getOwnedSkill(playerState, id)`.
+   - Table identifier: must match an instance already existing in `playerState.SkillInventory` (or `EquippedSkills`).
+   - Fields `DefinitionId` and `OwnerUserId` are validated against the stored record.
+   - The authoritative stored record is assigned as `targetInst`, strictly preserving runtime `CurrentCooldown`.
+4. **Equipment Parity**: `EquipmentService.equipItem()` applies the same strict rule: any passed table must already exist in `EquipmentInventory` (or `EquippedItems`), matching `InstanceId`, `DefinitionId`, `OwnerUserId`, and `Slot`. Fabricated tables are immediately rejected with zero inventory mutation.
+5. **Exact State Invariants**:
+   - `UnlockedSkills`: Proves definition entitlement.
+   - `SkillInventory`: Contains only authoritative runtime `SkillInstances` owned by that player.
+   - `EquippedSkills`: References only instances already present in `SkillInventory`.
+   - `EquipmentInventory`: Contains only authoritative `EquipmentInstances` owned by that player.
+   - `EquippedItems`: References only instances already present in `EquipmentInventory`.
+   - Normal client requests can never create or insert either instance type.
+
+---
+
+## 5. Verification & Testing Matrix
+
+### 5.1 Test Suite 51: Network Contracts & Slots (TestRunner.luau)
+Suite 51 executes integration assertions covering:
 - `UnlockSkillEvent` RemoteEvent registration.
 - Whitelist slot contracts (`VALID_EQUIPMENT_SLOTS` and `VALID_SKILL_SLOTS`) rejecting malformed types, non-strings, empty strings, and out-of-range enums.
 - Equipping valid but unowned skill definition -> `getOwnedSkill` returns `nil`, `equipSkill` rejects with `"unlocked"`, 0 state mutations.
@@ -130,17 +153,28 @@ Suite 51 executes comprehensive integration assertions covering:
 - Invalid argument types (number, boolean, table) -> safely rejected without runtime exceptions.
 - Snapshot consistency -> `RunManager.getRunSnapshotForPlayer` serializes complete and accurate `PlayerView` (`EquippedItems`, `EquippedSkills`, `SkillInventory`, `UnlockedPassives`, `PassivePoints`).
 
-### 4.2 Automated Python Verifier (Check 43)
+### 5.2 Test Suite 52: Strict Instance Validation & Fabricated Object Rejection (TestRunner.luau)
+Suite 52 tests all 8 specified regression cases for fabricated objects:
+1. Fabricated `SkillInstance` with matching `OwnerUserId` -> rejected, exactly 0 `SkillInventory` entries created or altered.
+2. Fabricated `SkillInstance` with valid `DefinitionId` -> rejected, 0 mutation.
+3. Fabricated `SkillInstance` with unlocked `DefinitionId` -> rejected, 0 mutation.
+4. Fabricated `SkillInstance` with real `InstanceId` but forged definition -> rejected, 0 mutation.
+5. Real `SkillInventory` instance -> succeeds.
+6. Real equipped instance -> re-equip succeeds idempotently, preserving cooldown.
+7. Failed equip causes exactly zero `SkillInventory` mutation.
+8. Equivalent fabricated `EquipmentInstance` cases (`OwnerUserId`, `DefinitionId`, forged fields, real equip, re-equip) -> rejected with zero `EquipmentInventory` mutation.
+
+### 5.3 Automated Python Verifier (Checks 43 & 44)
 - Verifies `SkillInventory` added to `PlayerState`.
 - Verifies `EquippedSkills`, `SkillInventory`, `UnlockedPassives`, and `PassivePoints` present in `PlayerView`.
 - Verifies `SkillService.getOwnedSkill` exists and is called in `init.server.luau`.
 - Verifies 0 occurrences of `SkillService.createInstance` in `init.server.luau`.
+- Verifies 0 occurrences of `table.insert(playerState.SkillInventory` in `SkillService.equipSkill`.
 - Verifies 0 occurrences of `bypassInventoryCheck` across `EquipmentService.luau`.
-- Verifies `VALID_EQUIPMENT_SLOTS` and `VALID_SKILL_SLOTS` in `init.server.luau`.
-- Verifies `NetworkService.UnlockSkillEvent` registered and wired.
-- Verifies all 25 Suite 51 assertions in `TestRunner.luau`.
+- Verifies authoritative field validation in `EquipmentService.equipItem` and `SkillService.equipSkill`.
+- Verifies all Suite 51 and Suite 52 assertions in `TestRunner.luau`.
 
-### 4.3 Results Summary
-- **Total Test Suites**: 51 suites (Suites 1–51).
-- **Total Verifier Logic Checks**: 432 / 432 checks passed (100% success).
+### 5.4 Results Summary
+- **Total Test Suites**: 52 suites (Suites 1–52).
+- **Total Verifier Logic Checks**: 454 / 454 checks passed (100% success).
 - **Rojo Build**: Successfully compiles to `test.rbxl` with 0 errors.
