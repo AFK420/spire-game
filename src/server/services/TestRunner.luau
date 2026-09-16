@@ -131,6 +131,11 @@ function TestRunner.runAllTests(): boolean
 	assertTest(runState.Phase == "MapSelect", "Run phase transitioned to MapSelect")
 	assertTest(profile1.TotalRuns == initialTotalRuns + 1, "TotalRuns incremented exactly once when run begins")
 
+	-- Regression Test: Duplicate/invalid startRun calls outside Lobby must fail and NOT increment TotalRuns
+	local duplicateStartRun = RunManager.startRun()
+	assertTest(duplicateStartRun == false, "Duplicate RunManager.startRun() outside Lobby safely returns false")
+	assertTest(profile1.TotalRuns == initialTotalRuns + 1, "TotalRuns is strictly idempotent and not incremented on rejected startRun()")
+
 	-- Mid-run class change must be strictly rejected
 	local midRunClassChange = ClassService.selectClass(player1 :: any, p1State, "Shadowblade", "Assassin")
 	assertTest(midRunClassChange == false, "Class change during active run is strictly rejected")
@@ -442,6 +447,7 @@ function TestRunner.runAllTests(): boolean
 	assertTest(claimSuccess == true and claimErr == nil, "Draft card successfully claimed")
 	assertTest(#p1State.Deck == deckCountBefore + 1, "Claimed card added to player deck")
 	assertTest(p1State.Deck[#p1State.Deck].DefinitionId == chosenCardDefId, "New card definition matches choice")
+	local claimedCardInstanceId = p1State.Deck[#p1State.Deck].InstanceId
 	assertTest(runState.PendingRewards.ClaimedCards[10001] == true, "Claim flag set for player")
 
 	-- Double-claim rejection
@@ -508,6 +514,18 @@ function TestRunner.runAllTests(): boolean
 		if recordedCardIds[c.InstanceId] then matchedOriginalIds += 1 end
 	end
 	assertTest(matchedOriginalIds == totalOwnedCardsBefore, "All original runtime CardInstance IDs were preserved (Deck was NOT regenerated)!")
+
+	-- Verify specific claimed reward CardInstanceId is preserved in combat 2
+	local claimedCardInstanceFound = false
+	for _, c in p1State.Deck do
+		if c.InstanceId == claimedCardInstanceId then claimedCardInstanceFound = true break end
+	end
+	if not claimedCardInstanceFound then
+		for _, c in p1State.Hand do
+			if c.InstanceId == claimedCardInstanceId then claimedCardInstanceFound = true break end
+		end
+	end
+	assertTest(claimedCardInstanceFound == true, string.format("Specific claimed reward CardInstanceId [%s] preserved identically into Combat #2", claimedCardInstanceId))
 
 	----------------------------------------------------------------------------
 	-- TEST 14: Player Leaving and Rejoining Mid-Run State Resilience

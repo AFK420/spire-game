@@ -194,6 +194,38 @@ for lf in all_luau_files:
     first_line = lf.read_text(encoding="utf-8").splitlines()[0]
     test(first_line == "--!strict", f"--!strict present in {lf.name}")
 
+# 14. Phase 1.2 NetworkService playerBuckets Declaration
+print("\n--- [Check 14] Phase 1.2 NetworkService playerBuckets Declaration ---")
+test("local playerBuckets: { [number]: { [ActionCategory]: RateBucket } } = {}" in network_src, "NetworkService explicitly declares playerBuckets storage table")
+
+# 15. Phase 1.2 ClassService initializePlayerForRun Refactor
+print("\n--- [Check 15] Phase 1.2 ClassService Initialization API ---")
+test("function ClassService.initializePlayerForRun" in class_service_src, "ClassService.initializePlayerForRun exists")
+test("ClassService.initializePlayerForRun(pState)" in run_manager_src, "RunManager.addPlayer calls initializePlayerForRun")
+test("CombatService.startCombat does NOT wipe deck" in (ROOT / "tests/verify_phase1_integration.py").read_text(encoding="utf-8"), "No combat code calls initializeStartingDeck")
+
+# 16. Phase 1.2 PersistenceService Save Error Logging
+print("\n--- [Check 16] Phase 1.2 PersistenceService Error Logging ---")
+test("local function saveProfileInternal" in persistence_src, "PersistenceService has saveProfileInternal helper")
+test("warn(string.format(\"[PersistenceService] Failed to save profile for %d: %s\"" in persistence_src, "PersistenceService logs warn on SetAsync error")
+
+# 17. Phase 1.2 TestRunner Regressions
+print("\n--- [Check 17] Phase 1.2 TestRunner Regressions ---")
+test_runner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+test("Duplicate RunManager.startRun() outside Lobby safely returns false" in test_runner_src, "TestRunner tests startRun outside Lobby idempotence")
+test("Specific claimed reward CardInstanceId" in test_runner_src, "TestRunner tests specific claimed CardInstanceId preserved in Combat 2")
+
+# 18. Phase 2 Boundary Verification (Phase 2 NOT started)
+print("\n--- [Check 18] Phase 2 Strict Boundary Verification ---")
+phase2_terms = ["EffectResolver", "ModifierResolver", "DamagePipeline", "StatusService", "EquipmentService", "SkillTreeService", "ActiveSkillService"]
+for term in phase2_terms:
+    term_found = False
+    for lf in all_luau_files:
+        if term in lf.read_text(encoding="utf-8"):
+            term_found = True
+            break
+    test(not term_found, f"Phase 2 concept '{term}' NOT present in src/ (Phase 2 NOT started)")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")

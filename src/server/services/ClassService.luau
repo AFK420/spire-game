@@ -101,7 +101,7 @@ function ClassService.selectClass(player: any, playerState: StateTypes.PlayerSta
 
 	playerState.ClassId = classId
 	playerState.SubclassId = subclassId
-	ClassService.applyClassToPlayer(playerState)
+	ClassService.initializePlayerForRun(playerState)
 	return true
 end
 
@@ -154,12 +154,15 @@ function ClassService.resetClassCombatGimmicks(userId: number)
 	ClassService.resetGimmicks(userId)
 end
 
--- Applies hero class base stats and creates initial starting deck as CardInstances (Lobby setup)
-function ClassService.applyClassToPlayer(playerState: StateTypes.PlayerState)
+-- Applies hero class base stats and creates initial starting deck as CardInstances (Lobby setup only)
+function ClassService.initializePlayerForRun(playerState: StateTypes.PlayerState)
 	ClassService.applyBaseClassStats(playerState)
 	ClassService.initializeStartingDeck(playerState)
 	ClassService.resetClassCombatGimmicks(playerState.UserId)
 end
+
+-- Alias for initializePlayerForRun (Must NEVER be called during combat)
+ClassService.applyClassToPlayer = ClassService.initializePlayerForRun
 
 -- Evaluates class-specific active gimmicks when playing a card
 function ClassService.processGimmickOnCardPlay(

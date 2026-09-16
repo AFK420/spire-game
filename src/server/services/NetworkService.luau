@@ -74,6 +74,8 @@ type RateBucket = {
 	LastRefillTime: number,
 }
 
+local playerBuckets: { [number]: { [ActionCategory]: RateBucket } } = {}
+
 -- Validates whether an action is permitted under rate-limiting rules
 function NetworkService.checkRateLimit(player: Player, category: ActionCategory): boolean
 	local userId = player.UserId

@@ -82,17 +82,24 @@ function PersistenceService.loadProfile(player: Player): PlayerProfile
 	return profile
 end
 
+local function saveProfileInternal(userId: number, profile: PlayerProfile)
+	profile.LastSavedTimestamp = os.time()
+	if not profileStore or RunService:IsStudio() then return end
+
+	local success, err = pcall(function()
+		profileStore:SetAsync(tostring(userId), profile)
+	end)
+	if not success then
+		warn(string.format("[PersistenceService] Failed to save profile for %d: %s", userId, tostring(err)))
+	end
+end
+
 function PersistenceService.saveProfile(player: any)
 	local userId = player.UserId
 	local profile = activeProfiles[userId]
 	if not profile then return end
 
-	profile.LastSavedTimestamp = os.time()
-	if not profileStore or RunService:IsStudio() then return end
-
-	pcall(function()
-		profileStore:SetAsync(tostring(userId), profile)
-	end)
+	saveProfileInternal(userId, profile)
 end
 
 function PersistenceService.getProfile(player: any): PlayerProfile
@@ -149,23 +156,14 @@ function PersistenceService.init()
 		while true do
 			task.wait(AUTOSAVE_INTERVAL)
 			for userId, profile in activeProfiles do
-				profile.LastSavedTimestamp = os.time()
-				if profileStore and not RunService:IsStudio() then
-					pcall(function()
-						profileStore:SetAsync(tostring(userId), profile)
-					end)
-				end
+				saveProfileInternal(userId, profile)
 			end
 		end
 	end)
 
 	game:BindToClose(function()
 		for userId, profile in activeProfiles do
-			if profileStore and not RunService:IsStudio() then
-				pcall(function()
-					profileStore:SetAsync(tostring(userId), profile)
-				end)
-			end
+			saveProfileInternal(userId, profile)
 		end
 	end)
 

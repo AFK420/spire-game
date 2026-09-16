@@ -193,7 +193,7 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	}
 
 	currentRun.PartyMembers[userId] = pState
-	ClassService.applyClassToPlayer(pState)
+	ClassService.initializePlayerForRun(pState)
 
 	RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName))
 	return pState
