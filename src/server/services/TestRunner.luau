@@ -4781,7 +4781,15 @@ function TestRunner.runAllTests(): boolean
 	assertTest(syncSnapshot.Party[tostring(lockTestPlayer.UserId)].ClassLocked == true, "[ClassLock] RequestStateSync reflects player ClassLocked == true")
 	assertTest(syncSnapshot.Party[tostring(lockTestPlayer2.UserId)].ClassLocked == false, "[ClassLock] RequestStateSync reflects other player ClassLocked == false")
 
-	-- Test 10: Test isolation mode ensures live state is not mutated
+	-- Test 10: ClassSelectionResult remote event and contract verification
+	assertTest(NetworkService.ClassSelectionResultEvent ~= nil and NetworkService.ClassSelectionResultEvent:IsA("RemoteEvent"), "[ClassSelectResult] ClassSelectionResult RemoteEvent exists in NetworkService")
+	assertTest(typeof(NetworkService.sendClassSelectionResult) == "function", "[ClassSelectResult] NetworkService.sendClassSelectionResult is implemented")
+	local successPayload = { Success = true, ClassId = "Necrobinder", SubclassId = "SwarmLord" }
+	assertTest(successPayload.Success == true and successPayload.ClassId == "Necrobinder" and successPayload.SubclassId == "SwarmLord", "[ClassSelectResult] Success payload contains ClassId and SubclassId")
+	local rejectPayload = { Success = false, Error = "Cannot change class outside Lobby phase." }
+	assertTest(rejectPayload.Success == false and typeof(rejectPayload.Error) == "string", "[ClassSelectResult] Rejection payload contains descriptive Error string")
+
+	-- Test 11: Test isolation mode ensures live state is not mutated
 	assertTest(RunManager.isTestIsolationActive() == true, "[ClassLock] Test isolation is active during test execution")
 	RunManager.endTestIsolation()
 	assertTest(RunManager.isTestIsolationActive() == false, "[ClassLock] Test isolation tears down cleanly")

@@ -101,11 +101,23 @@ end)
 
 -- 2. Select Class & Subclass
 NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, classId: any, subclassId: any)
-	if not NetworkService.checkRateLimit(player, "Class") then return end
+	if not NetworkService.checkRateLimit(player, "Class") then
+		NetworkService.sendClassSelectionResult(player, {
+			Success = false,
+			Error = "Rate limit exceeded. Please wait a moment.",
+		})
+		return
+	end
 
 	local cId = typeof(classId) == "table" and classId.ClassId or classId
 	local scId = typeof(classId) == "table" and classId.SubclassId or subclassId
-	if typeof(cId) ~= "string" or typeof(scId) ~= "string" then return end
+	if typeof(cId) ~= "string" or typeof(scId) ~= "string" then
+		NetworkService.sendClassSelectionResult(player, {
+			Success = false,
+			Error = "Invalid class selection parameters.",
+		})
+		return
+	end
 
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then
@@ -116,9 +128,18 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 	local success, err = ClassService.selectClass(player, pState, cId, scId)
 	if success then
 		print(string.format("[Server] Player %s successfully locked in class %s (%s).", player.DisplayName, cId, scId))
+		NetworkService.sendClassSelectionResult(player, {
+			Success = true,
+			ClassId = cId,
+			SubclassId = scId,
+		})
 		RunManager.broadcastRunSnapshots(string.format("%s selected %s (%s)", player.DisplayName, cId, scId))
 	else
 		warn(string.format("[Server] Class selection rejected for %s: %s", player.DisplayName, tostring(err)))
+		NetworkService.sendClassSelectionResult(player, {
+			Success = false,
+			Error = tostring(err),
+		})
 		RunManager.sendRunSnapshot(player, string.format("Class selection rejected: %s", tostring(err)))
 	end
 end)

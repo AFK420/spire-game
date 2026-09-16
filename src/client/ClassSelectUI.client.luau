@@ -39,6 +39,7 @@ end
 local SelectClassEvent = findEvent("SelectClass")
 local RunStateUpdateEvent = findEvent("RunStateUpdate")
 local RequestStateSyncEvent = findEvent("RequestStateSync")
+local ClassSelectionResultEvent = findEvent("ClassSelectionResult")
 
 --------------------------------------------------------------------------------
 -- UI Creation Helpers
@@ -69,11 +70,13 @@ local existing = playerGui:FindFirstChild("CardRiftClassSelectGui")
 if existing and existing:IsA("ScreenGui") then
 	mainGui = existing
 	mainGui:ClearAllChildren()
+	mainGui.Enabled = true
 else
 	local newGui = Instance.new("ScreenGui")
 	newGui.Name = "CardRiftClassSelectGui"
 	newGui.ResetOnSpawn = false
 	newGui.DisplayOrder = 20
+	newGui.Enabled = true
 	newGui.Parent = playerGui
 	mainGui = newGui
 end
@@ -491,6 +494,9 @@ end
 --------------------------------------------------------------------------------
 
 local isLockingIn = false
+local hasLockedClass = false
+local lockInConfirmedTime = 0
+local currentAttemptId = 0
 
 local function restoreLockInButton()
 	lockInButton.Text = "LOCK IN CLASS ➔"
@@ -500,10 +506,12 @@ local function restoreLockInButton()
 end
 
 lockInButton.MouseButton1Click:Connect(function()
-	if isLockingIn then
+	if isLockingIn or hasLockedClass then
 		return
 	end
 	isLockingIn = true
+	currentAttemptId += 1
+	local attemptId = currentAttemptId
 
 	print(string.format("[ClassSelectUI] Locking in: Class=%s, Subclass=%s", tostring(currentClassId), tostring(currentSubclassId)))
 	lockInButton.Text = "LOCKING IN..."
@@ -524,17 +532,77 @@ lockInButton.MouseButton1Click:Connect(function()
 		warn("[ClassSelectUI] SelectClass RemoteEvent missing from GameNetwork!")
 		isLockingIn = false
 		restoreLockInButton()
+		return
 	end
 
 	-- Fallback timeout in case server doesn't respond or packet drop
 	task.delay(5, function()
-		if isLockingIn then
+		if isLockingIn and currentAttemptId == attemptId then
 			warn("[ClassSelectUI] Lock in request timed out waiting for server confirmation.")
 			isLockingIn = false
 			restoreLockInButton()
 		end
 	end)
 end)
+
+--------------------------------------------------------------------------------
+-- Authoritative Server Lock-In Result Feedback
+--------------------------------------------------------------------------------
+
+if not ClassSelectionResultEvent then
+	ClassSelectionResultEvent = findEvent("ClassSelectionResult")
+end
+
+if ClassSelectionResultEvent then
+	ClassSelectionResultEvent.OnClientEvent:Connect(function(result: any)
+		if typeof(result) ~= "table" then
+			return
+		end
+
+		if result.Success == true then
+			isLockingIn = false
+			hasLockedClass = true
+			lockInConfirmedTime = os.clock()
+
+			print(string.format("[ClassSelectUI] Class lock-in confirmed by server: Class=%s, Subclass=%s", tostring(result.ClassId), tostring(result.SubclassId)))
+			lockInButton.Text = "✓ CLASS LOCKED IN!"
+			lockInButton.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
+			lockInStroke.Color = Color3.fromRGB(80, 240, 140)
+
+			-- Button bounce tween
+			local tween = TweenService:Create(lockInButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.new(1, -28, 0, 44),
+			})
+			tween:Play()
+			tween.Completed:Connect(function()
+				TweenService:Create(lockInButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+					Size = UDim2.new(1, -32, 0, 42),
+				}):Play()
+			end)
+
+			task.delay(0.35, function()
+				modal.Visible = false
+				mainGui.Enabled = false
+			end)
+		else
+			-- Rejection from server
+			isLockingIn = false
+			hasLockedClass = false
+			restoreLockInButton()
+			modal.Visible = true
+			mainGui.Enabled = true
+
+			local errMsg = if result.Error and result.Error ~= "" then tostring(result.Error) else "Class selection rejected by server."
+			warn(string.format("[ClassSelectUI] Class selection rejected: %s", errMsg))
+			subtitleLabel.Text = errMsg
+			subtitleLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+			task.delay(4, function()
+				subtitleLabel.Text = "Select 1 of 10 core classes and customize your subclass before descending into the Spire."
+				subtitleLabel.TextColor3 = Color3.fromRGB(160, 180, 210)
+			end)
+		end
+	end)
+end
 
 --------------------------------------------------------------------------------
 -- Game Flow Visibility Sync
@@ -548,6 +616,7 @@ if RunStateUpdateEvent then
 
 		if state.Phase ~= "Lobby" then
 			modal.Visible = false
+			mainGui.Enabled = false
 			isLockingIn = false
 			restoreLockInButton()
 			return
@@ -555,58 +624,41 @@ if RunStateUpdateEvent then
 
 		local myView: any = nil
 		if state.Party and localPlayer then
-			myView = state.Party[tostring(localPlayer.UserId)]
+			myView = state.Party[tostring(localPlayer.UserId)] or state.Party[localPlayer.UserId]
 		end
 
 		if myView then
 			local isClassLocked = (myView.ClassLocked == true)
 			if isClassLocked then
-				if isLockingIn then
-					isLockingIn = false
-					lockInButton.Text = "✓ CLASS LOCKED IN!"
-					lockInButton.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
-					lockInStroke.Color = Color3.fromRGB(80, 240, 140)
-
-					-- Button bounce tween
-					local tween = TweenService:Create(lockInButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-						Size = UDim2.new(1, -28, 0, 44),
-					})
-					tween:Play()
-					tween.Completed:Connect(function()
-						TweenService:Create(lockInButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-							Size = UDim2.new(1, -32, 0, 42),
-						}):Play()
-					end)
-
-					task.delay(0.4, function()
-						modal.Visible = false
-					end)
-				else
-					isLockingIn = false
-					modal.Visible = false
-				end
+				hasLockedClass = true
+				isLockingIn = false
+				modal.Visible = false
+				mainGui.Enabled = false
 			else
-				modal.Visible = true
-				if isLockingIn then
-					isLockingIn = false
-					restoreLockInButton()
-				elseif not modal.Visible then
+				-- If ClassLocked is false on server:
+				-- Guard against stale in-flight snapshots arriving right after confirmed lock-in
+				local isRecentLockIn = (hasLockedClass and (os.clock() - lockInConfirmedTime < 2.0))
+				if not isLockingIn and not isRecentLockIn then
+					hasLockedClass = false
+					modal.Visible = true
+					mainGui.Enabled = true
 					restoreLockInButton()
 				end
 			end
 		else
-			modal.Visible = true
-			if isLockingIn then
-				isLockingIn = false
-				restoreLockInButton()
+			if not isLockingIn and not hasLockedClass then
+				modal.Visible = true
+				mainGui.Enabled = true
 			end
 		end
 
 		if state.Message and string.find(string.lower(state.Message), "rejected") then
 			warn(string.format("[ClassSelectUI] Server message: %s", tostring(state.Message)))
 			isLockingIn = false
+			hasLockedClass = false
 			restoreLockInButton()
 			modal.Visible = true
+			mainGui.Enabled = true
 			subtitleLabel.Text = state.Message
 			subtitleLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
 			task.delay(4, function()

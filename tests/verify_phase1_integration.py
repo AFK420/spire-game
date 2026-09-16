@@ -967,6 +967,24 @@ test("[IsolationSafety] Failed test state never leaked to liveRun" in testrunner
 test("[IsolationSafety] Normal RequestStateSync returns valid snapshot from liveRun" in testrunner_src, "Suite 60 tests normal RequestStateSync returns snapshot from liveRun")
 test("[IsolationSafety] Broadcasts are unsuppressed in live server mode" in testrunner_src, "Suite 60 tests broadcasts unsuppressed in live server mode")
 
+# 52. Class Selection Remote Contract & UX Feedback
+print("\n--- [Check 52] Class Selection Remote Contract & UX Feedback ---")
+network_service_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+server_init_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+class_ui_src = (ROOT / "src/client/ClassSelectUI.client.luau").read_text(encoding="utf-8")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+
+test("NetworkService.ClassSelectionResultEvent = getOrCreateRemoteEvent(\"ClassSelectionResult\")" in network_service_src, "NetworkService defines ClassSelectionResultEvent")
+test("function NetworkService.sendClassSelectionResult(" in network_service_src, "NetworkService implements sendClassSelectionResult helper")
+test("NetworkService.sendClassSelectionResult(player, {" in server_init_src, "init.server.luau dispatches sendClassSelectionResult on events")
+test("local ClassSelectionResultEvent = findEvent(\"ClassSelectionResult\")" in class_ui_src, "ClassSelectUI resolves ClassSelectionResultEvent")
+test("ClassSelectionResultEvent.OnClientEvent:Connect(" in class_ui_src, "ClassSelectUI connects to ClassSelectionResultEvent")
+test("mainGui.Enabled = false" in class_ui_src, "ClassSelectUI disables mainGui ScreenGui on lock confirmation")
+test("[ClassSelectResult] ClassSelectionResult RemoteEvent exists in NetworkService" in testrunner_src, "Suite 60 tests ClassSelectionResult RemoteEvent existence")
+test("[ClassSelectResult] NetworkService.sendClassSelectionResult is implemented" in testrunner_src, "Suite 60 tests sendClassSelectionResult helper")
+test("[ClassSelectResult] Success payload contains ClassId and SubclassId" in testrunner_src, "Suite 60 tests success payload contract")
+test("[ClassSelectResult] Rejection payload contains descriptive Error string" in testrunner_src, "Suite 60 tests rejection payload contract")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")

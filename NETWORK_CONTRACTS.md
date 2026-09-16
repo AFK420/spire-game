@@ -259,3 +259,17 @@ Each category operates an independent token bucket per connected player:
   ```
 - **Client Handling**: Updates permanent card collection browser with owned card counts.
 
+#### 9. `ClassSelectionResult`
+- **Target**: Targeted (`FireClient` to requesting player).
+- **Payload**:
+  ```luau
+  {
+      Success: boolean,
+      ClassId: string?,
+      SubclassId: string?,
+      Error: string?,
+  }
+  ```
+- **Client Handling**: On success (`Success == true`), confirms lock-in, animates button, hides `ClassSelectModal`, and disables `CardRiftClassSelectGui` to reveal the lobby view. On failure (`Success == false`), restores lock-in button to active state and presents error prompt.
+
+

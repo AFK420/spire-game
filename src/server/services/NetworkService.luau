@@ -82,6 +82,7 @@ NetworkService.RelicNotificationEvent = getOrCreateRemoteEvent("RelicNotificatio
 NetworkService.DeckListUpdateEvent = getOrCreateRemoteEvent("DeckListUpdate")
 NetworkService.DeckDetailUpdateEvent = getOrCreateRemoteEvent("DeckDetailUpdate")
 NetworkService.CardCollectionUpdateEvent = getOrCreateRemoteEvent("CardCollectionUpdate")
+NetworkService.ClassSelectionResultEvent = getOrCreateRemoteEvent("ClassSelectionResult")
 
 --------------------------------------------------------------------------------
 -- Token-Bucket Rate Limiting Engine
@@ -180,6 +181,13 @@ end
 function NetworkService.notifyRelicTrigger(player: Player, payload: { RelicId: string, RelicName: string, Icon: string, Text: string, Rarity: string })
 	if typeof(player) == "Instance" and player:IsA("Player") then
 		NetworkService.RelicNotificationEvent:FireClient(player, payload)
+	end
+end
+
+-- Notifies a specific player of class selection outcome
+function NetworkService.sendClassSelectionResult(player: Player, payload: { Success: boolean, ClassId: string?, SubclassId: string?, Error: string? })
+	if typeof(player) == "Instance" and player:IsA("Player") then
+		NetworkService.ClassSelectionResultEvent:FireClient(player, payload)
 	end
 end
 
