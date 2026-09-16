@@ -474,11 +474,66 @@ test("[ModifyResource] Invalid Resource rejected with Success=false" in testrunn
 test("[ModifyResource] Valid Self Energy executes normally" in testrunner_src, "Suite 39 tests Self Energy modification")
 test("[ModifyResource] Valid Ally Energy executes normally" in testrunner_src, "Suite 39 tests Ally Energy modification")
 
+# 41. Phase 3 Foundation Architecture & End-to-End Vertical Slice
+print("\n--- [Check 41] Phase 3 Foundation Architecture & End-to-End Vertical Slice ---")
+phase3_files = [
+    "src/shared/EquipmentData.luau",
+    "src/shared/SkillData.luau",
+    "src/shared/PassiveData.luau",
+    "src/server/services/EquipmentService.luau",
+    "src/server/services/StatResolver.luau",
+    "src/server/services/SkillService.luau",
+    "src/server/services/PassiveService.luau",
+]
+for p3f in phase3_files:
+    fpath = ROOT / p3f
+    test(fpath.exists(), f"Phase 3 file exists: {p3f}")
+    content = fpath.read_text(encoding="utf-8")
+    test(content.splitlines()[0] == "--!strict", f"{p3f} starts with --!strict")
+    test("_G" not in content, f"{p3f} contains 0 _G references")
+
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+test("--- [Suite 40] Phase 3 Equipment Foundation" in testrunner_src, "TestRunner includes Suite 40: Phase 3 Equipment Foundation")
+test("[Equipment] createInstance returns valid instance for IronBroadsword" in testrunner_src, "Suite 40 tests Equipment createInstance")
+test("[Equipment] Equipping valid weapon succeeds" in testrunner_src, "Suite 40 tests Equipment equip lifecycle")
+test("[Equipment] Replaced weapon returned to EquipmentInventory" in testrunner_src, "Suite 40 tests Equipment single-slot replacement")
+test("[Equipment] Foreign item rejected on owner mismatch" in testrunner_src, "Suite 40 tests Equipment owner validation")
+
+test("--- [Suite 41] Phase 3 Centralized Stat Resolution" in testrunner_src, "TestRunner includes Suite 41: Phase 3 Centralized Stat Resolution")
+test("[StatResolver] Base MaxHP resolved from Warlord class definition" in testrunner_src, "Suite 41 tests Base class stat resolution")
+test("[StatResolver] Additive modifiers stack deterministically" in testrunner_src, "Suite 41 tests Additive modifier stacking")
+test("[StatResolver] Multiplicative modifier applies to additive sum" in testrunner_src, "Suite 41 tests Multiplicative modifier stacking")
+test("[StatResolver] Override modifier takes absolute precedence" in testrunner_src, "Suite 41 tests Override modifier precedence")
+test("[StatResolver] MaxHP strictly clamped to minimum 1" in testrunner_src, "Suite 41 tests stat bounds clamping")
+
+test("--- [Suite 42] Phase 3 Passive Tree & Graph Validation" in testrunner_src, "TestRunner includes Suite 42: Phase 3 Passive Tree & Graph Validation")
+test("[PassiveData] Canonical Warlord passive tree is a valid DAG" in testrunner_src, "Suite 42 tests canonical Warlord DAG")
+test("[PassiveData] Cyclic graph rejected with cycle detection error" in testrunner_src, "Suite 42 tests DAG cycle detection")
+test("[PassiveData] Missing prerequisite reference rejected" in testrunner_src, "Suite 42 tests broken prerequisite rejection")
+test("[PassiveService] Unlocking root node succeeds" in testrunner_src, "Suite 42 tests root node unlock")
+test("[PassiveService] Keystone rejected when branch prerequisites not unlocked" in testrunner_src, "Suite 42 tests prerequisite unlock requirement")
+
+test("--- [Suite 43] Phase 3 Active Skills Runtime" in testrunner_src, "TestRunner includes Suite 43: Phase 3 Active Skills Runtime")
+test("[SkillService] createInstance created HeroicStrike" in testrunner_src, "Suite 43 tests Skill createInstance")
+test("[SkillService] Warlord skill rejected for AetherMage" in testrunner_src, "Suite 43 tests class skill restrictions")
+test("[SkillService] useSkill executes successfully" in testrunner_src, "Suite 43 tests Skill execution")
+test("[SkillService] useSkill rejected while on cooldown" in testrunner_src, "Suite 43 tests cooldown enforcement")
+test("[SkillService] onTurnStart decremented cooldown from 1 to 0" in testrunner_src, "Suite 43 tests cooldown turn decrements")
+
+test("--- [Suite 44] Complete Vertical Slice End-to-End Test" in testrunner_src, "TestRunner includes Suite 44: Complete Vertical Slice End-to-End Test")
+test("[VerticalSlice] Baseline Warlord MaxHP is 110" in testrunner_src, "Suite 44 tests initial state")
+test("[VerticalSlice] Equipped weapon increased player MaxHP to 120" in testrunner_src, "Suite 44 tests equipment stat modifier")
+test("[VerticalSlice] Passive increased player MaxHP to 135" in testrunner_src, "Suite 44 tests passive stat modifier")
+test("[VerticalSlice] Stacked weapon (+5) and passive (+3) yield +8 BonusDamage" in testrunner_src, "Suite 44 tests stacked equipment and passive damage modifiers")
+test("[VerticalSlice] Active skill executed successfully end-to-end" in testrunner_src, "Suite 44 tests active skill execution through pipeline")
+test("[VerticalSlice] Boss HP reduced by exact total damage" in testrunner_src, "Suite 44 tests exact damage pipeline result")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
-print("============================================================")
+print("============================================================\n")
 
 if failed > 0:
 	sys.exit(1)
 else:
     print("ALL LOGIC CHECKS VERIFIED 100% CLEAN!\n")
+

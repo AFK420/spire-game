@@ -46,6 +46,13 @@ local ModifierResolver = require(services:WaitForChild("ModifierResolver") :: Mo
 local DamagePipeline = require(services:WaitForChild("DamagePipeline") :: ModuleScript)
 local StatusService = require(services:WaitForChild("StatusService") :: ModuleScript)
 local EffectResolver = require(services:WaitForChild("EffectResolver") :: ModuleScript)
+local EquipmentData = require(Shared:WaitForChild("EquipmentData") :: ModuleScript)
+local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
+local PassiveData = require(Shared:WaitForChild("PassiveData") :: ModuleScript)
+local EquipmentService = require(services:WaitForChild("EquipmentService") :: ModuleScript)
+local StatResolver = require(services:WaitForChild("StatResolver") :: ModuleScript)
+local SkillService = require(services:WaitForChild("SkillService") :: ModuleScript)
+local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
 
 local TestRunner = {}
 
@@ -2763,8 +2770,475 @@ function TestRunner.runAllTests(): boolean
 	assertTest(schemaAlly.Resources.Energy == 3, "[ModifyResource] Ally Energy increased from 1 to 3")
 	assertTest(schemaPlayer.Resources.Energy == 2, "[ModifyResource] Caster Energy remained 2")
 
+	----------------------------------------------------------------------------
+	-- TEST 40: Phase 3 Equipment Foundation
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 40] Phase 3 Equipment Foundation ---")
+	local equipUser = 6001
+	local equipPlayer: StateTypes.PlayerState = {
+		UserId = equipUser,
+		DisplayName = "GearMaster",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 100,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		EquippedItems = {},
+		EquipmentInventory = {},
+	}
+
+	-- 1. Create valid instance
+	local swordInst = EquipmentService.createInstance("IronBroadsword", equipUser)
+	assertTest(swordInst ~= nil, "[Equipment] createInstance returns valid instance for IronBroadsword")
+	assertTest(swordInst ~= nil and swordInst.Slot == "Weapon", "[Equipment] Created item assigned correct slot 'Weapon'")
+	assertTest(swordInst ~= nil and swordInst.OwnerUserId == equipUser, "[Equipment] Created item assigned correct owner UserId")
+
+	-- 2. Unknown equipment definition rejected
+	local badInst = EquipmentService.createInstance("NonExistentItem999", equipUser)
+	assertTest(badInst == nil, "[Equipment] Unknown definition ID returns nil")
+
+	-- 3. Equip item
+	assert(swordInst, "swordInst must be non-nil")
+	local okEquip, errEquip = EquipmentService.equipItem(equipPlayer, swordInst)
+	assertTest(okEquip == true and errEquip == nil, "[Equipment] Equipping valid weapon succeeds")
+	assertTest(equipPlayer.EquippedItems ~= nil and equipPlayer.EquippedItems["Weapon"] == swordInst, "[Equipment] Item placed in EquippedItems['Weapon']")
+
+	-- 4. Slot replacement
+	local swordInst2 = EquipmentService.createInstance("IronBroadsword", equipUser)
+	assert(swordInst2, "swordInst2 must be non-nil")
+	local okReplace, _ = EquipmentService.equipItem(equipPlayer, swordInst2)
+	assertTest(okReplace == true, "[Equipment] Equipping second weapon replaces slot")
+	assertTest(equipPlayer.EquippedItems ~= nil and equipPlayer.EquippedItems["Weapon"] == swordInst2, "[Equipment] New weapon equipped")
+	assertTest(equipPlayer.EquipmentInventory ~= nil and #equipPlayer.EquipmentInventory == 1 and equipPlayer.EquipmentInventory[1] == swordInst, "[Equipment] Replaced weapon returned to EquipmentInventory")
+
+	-- 5. Unequip item
+	local okUnequip, errUnequip = EquipmentService.unequipItem(equipPlayer, "Weapon")
+	assertTest(okUnequip == true and errUnequip == nil, "[Equipment] Unequip item succeeds")
+	assertTest(equipPlayer.EquippedItems ~= nil and equipPlayer.EquippedItems["Weapon"] == nil, "[Equipment] Weapon slot is now empty")
+	assertTest(equipPlayer.EquipmentInventory ~= nil and #equipPlayer.EquipmentInventory == 2, "[Equipment] Unequipped item moved to inventory")
+
+	-- 6. Ownership mismatch rejection
+	local foreignItem = EquipmentService.createInstance("IronBroadsword", 9999)
+	assert(foreignItem, "foreignItem must be non-nil")
+	local okForeign, errForeign = EquipmentService.equipItem(equipPlayer, foreignItem)
+	assertTest(okForeign == false and errForeign ~= nil, "[Equipment] Foreign item rejected on owner mismatch")
+
+	-- 7. Modifier collection from equipped gear
+	EquipmentService.equipItem(equipPlayer, swordInst)
+	local armorInst = EquipmentService.createInstance("ReinforcedPlate", equipUser)
+	assert(armorInst, "armorInst must be non-nil")
+	EquipmentService.equipItem(equipPlayer, armorInst)
+
+	local collectedMods = EquipmentService.collectModifiers(equipPlayer)
+	assertTest(#collectedMods >= 3, "[Equipment] collectModifiers gathered modifiers across equipped weapon and armor")
+
+	----------------------------------------------------------------------------
+	-- TEST 41: Phase 3 Centralized Stat Resolution
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 41] Phase 3 Centralized Stat Resolution ---")
+
+	-- 1. Base stats from class definition
+	local baseWarlordStats = StatResolver.resolvePlayerStats(equipPlayer)
+	assertTest(baseWarlordStats.MaxHP >= 110, "[StatResolver] Base MaxHP resolved from Warlord class definition")
+
+	-- 2. Additive modifier stacking
+	local testAddMod1 = ModifierResolver.createModifier("t_add1", "test", "MaxHP", "Add", 20, 100)
+	local testAddMod2 = ModifierResolver.createModifier("t_add2", "test", "MaxHP", "Add", 10, 100)
+	local resAdd, _ = StatResolver.resolveStat(100, "MaxHP", { testAddMod1, testAddMod2 })
+	assertTest(resAdd == 130, "[StatResolver] Additive modifiers stack deterministically: 100 + 20 + 10 = 130")
+
+	-- 3. Multiplicative modifier stacking: (Base + Add) * Mult
+	local testMultMod = ModifierResolver.createModifier("t_mult", "test", "Damage", "Multiply", 1.5, 200)
+	local testDmgAdd = ModifierResolver.createModifier("t_dmg_add", "test", "Damage", "Add", 20, 100)
+	local resMult, _ = StatResolver.resolveStat(100, "Damage", { testDmgAdd, testMultMod })
+	assertTest(resMult == 180, "[StatResolver] Multiplicative modifier applies to additive sum: (100 + 20) * 1.5 = 180")
+
+	-- 4. Override modifier absolute precedence
+	local testOverride = ModifierResolver.createModifier("t_over", "test", "MaxHP", "Override", 500, 300)
+	local resOver, _ = StatResolver.resolveStat(100, "MaxHP", { testAddMod1, testOverride, testAddMod2 })
+	assertTest(resOver == 500, "[StatResolver] Override modifier takes absolute precedence over additive modifiers")
+
+	-- 5. Bounds clamping
+	local testHugeNegative = ModifierResolver.createModifier("t_neg", "test", "MaxHP", "Add", -200, 100)
+	local resClampHP, _ = StatResolver.resolveStat(100, "MaxHP", { testHugeNegative })
+	assertTest(resClampHP == 1, "[StatResolver] MaxHP strictly clamped to minimum 1")
+
+	local testCritOver = ModifierResolver.createModifier("t_crit_high", "test", "CritChance", "Add", 2.0, 100)
+	local resCritClampHigh, _ = StatResolver.resolveStat(0.05, "CritChance", { testCritOver })
+	assertTest(resCritClampHigh == 1.0, "[StatResolver] CritChance clamped to maximum 1.0")
+
+	local testCritUnder = ModifierResolver.createModifier("t_crit_low", "test", "CritChance", "Add", -1.0, 100)
+	local resCritClampLow, _ = StatResolver.resolveStat(0.05, "CritChance", { testCritUnder })
+	assertTest(resCritClampLow == 0.0, "[StatResolver] CritChance clamped to minimum 0.0")
+
+	-- 6. Derived stat synchronization
+	equipPlayer.Resources.HP = 80
+	local syncedStats = StatResolver.syncPlayerDerivedStats(equipPlayer)
+	assertTest(equipPlayer.Resources.MaxHP == syncedStats.MaxHP, "[StatResolver] syncPlayerDerivedStats updated Resources.MaxHP")
+	assertTest(equipPlayer.Resources.HP <= equipPlayer.Resources.MaxHP, "[StatResolver] Resources.HP clamped within MaxHP bounds")
+
+	----------------------------------------------------------------------------
+	-- TEST 42: Phase 3 Passive Tree & Graph Validation
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 42] Phase 3 Passive Tree & Graph Validation ---")
+
+	-- 1. Validate canonical Warlord DAG
+	local okWarlordDAG, errWarlordDAG = PassiveData.validateTree("Warlord")
+	assertTest(okWarlordDAG == true and errWarlordDAG == nil, "[PassiveData] Canonical Warlord passive tree is a valid DAG")
+
+	-- 2. Reject synthetic cyclic graph (A -> B -> A)
+	local cyclicNodes: { PassiveData.PassiveNodeDefinition } = {
+		{
+			Id = "NodeA",
+			Name = "Node A",
+			Description = "A",
+			ClassId = "TestClass",
+			Type = "Stat",
+			Tier = 1,
+			Cost = 1,
+			Prerequisites = { "NodeB" },
+			Modifiers = {},
+		},
+		{
+			Id = "NodeB",
+			Name = "Node B",
+			Description = "B",
+			ClassId = "TestClass",
+			Type = "Stat",
+			Tier = 1,
+			Cost = 1,
+			Prerequisites = { "NodeA" },
+			Modifiers = {},
+		},
+	}
+	local okCycle, errCycle = PassiveData.validateNodes(cyclicNodes)
+	assertTest(okCycle == false and string.find(errCycle or "", "Cycle") ~= nil, "[PassiveData] Cyclic graph rejected with cycle detection error")
+
+	-- 3. Reject self-cycle (A -> A)
+	local selfCycleNodes: { PassiveData.PassiveNodeDefinition } = {
+		{
+			Id = "SelfCycle",
+			Name = "Self Cycle",
+			Description = "Self",
+			ClassId = "TestClass",
+			Type = "Stat",
+			Tier = 1,
+			Cost = 1,
+			Prerequisites = { "SelfCycle" },
+			Modifiers = {},
+		},
+	}
+	local okSelfCycle, _ = PassiveData.validateNodes(selfCycleNodes)
+	assertTest(okSelfCycle == false, "[PassiveData] Self-cycle rejected")
+
+	-- 4. Reject missing prerequisite
+	local missingPrereqNodes: { PassiveData.PassiveNodeDefinition } = {
+		{
+			Id = "NodeChild",
+			Name = "Node Child",
+			Description = "Child",
+			ClassId = "TestClass",
+			Type = "Stat",
+			Tier = 2,
+			Cost = 1,
+			Prerequisites = { "NonExistentParent" },
+			Modifiers = {},
+		},
+	}
+	local okMissingPrereq, errMissingPrereq = PassiveData.validateNodes(missingPrereqNodes)
+	assertTest(okMissingPrereq == false and string.find(errMissingPrereq or "", "missing prerequisite") ~= nil, "[PassiveData] Missing prerequisite reference rejected")
+
+	-- 5. Reject duplicate node IDs
+	local duplicateIdNodes: { PassiveData.PassiveNodeDefinition } = {
+		{
+			Id = "DupNode",
+			Name = "Dup 1",
+			Description = "1",
+			ClassId = "TestClass",
+			Type = "Stat",
+			Tier = 1,
+			Cost = 1,
+			Prerequisites = {},
+			Modifiers = {},
+		},
+		{
+			Id = "DupNode",
+			Name = "Dup 2",
+			Description = "2",
+			ClassId = "TestClass",
+			Type = "Stat",
+			Tier = 1,
+			Cost = 1,
+			Prerequisites = {},
+			Modifiers = {},
+		},
+	}
+	local okDup, errDup = PassiveData.validateNodes(duplicateIdNodes)
+	assertTest(okDup == false and string.find(errDup or "", "Duplicate") ~= nil, "[PassiveData] Duplicate node ID rejected")
+
+	-- 6. Player unlock lifecycle
+	local passPlayer: StateTypes.PlayerState = {
+		UserId = 6002,
+		DisplayName = "TreeClimber",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		UnlockedPassives = {},
+		PassivePoints = 0,
+	}
+
+	-- Insufficient points rejected
+	local okNoPoints, errNoPoints = PassiveService.unlockNode(passPlayer, "Warlord_IronSkin")
+	assertTest(okNoPoints == false and string.find(errNoPoints or "", "Insufficient") ~= nil, "[PassiveService] Unlock rejected when points insufficient")
+
+	-- Grant points and unlock root node
+	PassiveService.grantPoints(passPlayer, 2)
+	assertTest(passPlayer.PassivePoints == 2, "[PassiveService] grantPoints correctly increased PassivePoints")
+
+	local okUnlockRoot, errUnlockRoot = PassiveService.unlockNode(passPlayer, "Warlord_IronSkin")
+	assertTest(okUnlockRoot == true and errUnlockRoot == nil, "[PassiveService] Unlocking root node succeeds")
+	assertTest(passPlayer.UnlockedPassives ~= nil and passPlayer.UnlockedPassives["Warlord_IronSkin"] == true, "[PassiveService] Node marked unlocked in player state")
+	assertTest(passPlayer.PassivePoints == 1, "[PassiveService] Passive points deducted by cost")
+
+	-- Duplicate unlock rejected
+	local okDupUnlock, errDupUnlock = PassiveService.unlockNode(passPlayer, "Warlord_IronSkin")
+	assertTest(okDupUnlock == false and string.find(errDupUnlock or "", "already unlocked") ~= nil, "[PassiveService] Duplicate unlock rejected")
+
+	-- Child node unlock fails if prereq not unlocked (e.g. TitanStance requires both JuggernautProwess and HeavyStrikes)
+	PassiveService.grantPoints(passPlayer, 5)
+	local okPrematureTitan, errPrematureTitan = PassiveService.unlockNode(passPlayer, "Warlord_TitanStance")
+	assertTest(okPrematureTitan == false and string.find(errPrematureTitan or "", "Prerequisite") ~= nil, "[PassiveService] Keystone rejected when branch prerequisites not unlocked")
+
+	-- Unlock branch HeavyStrikes
+	local okHeavy, errHeavy = PassiveService.unlockNode(passPlayer, "Warlord_HeavyStrikes")
+	assertTest(okHeavy == true and errHeavy == nil, "[PassiveService] Unlocking branch node succeeds once root prerequisite unlocked")
+
+	-- Class mismatch rejected
+	passPlayer.ClassId = "Shadowblade"
+	local okMismatch, errMismatch = PassiveService.unlockNode(passPlayer, "Warlord_JuggernautProwess")
+	assertTest(okMismatch == false and string.find(errMismatch or "", "requires class") ~= nil, "[PassiveService] Class mismatch node unlock rejected")
+	passPlayer.ClassId = "Warlord"
+
+	-- Collect modifiers
+	local passMods = PassiveService.collectModifiers(passPlayer)
+	assertTest(#passMods == 2, "[PassiveService] collectModifiers returned modifiers from both unlocked nodes")
+
+	----------------------------------------------------------------------------
+	-- TEST 43: Phase 3 Active Skills Runtime
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 43] Phase 3 Active Skills Runtime ---")
+	local skillUser = 6003
+	local skillPlayer: StateTypes.PlayerState = {
+		UserId = skillUser,
+		DisplayName = "SkillMaster",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		EquippedSkills = {},
+	}
+
+	-- 1. Create skill instance
+	local skillInst1 = SkillService.createInstance("HeroicStrike", skillUser, "Skill1")
+	assertTest(skillInst1 ~= nil and skillInst1.DefinitionId == "HeroicStrike", "[SkillService] createInstance created HeroicStrike")
+	assertTest(skillInst1 ~= nil and skillInst1.CurrentCooldown == 0, "[SkillService] Created skill instance starts with 0 cooldown")
+
+	-- 2. Unknown skill ID rejected
+	local badSkillInst = SkillService.createInstance("NonExistentSkillXYZ", skillUser, "Skill1")
+	assertTest(badSkillInst == nil, "[SkillService] Unknown skill definition returns nil")
+
+	-- 3. Class restriction enforcement
+	skillPlayer.ClassId = "AetherMage"
+	local classSkillInst = SkillService.createInstance("Whirlwind", skillUser, "Skill2")
+	assert(classSkillInst, "classSkillInst must be non-nil")
+	local okClassSkill, errClassSkill = SkillService.equipSkill(skillPlayer, classSkillInst)
+	assertTest(okClassSkill == false and string.find(errClassSkill or "", "requires class") ~= nil, "[SkillService] Warlord skill rejected for AetherMage")
+	skillPlayer.ClassId = "Warlord"
+
+	-- 4. Equip skill
+	assert(skillInst1, "skillInst1 must be non-nil")
+	local okEquipSkill, errEquipSkill = SkillService.equipSkill(skillPlayer, skillInst1)
+	assertTest(okEquipSkill == true and errEquipSkill == nil, "[SkillService] equipSkill succeeds for valid slot")
+	assertTest(skillPlayer.EquippedSkills ~= nil and skillPlayer.EquippedSkills["Skill1"] == skillInst1, "[SkillService] Skill placed in EquippedSkills['Skill1']")
+
+	-- 5. Execution, energy deduction, and cooldown
+	local combatDummy: StateTypes.CombatState = {
+		CombatId = "combat_skill_test",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = os.clock(),
+		TurnDuration = 45,
+		Participants = { skillUser },
+		Enemies = {
+			["dummy_enemy"] = {
+				InstanceId = "dummy_enemy",
+				DefinitionId = "SpireSentinel",
+				Name = "Sentinel Dummy",
+				HP = 50,
+				MaxHP = 50,
+				Shield = 0,
+				Poison = 0,
+				AttackPower = 5,
+				Intent = { Type = "Attack", Value = 5 },
+				ModelRef = nil,
+			},
+		},
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+	local dummyParty: { [number]: StateTypes.PlayerState } = { [skillUser] = skillPlayer }
+
+	local okUse, errUse = SkillService.useSkill(skillPlayer, "Skill1", "dummy_enemy", combatDummy, dummyParty)
+	assertTest(okUse == true and errUse == nil, "[SkillService] useSkill executes successfully")
+	assertTest(skillPlayer.Resources.Energy == 2, "[SkillService] Energy deducted from 3 to 2")
+	assertTest(skillInst1.CurrentCooldown == 1, "[SkillService] Skill cooldown set to 1")
+	assertTest(combatDummy.Enemies["dummy_enemy"].HP == 38, "[SkillService] HeroicStrike dealt 12 damage (50 -> 38)")
+
+	-- 6. Trying to use skill on cooldown rejected
+	local okUseCD, errUseCD = SkillService.useSkill(skillPlayer, "Skill1", "dummy_enemy", combatDummy, dummyParty)
+	assertTest(okUseCD == false and string.find(errUseCD or "", "cooldown") ~= nil, "[SkillService] useSkill rejected while on cooldown")
+
+	-- 7. Cooldown decrement on turn start
+	SkillService.onTurnStart(skillPlayer)
+	assertTest(skillInst1.CurrentCooldown == 0, "[SkillService] onTurnStart decremented cooldown from 1 to 0")
+
+	-- 8. Insufficient energy rejection
+	skillPlayer.Resources.Energy = 0
+	local okNoEnergy, errNoEnergy = SkillService.useSkill(skillPlayer, "Skill1", "dummy_enemy", combatDummy, dummyParty)
+	assertTest(okNoEnergy == false and string.find(errNoEnergy or "", "Energy") ~= nil, "[SkillService] useSkill rejected on insufficient energy")
+	assertTest(combatDummy.Enemies["dummy_enemy"].HP == 38, "[SkillService] Enemy HP untouched when skill rejected for energy")
+
+	----------------------------------------------------------------------------
+	-- TEST 44: Complete Vertical Slice End-to-End Test
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 44] Complete Vertical Slice End-to-End Test ---")
+
+	local sliceUser = 7001
+	local slicePlayer: StateTypes.PlayerState = {
+		UserId = sliceUser,
+		DisplayName = "VerticalHero",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		EquippedItems = {},
+		EquipmentInventory = {},
+		EquippedSkills = {},
+		UnlockedPassives = {},
+		PassivePoints = 0,
+	}
+
+	-- 1. Initial baseline MaxHP is 110
+	local initialStats = StatResolver.resolvePlayerStats(slicePlayer)
+	assertTest(initialStats.MaxHP == 110, "[VerticalSlice] Baseline Warlord MaxHP is 110")
+
+	-- 2. Equip IronBroadsword (+5 Damage, +10 MaxHP)
+	local sliceSword = EquipmentService.createInstance("IronBroadsword", sliceUser)
+	assert(sliceSword, "sliceSword must be created")
+	EquipmentService.equipItem(slicePlayer, sliceSword)
+	local postEquipStats = StatResolver.syncPlayerDerivedStats(slicePlayer)
+	assertTest(slicePlayer.Resources.MaxHP == 120, "[VerticalSlice] Equipped weapon increased player MaxHP to 120 (110 + 10)")
+	assertTest(postEquipStats.BonusDamage == 5, "[VerticalSlice] Equipped weapon grants +5 BonusDamage")
+
+	-- 3. Grant passive points and unlock Warlord_IronSkin (+15 MaxHP)
+	PassiveService.grantPoints(slicePlayer, 2)
+	local okUnlock1, _ = PassiveService.unlockNode(slicePlayer, "Warlord_IronSkin")
+	assertTest(okUnlock1 == true, "[VerticalSlice] Unlocked IronSkin passive")
+	assertTest(slicePlayer.Resources.MaxHP == 135, "[VerticalSlice] Passive increased player MaxHP to 135 (110 + 10 + 15)")
+
+	-- 4. Unlock Warlord_HeavyStrikes (+3 Damage)
+	local okUnlock2, _ = PassiveService.unlockNode(slicePlayer, "Warlord_HeavyStrikes")
+	assertTest(okUnlock2 == true, "[VerticalSlice] Unlocked HeavyStrikes passive")
+
+	local postPassiveStats = StatResolver.resolvePlayerStats(slicePlayer)
+	assertTest(postPassiveStats.BonusDamage == 8, "[VerticalSlice] Stacked weapon (+5) and passive (+3) yield +8 BonusDamage")
+
+	-- 5. Equip active skill HeroicStrike (Base 12 Dmg, 1 Energy, 1 Turn CD)
+	local sliceSkill = SkillService.createInstance("HeroicStrike", sliceUser, "Skill1")
+	assert(sliceSkill, "sliceSkill must be created")
+	SkillService.equipSkill(slicePlayer, sliceSkill)
+	assertTest(slicePlayer.EquippedSkills ~= nil and slicePlayer.EquippedSkills["Skill1"] == sliceSkill, "[VerticalSlice] HeroicStrike equipped in Skill1")
+
+	-- 6. Setup combat encounter with 100 HP target
+	local sliceCombat: StateTypes.CombatState = {
+		CombatId = "combat_vertical_slice",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = os.clock(),
+		TurnDuration = 45,
+		Participants = { sliceUser },
+		Enemies = {
+			["boss_target"] = {
+				InstanceId = "boss_target",
+				DefinitionId = "SpireSentinel",
+				Name = "Dungeon Boss",
+				HP = 100,
+				MaxHP = 100,
+				Shield = 0,
+				Poison = 0,
+				AttackPower = 15,
+				Intent = { Type = "Attack", Value = 15 },
+				ModelRef = nil,
+			},
+		},
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+	local sliceParty: { [number]: StateTypes.PlayerState } = { [sliceUser] = slicePlayer }
+
+	-- 7. Execute skill: Player -> Equip Item -> Stat Mod -> Unlock Passive -> Equip Skill -> Use Skill -> DamagePipeline -> CombatState
+	local okSliceUse, errSliceUse = SkillService.useSkill(slicePlayer, "Skill1", "boss_target", sliceCombat, sliceParty)
+	assertTest(okSliceUse == true and errSliceUse == nil, "[VerticalSlice] Active skill executed successfully end-to-end")
+
+	-- 8. Verify exact combat results
+	local bossEnemy = sliceCombat.Enemies["boss_target"]
+	assertTest(slicePlayer.Resources.Energy == 2, "[VerticalSlice] Player energy correctly deducted from 3 to 2")
+	assertTest(sliceSkill.CurrentCooldown == 1, "[VerticalSlice] Skill entered cooldown (1 turn)")
+	assertTest(bossEnemy.HP == 80, string.format("[VerticalSlice] Boss HP reduced by exact total damage: 100 -> %d (Base 12 + Gear 5 + Passive 3 = 20 Dmg)", bossEnemy.HP))
+
+	-- 9. Turn progression advances and cooldown ticks back to ready
+	SkillService.onTurnStart(slicePlayer)
+	assertTest(sliceSkill.CurrentCooldown == 0, "[VerticalSlice] Cooldown decremented to 0 after turn start")
+
+	-- 10. Execute second strike to confirm complete lifecycle repeat
+	local okSliceUse2, _ = SkillService.useSkill(slicePlayer, "Skill1", "boss_target", sliceCombat, sliceParty)
+	assertTest(okSliceUse2 == true, "[VerticalSlice] Second skill execution succeeded after cooldown refresh")
+	assertTest(bossEnemy.HP == 60, string.format("[VerticalSlice] Boss HP further reduced from 80 -> %d (total 40 damage dealt across 2 skill uses)", bossEnemy.HP))
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 2, 2.1, 2.2, 2.3 & 2.4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 1, 2 & PHASE 3 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end
