@@ -32,6 +32,8 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 		MaxStacks = 999,
 		IsDebuff = true,
 		Icon = "🧪",
+		Implemented = true,
+		TickBehaviorId = "DirectHPPoison",
 	},
 	Ignite = {
 		Id = "Ignite",
@@ -43,6 +45,8 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 		MaxStacks = 50,
 		IsDebuff = true,
 		Icon = "🔥",
+		Implemented = true,
+		TickBehaviorId = "FireDoT",
 	},
 	Chill = {
 		Id = "Chill",
@@ -54,6 +58,8 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 		MaxStacks = 10,
 		IsDebuff = true,
 		Icon = "❄️",
+		Implemented = false,
+		TickBehaviorId = nil,
 	},
 	Freeze = {
 		Id = "Freeze",
@@ -65,6 +71,8 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 		MaxStacks = 1,
 		IsDebuff = true,
 		Icon = "🧊",
+		Implemented = false,
+		TickBehaviorId = nil,
 	},
 	Shock = {
 		Id = "Shock",
@@ -76,6 +84,8 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 		MaxStacks = 20,
 		IsDebuff = true,
 		Icon = "⚡",
+		Implemented = false,
+		TickBehaviorId = nil,
 	},
 	Bleed = {
 		Id = "Bleed",
@@ -87,6 +97,8 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 		MaxStacks = 50,
 		IsDebuff = true,
 		Icon = "🩸",
+		Implemented = true,
+		TickBehaviorId = "BleedDoT",
 	},
 }
 
@@ -202,7 +214,27 @@ function StatusService.removeStatus(targetId: string, defId: string, targetEntit
 		targetEntityRef.Poison = 0
 	end
 
-	return true
+-- Reconciles legacy/direct writes to targetEntity.Poison into StatusService's authoritative state
+function StatusService.syncEntityFromProjection(targetId: string, targetEntity: any)
+	if not targetEntity or targetEntity.Poison == nil then
+		return
+	end
+
+	local targetTable = entityStatuses[targetId]
+	local existing = targetTable and targetTable["Poison"] or nil
+
+	if targetEntity.Poison > 0 then
+		if not existing then
+			StatusService.applyStatus(targetId, "Poison", targetEntity.Poison, -1, "System", targetEntity)
+		elseif existing.Stacks ~= targetEntity.Poison then
+			existing.Stacks = targetEntity.Poison
+		end
+	else
+		-- targetEntity.Poison == 0
+		if existing then
+			StatusService.removeStatus(targetId, "Poison", targetEntity)
+		end
+	end
 end
 
 export type StatusTickResult = {
@@ -214,6 +246,145 @@ export type StatusTickResult = {
 	Defeated: boolean,
 }
 
+type TickContext = {
+	TargetId: string,
+	TargetEntity: any,
+	IsEnemy: boolean,
+	Instance: StateTypes.StatusInstance,
+	Definition: StateTypes.StatusDefinition,
+}
+
+type TickBehaviorResult = {
+	DamageDealt: number,
+	Defeated: boolean,
+	ShouldRemove: boolean,
+}
+
+type TickBehaviorFn = (ctx: TickContext) -> TickBehaviorResult
+
+local tickBehaviors: { [string]: TickBehaviorFn } = {
+	["DirectHPPoison"] = function(ctx: TickContext): TickBehaviorResult
+		local inst = ctx.Instance
+		local dmgDealt = 0
+		local defeated = false
+
+		if inst.Stacks > 0 then
+			dmgDealt = inst.Stacks
+
+			-- Poison deals damage directly to HP bypassing Shield
+			local dmgCtx: StateTypes.DamageContext = {
+				RawDamage = dmgDealt,
+				DamageType = "Venom",
+				SourceId = inst.SourceId,
+				SourceName = "Poison",
+				SourcePlayer = nil,
+				TargetEntityKind = ctx.IsEnemy and "Enemy" or "Player",
+				TargetEnemy = ctx.IsEnemy and ctx.TargetEntity or nil,
+				TargetPlayer = not ctx.IsEnemy and ctx.TargetEntity or nil,
+				Tags = { "Periodic", "Poison" },
+				Critical = false,
+				CanHitShield = false, -- Direct HP bypass
+				IsPeriodic = true,
+			}
+
+			local res = DamagePipeline.executeDamage(dmgCtx)
+			defeated = res.IsDefeatedOrDowned
+
+			-- Poison decrements by 1 stack per tick
+			inst.Stacks = math.max(0, inst.Stacks - 1)
+			if ctx.IsEnemy and ctx.TargetEntity.Poison ~= nil then
+				ctx.TargetEntity.Poison = inst.Stacks
+			end
+		end
+
+		return {
+			DamageDealt = dmgDealt,
+			Defeated = defeated,
+			ShouldRemove = inst.Stacks <= 0,
+		}
+	end,
+
+	["FireDoT"] = function(ctx: TickContext): TickBehaviorResult
+		local inst = ctx.Instance
+		local dmgDealt = 0
+		local defeated = false
+		local shouldRemove = false
+
+		if inst.Stacks > 0 then
+			dmgDealt = inst.Stacks * 2
+			local dmgCtx: StateTypes.DamageContext = {
+				RawDamage = dmgDealt,
+				DamageType = "Fire",
+				SourceId = inst.SourceId,
+				SourceName = "Ignite",
+				SourcePlayer = nil,
+				TargetEntityKind = ctx.IsEnemy and "Enemy" or "Player",
+				TargetEnemy = ctx.IsEnemy and ctx.TargetEntity or nil,
+				TargetPlayer = not ctx.IsEnemy and ctx.TargetEntity or nil,
+				Tags = { "Periodic", "Fire" },
+				Critical = false,
+				CanHitShield = true,
+				IsPeriodic = true,
+			}
+			local res = DamagePipeline.executeDamage(dmgCtx)
+			defeated = res.IsDefeatedOrDowned
+
+			if inst.Duration > 0 then
+				inst.Duration -= 1
+				if inst.Duration <= 0 then
+					shouldRemove = true
+				end
+			end
+		end
+
+		return {
+			DamageDealt = dmgDealt,
+			Defeated = defeated,
+			ShouldRemove = shouldRemove,
+		}
+	end,
+
+	["BleedDoT"] = function(ctx: TickContext): TickBehaviorResult
+		local inst = ctx.Instance
+		local dmgDealt = 0
+		local defeated = false
+		local shouldRemove = false
+
+		if inst.Stacks > 0 then
+			dmgDealt = inst.Stacks
+			local dmgCtx: StateTypes.DamageContext = {
+				RawDamage = dmgDealt,
+				DamageType = "Physical",
+				SourceId = inst.SourceId,
+				SourceName = "Bleed",
+				SourcePlayer = nil,
+				TargetEntityKind = ctx.IsEnemy and "Enemy" or "Player",
+				TargetEnemy = ctx.IsEnemy and ctx.TargetEntity or nil,
+				TargetPlayer = not ctx.IsEnemy and ctx.TargetEntity or nil,
+				Tags = { "Periodic", "Bleed" },
+				Critical = false,
+				CanHitShield = true,
+				IsPeriodic = true,
+			}
+			local res = DamagePipeline.executeDamage(dmgCtx)
+			defeated = res.IsDefeatedOrDowned
+
+			if inst.Duration > 0 then
+				inst.Duration -= 1
+				if inst.Duration <= 0 then
+					shouldRemove = true
+				end
+			end
+		end
+
+		return {
+			DamageDealt = dmgDealt,
+			Defeated = defeated,
+			ShouldRemove = shouldRemove,
+		}
+	end,
+}
+
 -- Ticks all applicable statuses for a target at a given combat timing
 function StatusService.tickStatuses(
 	targetId: string,
@@ -221,6 +392,11 @@ function StatusService.tickStatuses(
 	targetEntity: any,
 	isEnemy: boolean
 ): { StatusTickResult }
+	-- Sync any direct projection modifications first
+	if targetEntity and targetEntity.Poison ~= nil then
+		StatusService.syncEntityFromProjection(targetId, targetEntity)
+	end
+
 	local targetTable = entityStatuses[targetId]
 	if not targetTable then return {} end
 
@@ -229,116 +405,45 @@ function StatusService.tickStatuses(
 
 	for defId, inst in targetTable do
 		local def = definitions[defId]
-		if not def or def.TickTiming ~= timing then
+		if not def or def.TickTiming ~= timing or def.Implemented ~= true then
 			continue
 		end
 
-		local dmgDealt = 0
-		local defeated = false
+		local behaviorId = def.TickBehaviorId
+		local behaviorFn = behaviorId and tickBehaviors[behaviorId]
+		if not behaviorFn then
+			continue
+		end
 
-		if defId == "Poison" then
-			if inst.Stacks > 0 then
-				dmgDealt = inst.Stacks
+		local tickCtx: TickContext = {
+			TargetId = targetId,
+			TargetEntity = targetEntity,
+			IsEnemy = isEnemy,
+			Instance = inst,
+			Definition = def,
+		}
 
-				-- Poison deals damage directly to HP bypassing Shield
-				local dmgCtx: StateTypes.DamageContext = {
-					RawDamage = dmgDealt,
-					DamageType = "Venom",
-					SourceId = inst.SourceId,
-					SourceName = "Poison",
-					SourcePlayer = nil,
-					TargetEntityKind = isEnemy and "Enemy" or "Player",
-					TargetEnemy = isEnemy and targetEntity or nil,
-					TargetPlayer = not isEnemy and targetEntity or nil,
-					Tags = { "Periodic", "Poison" },
-					Critical = false,
-					CanHitShield = false, -- Direct HP bypass
-					IsPeriodic = true,
-				}
+		local behaviorRes = behaviorFn(tickCtx)
 
-				local res = DamagePipeline.executeDamage(dmgCtx)
-				defeated = res.IsDefeatedOrDowned
-
-				-- Poison decrements by 1 stack per tick
-				inst.Stacks = math.max(0, inst.Stacks - 1)
-				if isEnemy and targetEntity.Poison ~= nil then
-					targetEntity.Poison = inst.Stacks
-				end
-
-				if inst.Stacks <= 0 then
-					table.insert(toRemove, defId)
-				end
-			end
-
-		elseif defId == "Ignite" then
-			if inst.Stacks > 0 then
-				dmgDealt = inst.Stacks * 2
-				local dmgCtx: StateTypes.DamageContext = {
-					RawDamage = dmgDealt,
-					DamageType = "Fire",
-					SourceId = inst.SourceId,
-					SourceName = "Ignite",
-					SourcePlayer = nil,
-					TargetEntityKind = isEnemy and "Enemy" or "Player",
-					TargetEnemy = isEnemy and targetEntity or nil,
-					TargetPlayer = not isEnemy and targetEntity or nil,
-					Tags = { "Periodic", "Fire" },
-					Critical = false,
-					CanHitShield = true,
-					IsPeriodic = true,
-				}
-				local res = DamagePipeline.executeDamage(dmgCtx)
-				defeated = res.IsDefeatedOrDowned
-
-				if inst.Duration > 0 then
-					inst.Duration -= 1
-					if inst.Duration <= 0 then
-						table.insert(toRemove, defId)
-					end
-				end
-			end
-
-		elseif defId == "Bleed" then
-			if inst.Stacks > 0 then
-				dmgDealt = inst.Stacks
-				local dmgCtx: StateTypes.DamageContext = {
-					RawDamage = dmgDealt,
-					DamageType = "Physical",
-					SourceId = inst.SourceId,
-					SourceName = "Bleed",
-					SourcePlayer = nil,
-					TargetEntityKind = isEnemy and "Enemy" or "Player",
-					TargetEnemy = isEnemy and targetEntity or nil,
-					TargetPlayer = not isEnemy and targetEntity or nil,
-					Tags = { "Periodic", "Bleed" },
-					Critical = false,
-					CanHitShield = true,
-					IsPeriodic = true,
-				}
-				local res = DamagePipeline.executeDamage(dmgCtx)
-				defeated = res.IsDefeatedOrDowned
-
-				if inst.Duration > 0 then
-					inst.Duration -= 1
-					if inst.Duration <= 0 then
-						table.insert(toRemove, defId)
-					end
-				end
-			end
+		if behaviorRes.ShouldRemove then
+			table.insert(toRemove, defId)
 		end
 
 		table.insert(results, {
 			DefinitionId = defId,
 			TargetId = targetId,
-			DamageDealt = dmgDealt,
+			DamageDealt = behaviorRes.DamageDealt,
 			RemainingStacks = inst.Stacks,
-			Expired = inst.Stacks <= 0,
-			Defeated = defeated,
+			Expired = behaviorRes.ShouldRemove,
+			Defeated = behaviorRes.Defeated,
 		})
 	end
 
 	for _, defId in toRemove do
 		targetTable[defId] = nil
+		if isEnemy and defId == "Poison" and targetEntity and targetEntity.Poison ~= nil then
+			targetEntity.Poison = 0
+		end
 	end
 
 	return results

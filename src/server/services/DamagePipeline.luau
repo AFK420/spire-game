@@ -21,6 +21,33 @@ function DamagePipeline.executeDamage(
 	context: StateTypes.DamageContext,
 	modifiers: { StateTypes.Modifier }?
 ): StateTypes.DamageResult
+	-- Input validation: reject negative damage or missing context
+	if context == nil or context.RawDamage < 0 then
+		return {
+			FinalDamage = 0,
+			ShieldAbsorbed = 0,
+			HPLost = 0,
+			IsDefeatedOrDowned = false,
+		}
+	end
+
+	-- Entity existence validation
+	if context.TargetEntityKind == "Enemy" and not context.TargetEnemy then
+		return {
+			FinalDamage = 0,
+			ShieldAbsorbed = 0,
+			HPLost = 0,
+			IsDefeatedOrDowned = false,
+		}
+	elseif context.TargetEntityKind == "Player" and not context.TargetPlayer then
+		return {
+			FinalDamage = 0,
+			ShieldAbsorbed = 0,
+			HPLost = 0,
+			IsDefeatedOrDowned = false,
+		}
+	end
+
 	-- 1. Resolve raw damage through the modifier pipeline if modifiers provided
 	local finalDamage = context.RawDamage
 	if modifiers and #modifiers > 0 then
@@ -44,8 +71,8 @@ function DamagePipeline.executeDamage(
 		local enemy = context.TargetEnemy
 		if enemy.HP > 0 then
 			if context.CanHitShield then
-				shieldAbsorbed = math.min(enemy.Shield, finalDamage)
-				enemy.Shield -= shieldAbsorbed
+				shieldAbsorbed = math.min(math.max(0, enemy.Shield), finalDamage)
+				enemy.Shield = math.max(0, enemy.Shield - shieldAbsorbed)
 				hpLost = finalDamage - shieldAbsorbed
 				enemy.HP = math.max(0, enemy.HP - hpLost)
 			else
@@ -66,8 +93,8 @@ function DamagePipeline.executeDamage(
 		local playerState = context.TargetPlayer
 		if not playerState.IsDowned then
 			if context.CanHitShield then
-				shieldAbsorbed = math.min(playerState.Resources.Shield, finalDamage)
-				playerState.Resources.Shield -= shieldAbsorbed
+				shieldAbsorbed = math.min(math.max(0, playerState.Resources.Shield), finalDamage)
+				playerState.Resources.Shield = math.max(0, playerState.Resources.Shield - shieldAbsorbed)
 				hpLost = finalDamage - shieldAbsorbed
 				playerState.Resources.HP = math.max(0, playerState.Resources.HP - hpLost)
 			else

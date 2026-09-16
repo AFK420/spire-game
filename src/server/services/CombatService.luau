@@ -356,11 +356,9 @@ local function resolveTurn()
 	task.spawn(function()
 		for enemyId, enemy in activeCombat.Enemies do
 			if enemy.HP > 0 then
-				if enemy.Poison > 0 then
-					StatusService.applyStatus(enemyId, "Poison", enemy.Poison, nil, "Poison", enemy)
-					local curInst = StatusService.getStatus(enemyId, "Poison")
-					if curInst then curInst.Stacks = enemy.Poison end
-
+				local poisonStatus = StatusService.getStatus(enemyId, "Poison")
+				if (poisonStatus and poisonStatus.Stacks > 0) or enemy.Poison > 0 then
+					StatusService.syncEntityFromProjection(enemyId, enemy)
 					local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
 					local pDmg = 0
 					for _, tick in statusTicks do
