@@ -215,6 +215,7 @@ function StatusService.removeStatus(targetId: string, defId: string, targetEntit
 	end
 
 -- Reconciles legacy/direct writes to targetEntity.Poison into StatusService's authoritative state
+-- ONLY when StatusService has no existing record of that entity's Poison.
 function StatusService.syncEntityFromProjection(targetId: string, targetEntity: any)
 	if not targetEntity or targetEntity.Poison == nil then
 		return
@@ -223,17 +224,8 @@ function StatusService.syncEntityFromProjection(targetId: string, targetEntity: 
 	local targetTable = entityStatuses[targetId]
 	local existing = targetTable and targetTable["Poison"] or nil
 
-	if targetEntity.Poison > 0 then
-		if not existing then
-			StatusService.applyStatus(targetId, "Poison", targetEntity.Poison, -1, "System", targetEntity)
-		elseif existing.Stacks ~= targetEntity.Poison then
-			existing.Stacks = targetEntity.Poison
-		end
-	else
-		-- targetEntity.Poison == 0
-		if existing then
-			StatusService.removeStatus(targetId, "Poison", targetEntity)
-		end
+	if not existing and targetEntity.Poison > 0 then
+		StatusService.applyStatus(targetId, "Poison", targetEntity.Poison, -1, "System", targetEntity)
 	end
 end
 
@@ -392,12 +384,13 @@ function StatusService.tickStatuses(
 	targetEntity: any,
 	isEnemy: boolean
 ): { StatusTickResult }
-	-- Sync any direct projection modifications first
-	if targetEntity and targetEntity.Poison ~= nil then
+	-- Backward compatibility: only sync from projection if StatusService has no record of this entity
+	local targetTable = entityStatuses[targetId]
+	if (not targetTable or not targetTable["Poison"]) and targetEntity and targetEntity.Poison ~= nil and targetEntity.Poison > 0 then
 		StatusService.syncEntityFromProjection(targetId, targetEntity)
+		targetTable = entityStatuses[targetId]
 	end
 
-	local targetTable = entityStatuses[targetId]
 	if not targetTable then return {} end
 
 	local results: { StatusTickResult } = {}

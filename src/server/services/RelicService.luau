@@ -15,6 +15,7 @@ local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
+local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
 
 local RelicService = {}
 
@@ -118,7 +119,14 @@ function RelicService.triggerEvent(
 				elseif id == "BloodVial" or id == "BurningBlood" then
 					playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + relic.Value)
 				elseif id == "VenomVial" and context and context.Enemy then
-					context.Enemy.Poison += relic.Value
+					StatusService.applyStatus(
+						context.Enemy.InstanceId,
+						"Poison",
+						relic.Value,
+						nil,
+						string.format("Relic:%s", id),
+						context.Enemy
+					)
 				elseif id == "MeatOnTheBone" and playerState.Resources.HP < (playerState.Resources.MaxHP * 0.5) then
 					playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + relic.Value)
 				end

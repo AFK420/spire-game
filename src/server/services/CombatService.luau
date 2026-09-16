@@ -356,26 +356,23 @@ local function resolveTurn()
 	task.spawn(function()
 		for enemyId, enemy in activeCombat.Enemies do
 			if enemy.HP > 0 then
-				local poisonStatus = StatusService.getStatus(enemyId, "Poison")
-				if (poisonStatus and poisonStatus.Stacks > 0) or enemy.Poison > 0 then
-					StatusService.syncEntityFromProjection(enemyId, enemy)
-					local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
-					local pDmg = 0
-					for _, tick in statusTicks do
-						if tick.DefinitionId == "Poison" then
-							pDmg = tick.DamageDealt
-						end
+				local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
+				local statusKiller: string? = nil
+				for _, tick in statusTicks do
+					if tick.DamageDealt > 0 then
+						logEvent("DamageDealt", tick.DefinitionId, enemy.Name, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
 					end
-
-					if pDmg > 0 then
-						logEvent("DamageDealt", "Poison", enemy.Name, pDmg, string.format("-%d HP (Poison)", pDmg))
-					end
-
-					if enemy.HP <= 0 then
-						logEvent("EnemyDefeated", "Poison", enemyId, nil, string.format("%s collapsed from poison!", enemy.Name))
-						continue
+					if tick.Defeated then
+						statusKiller = tick.DefinitionId
 					end
 				end
+
+				if enemy.HP <= 0 then
+					local killer = statusKiller or "Poison"
+					logEvent("EnemyDefeated", killer, enemyId, nil, string.format("%s collapsed from %s!", enemy.Name, killer:lower()))
+					continue
+				end
+			end
 
 				task.wait(0.3)
 				if enemy.Intent.Type == "Attack" then
