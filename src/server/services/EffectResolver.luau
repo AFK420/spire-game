@@ -189,7 +189,9 @@ handlers["Shield"] = function(effect: CardData.Effect, context: ActionContext, r
 			PlayerTarget = recipient,
 			EnemyTarget = resolvedTarget.EnemyTarget,
 		}
-		finalShield = ModifierResolver.resolve(rawVal, "Shield", context.Modifiers, modCtx)
+		local baseShield = ModifierResolver.resolve(rawVal, "Shield", context.Modifiers, modCtx)
+		local bonusShieldGain = ModifierResolver.resolve(0, "ShieldGain", context.Modifiers, modCtx)
+		finalShield = baseShield + bonusShieldGain
 	end
 
 	recipient.Resources.Shield += finalShield

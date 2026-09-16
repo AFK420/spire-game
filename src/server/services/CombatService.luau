@@ -42,6 +42,7 @@ local ModifierResolver = require(servicesFolder:WaitForChild("ModifierResolver")
 local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: ModuleScript)
 local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
 local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
+local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
 
 local CombatService = {}
 
@@ -696,6 +697,12 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		else
 			playerState.Resources.Shield += totalBonusShield
 		end
+	end
+
+	-- Phase 3: Include equipment and passive modifiers from StatResolver
+	local playerModifiers = StatResolver.collectPlayerModifiers(playerState)
+	for _, mod in playerModifiers do
+		table.insert(actionModifiers, mod)
 	end
 
 	-- Execute Card Effects via generic EffectResolver
