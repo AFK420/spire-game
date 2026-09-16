@@ -37,6 +37,11 @@ local ClassService = require(servicesFolder:WaitForChild("ClassService") :: Modu
 local RelicService = require(servicesFolder:WaitForChild("RelicService") :: ModuleScript)
 local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
 local ArenaVisualizer = require(servicesFolder:WaitForChild("ArenaVisualizer") :: ModuleScript)
+local TargetResolver = require(servicesFolder:WaitForChild("TargetResolver") :: ModuleScript)
+local ModifierResolver = require(servicesFolder:WaitForChild("ModifierResolver") :: ModuleScript)
+local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: ModuleScript)
+local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
+local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
 
 local CombatService = {}
 
@@ -191,27 +196,39 @@ end
 --------------------------------------------------------------------------------
 
 local function applyDamageToEnemy(enemy: StateTypes.EnemyState, rawDamage: number): (number, number)
-	local absorbed = math.min(enemy.Shield, rawDamage)
-	enemy.Shield -= absorbed
-	local rem = rawDamage - absorbed
-	enemy.HP = math.max(0, enemy.HP - rem)
-	return rem, absorbed
+	local res = DamagePipeline.executeDamage({
+		RawDamage = rawDamage,
+		DamageType = "Physical",
+		SourceId = "CombatService",
+		SourceName = "CombatService",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = enemy,
+		TargetPlayer = nil,
+		Tags = nil,
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	return res.HPLost, res.ShieldAbsorbed
 end
 
 local function applyDamageToPlayer(playerState: StateTypes.PlayerState, rawDamage: number): (number, number)
-	local absorbed = math.min(playerState.Resources.Shield, rawDamage)
-	playerState.Resources.Shield -= absorbed
-	local rem = rawDamage - absorbed
-	playerState.Resources.HP = math.max(0, playerState.Resources.HP - rem)
-
-	if playerState.Resources.HP <= 0 then
-		playerState.IsDowned = true
-		playerState.Resources.HP = 0
-		playerState.Resources.Shield = 0
-		playerState.IsReady = false
-	end
-
-	return rem, absorbed
+	local res = DamagePipeline.executeDamage({
+		RawDamage = rawDamage,
+		DamageType = "Physical",
+		SourceId = "CombatService",
+		SourceName = "CombatService",
+		SourcePlayer = nil,
+		TargetEntityKind = "Player",
+		TargetEnemy = nil,
+		TargetPlayer = playerState,
+		Tags = nil,
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	return res.HPLost, res.ShieldAbsorbed
 end
 
 local function logEvent(eventType: string, sourceId: string, targetId: string, value: number?, text: string?)
@@ -340,10 +357,21 @@ local function resolveTurn()
 		for enemyId, enemy in activeCombat.Enemies do
 			if enemy.HP > 0 then
 				if enemy.Poison > 0 then
-					local pDmg = enemy.Poison
-					enemy.HP = math.max(0, enemy.HP - pDmg)
-					enemy.Poison = math.max(0, enemy.Poison - 1)
-					logEvent("DamageDealt", "Poison", enemy.Name, pDmg, string.format("-%d HP (Poison)", pDmg))
+					StatusService.applyStatus(enemyId, "Poison", enemy.Poison, nil, "Poison", enemy)
+					local curInst = StatusService.getStatus(enemyId, "Poison")
+					if curInst then curInst.Stacks = enemy.Poison end
+
+					local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
+					local pDmg = 0
+					for _, tick in statusTicks do
+						if tick.DefinitionId == "Poison" then
+							pDmg = tick.DamageDealt
+						end
+					end
+
+					if pDmg > 0 then
+						logEvent("DamageDealt", "Poison", enemy.Name, pDmg, string.format("-%d HP (Poison)", pDmg))
+					end
 
 					if enemy.HP <= 0 then
 						logEvent("EnemyDefeated", "Poison", enemyId, nil, string.format("%s collapsed from poison!", enemy.Name))
@@ -530,6 +558,7 @@ function CombatService.startCombat(
 	}
 
 	-- Setup player combat state
+	StatusService.resetCombat()
 	for userId, playerState in partyRef do
 		table.insert(activeCombat.Participants, userId)
 		ClassService.resetCombatResources(playerState)
@@ -592,48 +621,20 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	end
 
 	local cardDef = cardInst.CardData
-	local targetEnemy: StateTypes.EnemyState? = nil
-	local targetPlayer: StateTypes.PlayerState? = nil
-
-	-- Strictly validate target according to card definition
-	if cardDef.Target == "Enemy" then
-		if targetParam == nil or typeof(targetParam) ~= "string" or targetParam == "" then
-			return false, "Enemy target is required."
-		end
-		local enemy = activeCombat.Enemies[targetParam]
-		if not enemy then
-			return false, "Invalid target enemy."
-		end
-		if enemy.HP <= 0 then
-			return false, "Target enemy is already defeated."
-		end
-		targetEnemy = enemy
-
-	elseif cardDef.Target == "Self" then
-		if targetParam ~= nil and targetParam ~= player.UserId and targetParam ~= tostring(player.UserId) then
-			return false, "Self cards cannot target other entities."
-		end
-		targetPlayer = playerState
-
-	elseif cardDef.Target == "Ally" then
-		if targetParam == nil then
-			return false, "Ally target is required."
-		end
-		local targetUserId = tonumber(targetParam)
-		if not targetUserId then
-			return false, "Invalid ally target."
-		end
-		local allyState = partyRef[targetUserId]
-		if not allyState then
-			return false, "Target ally not in party."
-		end
-		targetPlayer = allyState
-
-	elseif cardDef.Target == "None" then
-		-- No specific target required
-	else
-		return false, "Unsupported card target type."
+	-- Authoritative target resolution via TargetResolver
+	local resolvedTarget = TargetResolver.resolveTarget(
+		playerState,
+		cardDef.Target,
+		targetParam,
+		activeCombat,
+		partyRef
+	)
+	if not resolvedTarget.Success then
+		return false, resolvedTarget.Error
 	end
+
+	local targetEnemy = resolvedTarget.EnemyTarget
+	local targetPlayer = resolvedTarget.PlayerTarget
 
 	-- Evaluate Class Gimmick
 	local gimmick = ClassService.processGimmickOnCardPlay(playerState, cardInst, targetEnemy)
@@ -668,58 +669,48 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	end
 
 	if gimmick.PoisonApplied > 0 and targetEnemy then
-		targetEnemy.Poison += gimmick.PoisonApplied
+		StatusService.applyStatus(targetEnemy.InstanceId, "Poison", gimmick.PoisonApplied, nil, tostring(playerState.UserId), targetEnemy)
 	end
 
-	-- Execute Card Effects
-	local didReviveThisCard = false
-
-	for _, effect in cardInst.CardData.Effects do
-		if effect.Type == "Damage" then
-			if targetEnemy then
-				local dmg = effect.Value + totalBonusDamage
-				local remDmg, _ = applyDamageToEnemy(targetEnemy, dmg)
-				logEvent("DamageDealt", playerState.DisplayName, targetEnemy.Name, dmg, string.format("-%d HP", remDmg))
-
-				if targetEnemy.HP <= 0 then
-					logEvent("EnemyDefeated", playerState.DisplayName, targetEnemy.Name, nil, string.format("%s was defeated!", targetEnemy.Name))
-					RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = targetEnemy })
-				end
-			end
-
-		elseif effect.Type == "Shield" then
-			local shieldVal = effect.Value + totalBonusShield
-			local recipient = targetPlayer or playerState
-			recipient.Resources.Shield += shieldVal
-			logEvent("ShieldGained", playerState.DisplayName, recipient.DisplayName, shieldVal, string.format("+%d Shield", shieldVal))
-
-		elseif effect.Type == "Poison" then
-			if targetEnemy then
-				targetEnemy.Poison += effect.Value
-				logEvent("PoisonApplied", playerState.DisplayName, targetEnemy.Name, effect.Value, string.format("+%d Poison", effect.Value))
-			end
-
-		elseif effect.Type == "Revive" then
-			local recipient = targetPlayer or playerState
-			if recipient.IsDowned then
-				recipient.IsDowned = false
-				recipient.Resources.HP = math.min(recipient.Resources.MaxHP, effect.Value)
-				didReviveThisCard = true
-				logEvent("PlayerRevived", playerState.DisplayName, recipient.DisplayName, effect.Value, string.format("%s was revived with %d HP!", recipient.DisplayName, recipient.Resources.HP))
-			end
-
-		elseif effect.Type == "Heal" then
-			local recipient = targetPlayer or playerState
-			-- Only heal if the recipient was NOT just revived by this card and is NOT downed
-			if not didReviveThisCard and not recipient.IsDowned then
-				recipient.Resources.HP = math.min(recipient.Resources.MaxHP, recipient.Resources.HP + effect.Value)
-				logEvent("Healed", playerState.DisplayName, recipient.DisplayName, effect.Value, string.format("+%d HP", effect.Value))
-			end
-
-		elseif effect.Type == "Draw" then
-			CardService.drawCards(playerState, effect.Value)
-		end
+	-- Build action modifiers for deterministic ModifierResolver & EffectResolver
+	local actionModifiers: { StateTypes.Modifier } = {}
+	if totalBonusDamage > 0 then
+		table.insert(actionModifiers, ModifierResolver.createModifier(
+			"ActionBonusDamage",
+			"GimmickAndRelics",
+			"Damage",
+			"Add",
+			totalBonusDamage,
+			100
+		))
 	end
+	if totalBonusShield > 0 then
+		table.insert(actionModifiers, ModifierResolver.createModifier(
+			"ActionBonusShield",
+			"GimmickAndRelics",
+			"Shield",
+			"Add",
+			totalBonusShield,
+			100
+		))
+	end
+
+	-- Execute Card Effects via generic EffectResolver
+	local actionCtx: EffectResolver.ActionContext = {
+		SourcePlayer = playerState,
+		Target = resolvedTarget,
+		CombatState = activeCombat,
+		Party = partyRef,
+		CardInstance = cardInst,
+		Modifiers = actionModifiers,
+		LogEvent = logEvent,
+		OnKillCallback = function(defeatedEnemy)
+			RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = defeatedEnemy })
+		end,
+		DidRevive = false,
+	}
+
+	EffectResolver.resolveEffects(cardInst.CardData.Effects, actionCtx)
 
 	-- Check Victory
 	if areAllEnemiesDead() then
@@ -825,6 +816,7 @@ function CombatService.cleanupCombat()
 		turnTimerConnection = nil
 	end
 	ArenaVisualizer.cleanup()
+	StatusService.resetCombat()
 	activeCombat = nil
 	partyRef = {}
 	onCombatEndCallback = nil
