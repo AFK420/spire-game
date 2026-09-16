@@ -6,12 +6,36 @@
 	Defines the core card library and class signature cards for Card Rift: Co-op Dungeon.
 ]=]
 
-export type EffectType = "Damage" | "Shield" | "Poison" | "Revive" | "Heal"
+export type EffectType =
+	| "Damage"
+	| "Shield"
+	| "Poison"
+	| "Revive"
+	| "Heal"
+	| "ApplyStatus"
+	| "RemoveStatus"
+	| "Draw"
+	| "Discard"
+	| "Exhaust"
+	| "GainEnergy"
+	| "LoseEnergy"
+	| "CreateCard"
+	| "ModifyResource"
+	| "TriggerEvent"
+
 export type TargetType = "Enemy" | "Self" | "Ally" | "None"
 
 export type Effect = {
 	Type: EffectType,
-	Value: number,
+	Value: number?,
+	Target: TargetType?,
+	StatusId: string?,
+	Stacks: number?,
+	Duration: number?,
+	DamageType: string?,
+	Tags: { string }?,
+	Condition: string?,
+	CardDefId: string?,
 }
 
 export type Card = {
@@ -75,7 +99,7 @@ local PoisonDart: Card = {
 	Target = "Enemy",
 	Effects = {
 		{ Type = "Damage", Value = 3 },
-		{ Type = "Poison", Value = 3 },
+		{ Type = "ApplyStatus", Value = 3, StatusId = "Poison", Stacks = 3 },
 	},
 	Description = "Deal 3 damage and apply 3 Poison.",
 	Color = Color3.fromRGB(40, 160, 80),
@@ -88,8 +112,8 @@ local FirstAid: Card = {
 	Cost = 2,
 	Target = "Ally",
 	Effects = {
-		{ Type = "Revive", Value = 30 },
-		{ Type = "Heal", Value = 30 },
+		{ Type = "Revive", Value = 30, Condition = "TargetDowned" },
+		{ Type = "Heal", Value = 30, Condition = "TargetLiving" },
 	},
 	Description = "Revive a downed ally with 30 HP, or restore 30 HP to an active ally.",
 	Color = Color3.fromRGB(30, 185, 145),
