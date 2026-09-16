@@ -18,6 +18,11 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
 
+local servicesFolder = script.Parent
+local TargetResolver = require(servicesFolder:WaitForChild("TargetResolver") :: ModuleScript)
+local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
+local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
+
 local SkillService = {}
 
 -- Instantiates a new runtime SkillInstance
@@ -122,6 +127,106 @@ function SkillService.getEquippedSkill(
 		return nil
 	end
 	return playerState.EquippedSkills[slot]
+end
+
+-- Authoritatively executes an equipped active skill
+function SkillService.useSkill(
+	playerState: StateTypes.PlayerState,
+	slot: StateTypes.SkillSlot,
+	targetParam: any?,
+	combatState: StateTypes.CombatState,
+	party: { [number]: StateTypes.PlayerState },
+	logEvent: ((eventType: string, sourceId: string, targetId: string, value: number?, text: string?) -> ())?
+): (boolean, string?)
+	if not playerState then
+		return false, "Player state is nil."
+	end
+	if playerState.IsConnected == false then
+		return false, "Disconnected players cannot use skills."
+	end
+	if playerState.IsDowned then
+		return false, "Downed players cannot use skills."
+	end
+	if not combatState or combatState.Phase ~= "PlayerPhase" then
+		return false, "Skills can only be used during PlayerPhase."
+	end
+
+	local skillInst = SkillService.getEquippedSkill(playerState, slot)
+	if not skillInst then
+		return false, string.format("No skill equipped in slot '%s'.", tostring(slot))
+	end
+
+	local def = SkillData.getSkill(skillInst.DefinitionId)
+	if not def then
+		return false, string.format("Invalid skill definition '%s'.", skillInst.DefinitionId)
+	end
+
+	if skillInst.CurrentCooldown > 0 then
+		return false, string.format("Skill '%s' is on cooldown (%d turns remaining).", def.Name, skillInst.CurrentCooldown)
+	end
+
+	local energyCost = def.Cost.Energy or 0
+	if playerState.Resources.Energy < energyCost then
+		return false, "Not enough Energy!"
+	end
+
+	local hpCost = def.Cost.HP or 0
+	if hpCost > 0 and playerState.Resources.HP <= hpCost then
+		return false, "Not enough HP to pay skill cost!"
+	end
+
+	-- Resolve target authoritatively via TargetResolver
+	local resolvedTarget = TargetResolver.resolveTarget(
+		playerState,
+		def.Target,
+		targetParam,
+		combatState,
+		party
+	)
+	if not resolvedTarget.Success then
+		return false, resolvedTarget.Error
+	end
+
+	-- Deduct costs
+	playerState.Resources.Energy -= energyCost
+	if hpCost > 0 then
+		playerState.Resources.HP -= hpCost
+	end
+
+	-- Collect modifiers deterministically
+	local modifiers = StatResolver.collectPlayerModifiers(playerState)
+
+	-- Set cooldown
+	skillInst.CurrentCooldown = def.CooldownTurns
+
+	-- Build action context and resolve effects
+	local actionCtx: EffectResolver.ActionContext = {
+		SourcePlayer = playerState,
+		Target = resolvedTarget,
+		CombatState = combatState,
+		Party = party,
+		CardInstance = nil,
+		Modifiers = modifiers,
+		LogEvent = logEvent,
+		OnKillCallback = function(defeatedEnemy)
+			local RelicServiceMod = servicesFolder:FindFirstChild("RelicService")
+			if RelicServiceMod and RelicServiceMod:IsA("ModuleScript") then
+				local RelicService = require(RelicServiceMod) :: any
+				if type(RelicService.triggerEvent) == "function" then
+					RelicService.triggerEvent(playerState, combatState, "OnKill", { Enemy = defeatedEnemy })
+				end
+			end
+		end,
+		DidRevive = false,
+	}
+
+	local results = EffectResolver.resolveEffects(def.Effects, actionCtx)
+
+	if logEvent then
+		logEvent("SkillUsed", playerState.DisplayName, def.Name, nil, string.format("Used %s", def.Name))
+	end
+
+	return true, nil
 end
 
 function SkillService.init()

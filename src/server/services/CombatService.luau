@@ -43,6 +43,7 @@ local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: 
 local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
 local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
 local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
+local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
 
 local CombatService = {}
 
@@ -442,6 +443,7 @@ local function resolveTurn()
 				local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
 				playerState.Resources.Energy += startRelic.BonusEnergy
 				CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount + startRelic.BonusDraw)
+				SkillService.onTurnStart(playerState)
 			end
 		end
 
@@ -570,6 +572,7 @@ function CombatService.startCombat(
 		end
 
 		CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount)
+		SkillService.onTurnStart(playerState)
 	end
 
 	if turnTimerConnection then
@@ -729,6 +732,32 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	end
 
 	CombatService.broadcastSnapshots(string.format("%s played [%s]!", playerState.DisplayName, cardInst.CardData.Name))
+	return true, nil
+end
+
+-- Executes an equipped active skill server-authoritatively
+function CombatService.useSkill(player: any, slot: StateTypes.SkillSlot, targetParam: any?): (boolean, string?)
+	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
+		return false, "Combat is not in PlayerPhase."
+	end
+
+	local playerState = partyRef[player.UserId]
+	if not playerState then
+		return false, "Player not in party."
+	end
+
+	local ok, err = SkillService.useSkill(playerState, slot, targetParam, activeCombat, partyRef, logEvent)
+	if not ok then
+		return false, err
+	end
+
+	-- Check Victory
+	if areAllEnemiesDead() then
+		endCombat("Victory")
+		return true, nil
+	end
+
+	CombatService.broadcastSnapshots(string.format("%s used %s!", playerState.DisplayName, tostring(slot)))
 	return true, nil
 end
 
