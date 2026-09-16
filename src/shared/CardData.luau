@@ -560,10 +560,15 @@ function CardData.validateCard(card: Card): (boolean, string?)
 			end
 		end
 
-		-- CreateCard requires valid CardDefId
+		-- CreateCard requires valid CardDefId and valid DestinationPile if provided
 		if eff.Type == "CreateCard" then
 			if not eff.CardDefId or eff.CardDefId == "" then
 				return false, string.format("Card '%s' effect #%d (CreateCard) requires a non-empty CardDefId", card.Id, idx)
+			end
+			if eff.DestinationPile ~= nil then
+				if eff.DestinationPile ~= "Deck" and eff.DestinationPile ~= "Hand" and eff.DestinationPile ~= "DiscardPile" and eff.DestinationPile ~= "ExhaustPile" then
+					return false, string.format("Card '%s' effect #%d (CreateCard) has invalid DestinationPile '%s'", card.Id, idx, tostring(eff.DestinationPile))
+				end
 			end
 		end
 	end

@@ -466,6 +466,17 @@ handlers["CreateCard"] = function(effect: CardData.Effect, context: ActionContex
 		}
 	end
 
+	local dest = effect.DestinationPile
+	if dest == nil then
+		dest = "Deck"
+	elseif dest ~= "Deck" and dest ~= "Hand" and dest ~= "DiscardPile" and dest ~= "ExhaustPile" then
+		return {
+			Success = false,
+			EffectType = "CreateCard",
+			Message = string.format("Invalid DestinationPile '%s'. Valid destinations are: Deck, Hand, DiscardPile, ExhaustPile.", tostring(dest)),
+		}
+	end
+
 	local inst = CardService.createCardInstance(cardDefId, context.SourcePlayer.UserId)
 	if not inst then
 		return {
@@ -475,15 +486,13 @@ handlers["CreateCard"] = function(effect: CardData.Effect, context: ActionContex
 		}
 	end
 
-	local dest = effect.DestinationPile or "Deck"
 	if dest == "Hand" then
 		context.SourcePlayer.Hand[inst.InstanceId] = inst
 	elseif dest == "DiscardPile" then
 		table.insert(context.SourcePlayer.DiscardPile, inst)
 	elseif dest == "ExhaustPile" then
 		table.insert(context.SourcePlayer.ExhaustPile, inst)
-	else
-		-- Default destination is Deck
+	elseif dest == "Deck" then
 		table.insert(context.SourcePlayer.Deck, inst)
 	end
 
