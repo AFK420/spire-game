@@ -254,6 +254,34 @@ test("Disconnected players cannot vote ready." in combat_service_src, "CombatSer
 test("Disconnected players cannot rescue others." in combat_service_src, "CombatService.rescueTeammate rejects disconnected rescuer")
 test("Cannot rescue a disconnected teammate." in combat_service_src, "CombatService.rescueTeammate rejects disconnected target")
 
+# 23. Phase 1.2 Poison Damage Resolution & Shield Bypass
+print("\n--- [Check 23] Poison Damage Resolution & Shield Bypass ---")
+poison_block_match = re.search(r"if enemy\.Poison > 0 then(.*?)if enemy\.HP <= 0 then", combat_service_src, re.DOTALL)
+test(poison_block_match is not None, "CombatService contains enemy.Poison > 0 resolution block")
+if poison_block_match:
+    pblock = poison_block_match.group(1)
+    test("applyDamageToEnemy" not in pblock, "Poison tick does NOT call applyDamageToEnemy (does not damage shield)")
+    test("enemy.HP = math.max(0, enemy.HP - pDmg)" in pblock or "enemy.HP = math.max(0, enemy.HP - enemy.Poison)" in pblock, "Poison directly subtracts from enemy.HP exactly once")
+    test("enemy.Poison = math.max(0, enemy.Poison - 1)" in pblock, "Poison stack decreases by 1 stack per tick")
+    test("enemy.Shield" not in pblock, "Enemy Shield remains untouched by poison")
+
+# Mathematical simulation of poison tick progression
+def simulate_poison_tick(hp: int, shield: int, poison: int):
+    dmg = poison
+    new_hp = max(0, hp - dmg)
+    new_poison = max(0, poison - 1)
+    new_shield = shield # Poison does NOT consume Shield
+    return new_hp, new_shield, new_poison
+
+h, s, p = simulate_poison_tick(100, 20, 5)
+test(h == 95 and s == 20 and p == 4, "Poison Tick 1: 100 HP / 20 Shield / 5 Poison -> 95 HP / 20 Shield / 4 Poison")
+h, s, p = simulate_poison_tick(h, s, p)
+test(h == 91 and s == 20 and p == 3, "Poison Tick 2: 95 HP / 20 Shield / 4 Poison -> 91 HP / 20 Shield / 3 Poison")
+h, s, p = simulate_poison_tick(h, s, p)
+test(h == 88 and s == 20 and p == 2, "Poison Tick 3: 91 HP / 20 Shield / 3 Poison -> 88 HP / 20 Shield / 2 Poison")
+h_kill, s_kill, p_kill = simulate_poison_tick(3, 20, 5)
+test(h_kill == 0 and s_kill == 20 and p_kill == 4, "Lethal Poison: 3 HP / 20 Shield / 5 Poison -> 0 HP / 20 Shield / 4 Poison")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")

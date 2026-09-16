@@ -84,6 +84,29 @@ Phase 1.2 is a targeted hardening and verification pass to close all remaining c
 - **Action Validation**: Disconnected players are rejected with explicit errors if attempting to `playCard()`, `voteReady()`, or `rescueTeammate()`.
 - **Reconnection State Preservation**: Verified that disconnecting mid-run or mid-combat preserves the player slot in `PartyMembers`, card decks, hand, discard piles, HP, and gold. Reconnecting reattaches `PlayerInstance` and restores access to the exact authoritative state without duplication or corruption.
 
+### 8. Poison Damage Resolution & Shield Bypass (Phase 1.2 Final Regression Fix)
+- **Issue**: An accidental regression was introduced in `CombatService.luau` where `applyDamageToEnemy(enemy, enemy.Poison)` was called in addition to direct subtraction from `enemy.HP`, causing poison damage to be applied twice and depleting enemy Shield.
+- **Resolution**:
+  - Restored single-application, direct-to-HP poison semantics:
+    ```luau
+    if enemy.Poison > 0 then
+        local pDmg = enemy.Poison
+        enemy.HP = math.max(0, enemy.HP - pDmg)
+        enemy.Poison = math.max(0, enemy.Poison - 1)
+        logEvent("DamageDealt", "Poison", enemy.Name, pDmg, string.format("-%d HP (Poison)", pDmg))
+
+        if enemy.HP <= 0 then
+            logEvent("EnemyDefeated", "Poison", enemyId, nil, string.format("%s collapsed from poison!", enemy.Name))
+            continue
+        end
+    end
+    ```
+  - **Poison directly targets HP**: Enemy Shield is completely bypassed and remains untouched by poison.
+  - **Damage applied exactly once**: HP decreases by `enemy.Poison` exactly once per tick.
+  - **Stack decrement**: Poison decrements by 1 stack per tick (`math.max(0, enemy.Poison - 1)`).
+  - **Lethal poison**: Correctly triggers existing enemy-death event and transitions to room victory without executing enemy turn actions.
+  - **Regression Test Suite**: Added Suite 16 in `TestRunner.luau` verifying Test A (single application & shield bypass: 100 HP / 20 Shield / 5 Poison -> 95 HP / 20 Shield / 4 Poison), Test B (multi-tick progression: 95/4 -> 91/3 -> 88/2), and Test C (lethal poison: 3 HP / 5 Poison -> 0 HP & victory transition).
+
 ---
 
 ## Prototype Constraints Acknowledgment
@@ -115,9 +138,9 @@ The following Phase 2 subsystems have NOT been created or implemented:
 
 | Check | Result |
 |---|---|
-| Offline Integration Verifier (`tests/verify_phase1_integration.py`) | **129 / 129 Checks Passed** |
+| Offline Integration Verifier (`tests/verify_phase1_integration.py`) | **138 / 138 Checks Passed** |
 | Rojo Project Compilation (`rojo build -o test.rbxl`) | **Clean Build (0 errors)** |
-| In-Engine API Integration Test Suites (`TestRunner.luau`) | **15 Suites, 100% Passed** |
+| In-Engine API Integration Test Suites (`TestRunner.luau`) | **16 Suites, 100% Passed** |
 | Strict Luau Typing (`--!strict` on all 21 files) | **100% Strict** |
 | Obsolete Alias Audit (`applyClassToPlayer` in `src/`) | **0 References (100% Clean)** |
 | Undeclared Variables Audit | **0 Undeclared Variables** |

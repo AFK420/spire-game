@@ -340,7 +340,7 @@ local function resolveTurn()
 		for enemyId, enemy in activeCombat.Enemies do
 			if enemy.HP > 0 then
 				if enemy.Poison > 0 then
-					local pDmg, _ = applyDamageToEnemy(enemy, enemy.Poison)
+					local pDmg = enemy.Poison
 					enemy.HP = math.max(0, enemy.HP - pDmg)
 					enemy.Poison = math.max(0, enemy.Poison - 1)
 					logEvent("DamageDealt", "Poison", enemy.Name, pDmg, string.format("-%d HP (Poison)", pDmg))

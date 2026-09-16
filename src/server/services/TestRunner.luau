@@ -663,6 +663,76 @@ function TestRunner.runAllTests(): boolean
 	task.wait(2.0)
 	assertTest(runState.Phase == "RunDefeat", "[Test C] Defeat correctly triggered when all CONNECTED players downed (disconnected players did not keep combat alive)!")
 
+	----------------------------------------------------------------------------
+	-- TEST 16: Poison Damage Resolution Invariant & Death Regressions
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 16] Poison Damage Resolution & Shield Bypass Regressions ---")
+
+	-- Reset to clean test state
+	RunManager.resetRunForTesting()
+	local poisonP1State = RunManager.addPlayer(player1)
+	ClassService.selectClass(player1 :: any, poisonP1State, "Warlord", "Titan")
+	RunManager.startRun()
+
+	local poisonTargetNodeId = runState.AvailableNodeIds[1]
+	RunManager.voteMapNode(player1, poisonTargetNodeId)
+
+	local poisonCombat = CombatService.getActiveCombat()
+	assertTest(poisonCombat ~= nil, "Combat active for poison damage regression testing")
+
+	local testEnemy: StateTypes.EnemyState? = nil
+	for _, e in poisonCombat.Enemies do
+		testEnemy = e
+		break
+	end
+	assertTest(testEnemy ~= nil, "Primary enemy retrieved for poison test")
+
+	-- Test A — Poison damages HP exactly once and ignores Shield
+	testEnemy.HP = 100
+	testEnemy.MaxHP = 100
+	testEnemy.Shield = 20
+	testEnemy.Poison = 5
+	testEnemy.Intent = { Type = "Defend", Value = 0, Description = "Waiting" }
+
+	-- Resolve poison tick via the real combat turn resolution pipeline
+	CombatService.forceTurnTimeout()
+	task.wait(0.6)
+
+	assertTest(testEnemy.HP == 95, string.format("[Poison Test A] HP decreased by exactly 5 (Expected: 95, Actual: %d)", testEnemy.HP))
+	assertTest(testEnemy.Shield == 20, string.format("[Poison Test A] Shield remained 20 without taking poison damage (Actual: %d)", testEnemy.Shield))
+	assertTest(testEnemy.Poison == 4, string.format("[Poison Test A] Poison decremented by 1 stack (Expected: 4, Actual: %d)", testEnemy.Poison))
+
+	-- Test B — Multiple poison ticks behave predictably (95/4 -> 91/3 -> 88/2)
+	-- Tick 2: 95 HP / 4 Poison -> 91 HP / 3 Poison
+	testEnemy.Intent = { Type = "Defend", Value = 0, Description = "Waiting" }
+	CombatService.forceTurnTimeout()
+	task.wait(0.6)
+
+	assertTest(testEnemy.HP == 91, string.format("[Poison Test B] Second tick: 95 HP - 4 = 91 HP (Actual: %d)", testEnemy.HP))
+	assertTest(testEnemy.Shield == 20, "[Poison Test B] Shield remains 20 after second tick")
+	assertTest(testEnemy.Poison == 3, "[Poison Test B] Poison decremented to 3")
+
+	-- Tick 3: 91 HP / 3 Poison -> 88 HP / 2 Poison
+	testEnemy.Intent = { Type = "Defend", Value = 0, Description = "Waiting" }
+	CombatService.forceTurnTimeout()
+	task.wait(0.6)
+
+	assertTest(testEnemy.HP == 88, string.format("[Poison Test B] Third tick: 91 HP - 3 = 88 HP (Actual: %d)", testEnemy.HP))
+	assertTest(testEnemy.Shield == 20, "[Poison Test B] Shield remains 20 after third tick")
+	assertTest(testEnemy.Poison == 2, "[Poison Test B] Poison decremented to 2")
+
+	-- Test C — Poison can kill: 3 HP / 5 Poison -> 0 HP and triggers enemy death / victory
+	testEnemy.HP = 3
+	testEnemy.Shield = 20
+	testEnemy.Poison = 5
+	testEnemy.Intent = { Type = "Attack", Value = 10, Description = "Lethal Strike" }
+
+	CombatService.forceTurnTimeout()
+	task.wait(2.0)
+
+	assertTest(testEnemy.HP == 0, string.format("[Poison Test C] Lethal poison reduced HP to 0 (Actual: %d)", testEnemy.HP))
+	assertTest(runState.Phase == "Rewards", "[Poison Test C] Lethal poison triggered enemy death and transitioned combat to Rewards")
+
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1.2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
