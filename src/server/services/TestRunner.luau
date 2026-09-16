@@ -41,6 +41,11 @@ local ClassService = require(services:WaitForChild("ClassService") :: ModuleScri
 local CardService = require(services:WaitForChild("CardService") :: ModuleScript)
 local RelicService = require(services:WaitForChild("RelicService") :: ModuleScript)
 local PersistenceService = require(services:WaitForChild("PersistenceService") :: ModuleScript)
+local TargetResolver = require(services:WaitForChild("TargetResolver") :: ModuleScript)
+local ModifierResolver = require(services:WaitForChild("ModifierResolver") :: ModuleScript)
+local DamagePipeline = require(services:WaitForChild("DamagePipeline") :: ModuleScript)
+local StatusService = require(services:WaitForChild("StatusService") :: ModuleScript)
+local EffectResolver = require(services:WaitForChild("EffectResolver") :: ModuleScript)
 
 local TestRunner = {}
 
@@ -733,8 +738,410 @@ function TestRunner.runAllTests(): boolean
 	assertTest(testEnemy.HP == 0, string.format("[Poison Test C] Lethal poison reduced HP to 0 (Actual: %d)", testEnemy.HP))
 	assertTest(runState.Phase == "Rewards", "[Poison Test C] Lethal poison triggered enemy death and transitioned combat to Rewards")
 
+	----------------------------------------------------------------------------
+	-- TEST 17: TargetResolver Action Target Validation
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 17] TargetResolver Target Validation Foundation ---")
+	local trCombat = CombatService.getActiveCombat() or poisonCombat
+	local trParty = runState.PartyMembers
+	local trPlayer = poisonP1State
+
+	-- 1. None target type
+	local noneRes = TargetResolver.resolveTarget(trPlayer, "None", nil, trCombat, trParty)
+	assertTest(noneRes.Success == true and noneRes.TargetKind == "None", "[TargetResolver] 'None' target successfully resolved")
+
+	-- 2. Self target type
+	local selfRes = TargetResolver.resolveTarget(trPlayer, "Self", nil, trCombat, trParty)
+	assertTest(selfRes.Success == true and selfRes.PlayerTarget == trPlayer, "[TargetResolver] 'Self' target resolves to source player")
+
+	local selfInvalidRes = TargetResolver.resolveTarget(trPlayer, "Self", 999999, trCombat, trParty)
+	assertTest(selfInvalidRes.Success == false, "[TargetResolver] 'Self' target rejects other entity ID")
+
+	-- 3. Enemy target type
+	testEnemy.HP = 50
+	local enemyLivingRes = TargetResolver.resolveTarget(trPlayer, "Enemy", testEnemy.InstanceId, trCombat, trParty)
+	assertTest(enemyLivingRes.Success == true and enemyLivingRes.EnemyTarget == testEnemy, "[TargetResolver] Valid living enemy target resolved")
+
+	testEnemy.HP = 0
+	local enemyDeadRes = TargetResolver.resolveTarget(trPlayer, "Enemy", testEnemy.InstanceId, trCombat, trParty)
+	assertTest(enemyDeadRes.Success == false and enemyDeadRes.Error == "Target enemy is already defeated.", "[TargetResolver] Rejects defeated enemy target")
+	testEnemy.HP = 50 -- restore for subsequent tests
+
+	local enemyMissingRes = TargetResolver.resolveTarget(trPlayer, "Enemy", "nonexistent_enemy", trCombat, trParty)
+	assertTest(enemyMissingRes.Success == false, "[TargetResolver] Rejects nonexistent enemy target")
+
+	local enemyNilRes = TargetResolver.resolveTarget(trPlayer, "Enemy", nil, trCombat, trParty)
+	assertTest(enemyNilRes.Success == false, "[TargetResolver] Rejects nil enemy target")
+
+	-- 4. Ally target type
+	local allySelfRes = TargetResolver.resolveTarget(trPlayer, "Ally", trPlayer.UserId, trCombat, trParty)
+	assertTest(allySelfRes.Success == true and allySelfRes.PlayerTarget == trPlayer, "[TargetResolver] Valid ally target resolved")
+
+	local allyMissingRes = TargetResolver.resolveTarget(trPlayer, "Ally", 888888, trCombat, trParty)
+	assertTest(allyMissingRes.Success == false, "[TargetResolver] Rejects ally target not in party")
+
+	-- Disconnected ally rejection
+	local disconnectedPlayer = {
+		UserId = 777777,
+		PlayerInstance = nil,
+		DisplayName = "DiscAlly",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = false,
+	}
+	trParty[777777] = disconnectedPlayer
+	local allyDiscRes = TargetResolver.resolveTarget(trPlayer, "Ally", 777777, trCombat, trParty)
+	assertTest(allyDiscRes.Success == false and allyDiscRes.Error == "Cannot target a disconnected ally.", "[TargetResolver] Rejects disconnected ally target")
+	trParty[777777] = nil
+
+	----------------------------------------------------------------------------
+	-- TEST 18: ModifierResolver Deterministic Math Pipeline
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 18] ModifierResolver Deterministic Math Pipeline ---")
+
+	-- 1. Base value with 0 modifiers
+	local modVal1, _ = ModifierResolver.resolve(10, "Damage", {})
+	assertTest(modVal1 == 10, "[ModifierResolver] Base value with no modifiers returns exact base (10)")
+
+	-- 2. Additive modifier
+	local addMod = ModifierResolver.createModifier("Add5", "Test", "Damage", "Add", 5, 100)
+	local modVal2, _ = ModifierResolver.resolve(10, "Damage", { addMod })
+	assertTest(modVal2 == 15, "[ModifierResolver] Additive modifier (+5) increases 10 to 15")
+
+	-- 3. Multiplicative modifier
+	local multMod = ModifierResolver.createModifier("Mult1.5", "Test", "Damage", "Multiply", 1.5, 200)
+	local modVal3, _ = ModifierResolver.resolve(10, "Damage", { multMod })
+	assertTest(modVal3 == 15, "[ModifierResolver] Multiplicative modifier (x1.5) scales 10 to 15")
+
+	-- 4. Compound pipeline: Additive then Multiplicative: (10 + 4) * 2 = 28
+	local add4 = ModifierResolver.createModifier("Add4", "Test", "Damage", "Add", 4, 100)
+	local mult2 = ModifierResolver.createModifier("Mult2", "Test", "Damage", "Multiply", 2.0, 200)
+	local modVal4, _ = ModifierResolver.resolve(10, "Damage", { mult2, add4 })
+	assertTest(modVal4 == 28, "[ModifierResolver] Deterministic ordering resolves Additive before Multiplicative ((10+4)*2 = 28)")
+
+	-- 5. Override modifier wins
+	local overMod = ModifierResolver.createModifier("Override99", "Test", "Damage", "Override", 99, 50)
+	local modVal5, _ = ModifierResolver.resolve(10, "Damage", { add4, mult2, overMod })
+	assertTest(modVal5 == 99, "[ModifierResolver] Override modifier sets value directly to 99")
+
+	-- 6. Condition evaluation: LowHP
+	local condMod = ModifierResolver.createModifier("LowHpBonus", "Test", "Damage", "Add", 10, 100, "LowHP")
+	local fullHpPlayer = { Resources = { HP = 100, MaxHP = 100 } }
+	local lowHpPlayer = { Resources = { HP = 20, MaxHP = 100 } }
+	local modValFull, _ = ModifierResolver.resolve(10, "Damage", { condMod }, { SourcePlayer = fullHpPlayer })
+	local modValLow, _ = ModifierResolver.resolve(10, "Damage", { condMod }, { SourcePlayer = lowHpPlayer })
+	assertTest(modValFull == 10, "[ModifierResolver] LowHP condition does NOT apply at full HP (10)")
+	assertTest(modValLow == 20, "[ModifierResolver] LowHP condition applies when HP < 50% (10 + 10 = 20)")
+
+	----------------------------------------------------------------------------
+	-- TEST 19: DamagePipeline Mitigation & Shield Absorption
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 19] DamagePipeline Mitigation & Shield Absorption ---")
+
+	local dummyEnemy: StateTypes.EnemyState = {
+		InstanceId = "dummy_1",
+		DefinitionId = "TargetDummy",
+		Name = "Target Dummy",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 0,
+		Intent = { Type = "Defend", Value = 0 },
+		ModelRef = nil,
+	}
+
+	-- 1. Unshielded damage
+	local dmgRes1 = DamagePipeline.executeDamage({
+		RawDamage = 20,
+		DamageType = "Physical",
+		SourceId = "tester",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = dummyEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(dummyEnemy.HP == 80 and dmgRes1.HPLost == 20 and dmgRes1.ShieldAbsorbed == 0, "[DamagePipeline] Unshielded damage reduces HP directly (100 -> 80)")
+
+	-- 2. Shield absorption: 15 Shield, 20 Damage -> 0 Shield, 5 HP lost (80 -> 75)
+	dummyEnemy.Shield = 15
+	local dmgRes2 = DamagePipeline.executeDamage({
+		RawDamage = 20,
+		DamageType = "Physical",
+		SourceId = "tester",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = dummyEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(dummyEnemy.Shield == 0 and dummyEnemy.HP == 75 and dmgRes2.ShieldAbsorbed == 15 and dmgRes2.HPLost == 5, "[DamagePipeline] Shield absorbs 15, remaining 5 hits HP (80 -> 75)")
+
+	-- 3. Shield fully absorbs: 20 Shield, 10 Damage -> 10 Shield, 0 HP lost (75 HP)
+	dummyEnemy.Shield = 20
+	local dmgRes3 = DamagePipeline.executeDamage({
+		RawDamage = 10,
+		DamageType = "Physical",
+		SourceId = "tester",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = dummyEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(dummyEnemy.Shield == 10 and dummyEnemy.HP == 75 and dmgRes3.ShieldAbsorbed == 10 and dmgRes3.HPLost == 0, "[DamagePipeline] Shield fully absorbs damage (20 -> 10 Shield, 0 HP lost)")
+
+	-- 4. Direct HP bypass (CanHitShield = false): 10 Shield, 15 Damage -> 10 Shield, 15 HP lost (75 -> 60)
+	local dmgRes4 = DamagePipeline.executeDamage({
+		RawDamage = 15,
+		DamageType = "Venom",
+		SourceId = "tester",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = dummyEnemy,
+		TargetPlayer = nil,
+		CanHitShield = false,
+		IsPeriodic = true,
+	})
+	assertTest(dummyEnemy.Shield == 10 and dummyEnemy.HP == 60 and dmgRes4.ShieldAbsorbed == 0 and dmgRes4.HPLost == 15, "[DamagePipeline] CanHitShield=false bypasses shield completely (10 Shield untouched, 75 -> 60 HP)")
+
+	-- 5. Lethal damage
+	dummyEnemy.HP = 10
+	local dmgRes5 = DamagePipeline.executeDamage({
+		RawDamage = 25,
+		DamageType = "Physical",
+		SourceId = "tester",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = dummyEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(dummyEnemy.HP == 0 and dmgRes5.IsDefeatedOrDowned == true, "[DamagePipeline] Lethal damage reduces HP to 0 and flags IsDefeatedOrDowned")
+
+	----------------------------------------------------------------------------
+	-- TEST 20: StatusService Lifecycle (Apply, Stack, Tick, Remove, Sync)
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 20] StatusService Definition vs Instance Lifecycle ---")
+
+	StatusService.resetCombat()
+	local sEnemy: StateTypes.EnemyState = {
+		InstanceId = "status_enemy",
+		DefinitionId = "TargetDummy",
+		Name = "Status Dummy",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 25,
+		Poison = 0,
+		AttackPower = 0,
+		Intent = { Type = "Defend", Value = 0 },
+		ModelRef = nil,
+	}
+
+	-- 1. Apply status
+	local pInst1 = StatusService.applyStatus(sEnemy.InstanceId, "Poison", 3, nil, "test_source", sEnemy)
+	assertTest(pInst1 ~= nil and pInst1.Stacks == 3, "[StatusService] Successfully applied 3 stacks of Poison")
+	assertTest(sEnemy.Poison == 3, "[StatusService] Synchronized enemy.Poison projection field to 3")
+
+	-- 2. Stack status
+	local pInst2 = StatusService.applyStatus(sEnemy.InstanceId, "Poison", 2, nil, "test_source", sEnemy)
+	assertTest(pInst2.Stacks == 5, "[StatusService] Stacking 2 more Poison gives 5 total stacks")
+	assertTest(sEnemy.Poison == 5, "[StatusService] Synchronized enemy.Poison projection field to 5")
+
+	-- 3. Tick status: Deals 5 damage to HP, decrements stacks to 4, shield remains 25
+	local tickResults = StatusService.tickStatuses(sEnemy.InstanceId, "TurnStart", sEnemy, true)
+	assertTest(#tickResults == 1 and tickResults[1].DamageDealt == 5, "[StatusService] Poison tick dealt 5 damage")
+	assertTest(sEnemy.HP == 95, "[StatusService] HP reduced to 95 (100 - 5)")
+	assertTest(sEnemy.Shield == 25, "[StatusService] Shield remains untouched at 25")
+	assertTest(sEnemy.Poison == 4, "[StatusService] Stacks decremented to 4")
+
+	-- 4. Remove status
+	local removed = StatusService.removeStatus(sEnemy.InstanceId, "Poison", sEnemy)
+	assertTest(removed == true, "[StatusService] removeStatus returned true")
+	assertTest(StatusService.getStatus(sEnemy.InstanceId, "Poison") == nil, "[StatusService] Status no longer exists on entity")
+	assertTest(sEnemy.Poison == 0, "[StatusService] Enemy.Poison projection cleared to 0")
+
+	-- 5. Data-driven definitions validation
+	local defPoison = StatusService.getDefinition("Poison")
+	local defIgnite = StatusService.getDefinition("Ignite")
+	local defChill = StatusService.getDefinition("Chill")
+	local defFreeze = StatusService.getDefinition("Freeze")
+	local defShock = StatusService.getDefinition("Shock")
+	local defBleed = StatusService.getDefinition("Bleed")
+	assertTest(defPoison ~= nil and defPoison.IsDebuff == true, "[StatusService] Poison definition registered")
+	assertTest(defIgnite ~= nil and defIgnite.TickTiming == "TurnStart", "[StatusService] Ignite definition registered")
+	assertTest(defChill ~= nil and defChill.TickTiming == "TurnEnd", "[StatusService] Chill definition registered")
+	assertTest(defFreeze ~= nil and defFreeze.Stacking == "RefreshDuration", "[StatusService] Freeze definition registered")
+	assertTest(defShock ~= nil and defShock.TickTiming == "OnAction", "[StatusService] Shock definition registered")
+	assertTest(defBleed ~= nil and defBleed.IsDebuff == true, "[StatusService] Bleed definition registered")
+
+	----------------------------------------------------------------------------
+	-- TEST 21: EffectResolver Generic Dispatch
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 21] EffectResolver Generic Dispatch ---")
+
+	local effEnemy: StateTypes.EnemyState = {
+		InstanceId = "eff_enemy",
+		DefinitionId = "TargetDummy",
+		Name = "Effect Dummy",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 10,
+		Poison = 0,
+		AttackPower = 0,
+		Intent = { Type = "Defend", Value = 0 },
+		ModelRef = nil,
+	}
+
+	local effPlayer: StateTypes.PlayerState = {
+		UserId = 90001,
+		PlayerInstance = nil,
+		DisplayName = "EffHero",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 50, MaxHP = 100, Shield = 0, Energy = 1, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 100,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local effTargetEnemy: StateTypes.ResolvedTarget = {
+		Success = true,
+		Error = nil,
+		TargetKind = "Enemy",
+		EnemyTarget = effEnemy,
+		PlayerTarget = nil,
+		TargetId = effEnemy.InstanceId,
+		TargetName = effEnemy.Name,
+	}
+
+	local effTargetSelf: StateTypes.ResolvedTarget = {
+		Success = true,
+		Error = nil,
+		TargetKind = "Player",
+		EnemyTarget = nil,
+		PlayerTarget = effPlayer,
+		TargetId = tostring(effPlayer.UserId),
+		TargetName = effPlayer.DisplayName,
+	}
+
+	-- 1. Damage Effect
+	local dmgEff: CardData.Effect = { Type = "Damage", Value = 15 }
+	local dmgCtx: EffectResolver.ActionContext = {
+		SourcePlayer = effPlayer,
+		Target = effTargetEnemy,
+	}
+	local dmgResList = EffectResolver.resolveEffects({ dmgEff }, dmgCtx)
+	assertTest(#dmgResList == 1 and dmgResList[1].Success == true, "[EffectResolver] Damage effect executed successfully")
+	assertTest(effEnemy.Shield == 0 and effEnemy.HP == 95, "[EffectResolver] Enemy took 15 damage (10 Shield absorbed, 5 HP lost -> 95 HP)")
+
+	-- 2. Shield Effect
+	local shieldEff: CardData.Effect = { Type = "Shield", Value = 12 }
+	local shieldCtx: EffectResolver.ActionContext = {
+		SourcePlayer = effPlayer,
+		Target = effTargetSelf,
+	}
+	local shieldResList = EffectResolver.resolveEffects({ shieldEff }, shieldCtx)
+	assertTest(#shieldResList == 1 and effPlayer.Resources.Shield == 12, "[EffectResolver] Shield effect added 12 Shield to player")
+
+	-- 3. Heal Effect
+	local healEff: CardData.Effect = { Type = "Heal", Value = 20 }
+	local healResList = EffectResolver.resolveEffects({ healEff }, shieldCtx)
+	assertTest(#healResList == 1 and effPlayer.Resources.HP == 70, "[EffectResolver] Heal effect restored 20 HP (50 -> 70)")
+
+	-- 4. GainEnergy Effect
+	local energyEff: CardData.Effect = { Type = "GainEnergy", Value = 2 }
+	local energyResList = EffectResolver.resolveEffects({ energyEff }, shieldCtx)
+	assertTest(#energyResList == 1 and effPlayer.Resources.Energy == 3, "[EffectResolver] GainEnergy effect restored energy (1 + 2 = 3)")
+
+	-- 5. ApplyStatus Effect
+	local statusEff: CardData.Effect = { Type = "ApplyStatus", StatusId = "Poison", Stacks = 4 }
+	local statusResList = EffectResolver.resolveEffects({ statusEff }, dmgCtx)
+	assertTest(#statusResList == 1 and effEnemy.Poison == 4, "[EffectResolver] ApplyStatus applied 4 stacks of Poison")
+
+	----------------------------------------------------------------------------
+	-- TEST 22: First Aid Generic Conditional Semantics
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 22] First Aid Generic Conditional Semantics ---")
+
+	local firstAidDef = CardData.getCard("FirstAid")
+	assertTest(firstAidDef ~= nil, "FirstAid card definition retrieved")
+
+	local allyHero: StateTypes.PlayerState = {
+		UserId = 90002,
+		PlayerInstance = nil,
+		DisplayName = "AllyHero",
+		ClassId = "Shadowblade",
+		SubclassId = "Assassin",
+		Resources = { HP = 40, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local allyTargetLiving: StateTypes.ResolvedTarget = {
+		Success = true,
+		Error = nil,
+		TargetKind = "Player",
+		EnemyTarget = nil,
+		PlayerTarget = allyHero,
+		TargetId = tostring(allyHero.UserId),
+		TargetName = allyHero.DisplayName,
+	}
+
+	-- Case A: Ally is Living: Revive is skipped (TargetDowned false), Heal restores 30 HP (40 -> 70)
+	local livingCtx: EffectResolver.ActionContext = {
+		SourcePlayer = effPlayer,
+		Target = allyTargetLiving,
+	}
+	local livingRes = EffectResolver.resolveEffects(firstAidDef.Effects, livingCtx)
+	assertTest(allyHero.Resources.HP == 70, string.format("[First Aid - Living Ally] Restored 30 HP up to 70 (Actual: %d)", allyHero.Resources.HP))
+	assertTest(allyHero.IsDowned == false, "[First Aid - Living Ally] Ally remains not downed")
+
+	-- Case B: Ally is Downed: Revive sets HP to 30 and clears downed, Heal is skipped to prevent double-heal (HP remains 30)
+	allyHero.IsDowned = true
+	allyHero.Resources.HP = 0
+	local downedCtx: EffectResolver.ActionContext = {
+		SourcePlayer = effPlayer,
+		Target = allyTargetLiving,
+	}
+	local downedRes = EffectResolver.resolveEffects(firstAidDef.Effects, downedCtx)
+	assertTest(allyHero.IsDowned == false, "[First Aid - Downed Ally] Ally successfully revived from downed state")
+	assertTest(allyHero.Resources.HP == 30, string.format("[First Aid - Downed Ally] HP revived to exactly 30 without double-healing (Actual: %d)", allyHero.Resources.HP))
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 1.2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end

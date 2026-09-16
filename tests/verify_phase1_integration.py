@@ -51,6 +51,11 @@ required_files = [
     "src/server/services/CombatService.luau",
     "src/server/services/RunManager.luau",
     "src/server/services/TestRunner.luau",
+    "src/server/services/TargetResolver.luau",
+    "src/server/services/ModifierResolver.luau",
+    "src/server/services/DamagePipeline.luau",
+    "src/server/services/StatusService.luau",
+    "src/server/services/EffectResolver.luau",
     "src/client/UIController.client.luau",
     "src/client/ClassSelectUI.client.luau",
     "src/client/RelicUI.client.luau",
@@ -142,17 +147,19 @@ test('"None"' in card_data_src and '"Self"' in card_data_src and '"Enemy"' in ca
 test('Target = "Ally"' in card_data_src, "FirstAid has Target = Ally")
 
 state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+target_resolver_src = (ROOT / "src/server/services/TargetResolver.luau").read_text(encoding="utf-8")
 test("Target: CardData.TargetType" in state_types_src, "CardView contains Target field")
-test('cardDef.Target == "Enemy"' in combat_service_src, "CombatService validates Enemy targeting")
-test('cardDef.Target == "Self"' in combat_service_src, "CombatService validates Self targeting")
-test('cardDef.Target == "Ally"' in combat_service_src, "CombatService validates Ally targeting")
-test("Target enemy is already defeated." in combat_service_src, "CombatService rejects dead enemy target")
-test("Self cards cannot target other entities." in combat_service_src, "CombatService rejects Self card targeting other entity")
+test('targetType == "Enemy"' in target_resolver_src or 'cardDef.Target == "Enemy"' in combat_service_src, "TargetResolver/CombatService validates Enemy targeting")
+test('targetType == "Self"' in target_resolver_src or 'cardDef.Target == "Self"' in combat_service_src, "TargetResolver/CombatService validates Self targeting")
+test('targetType == "Ally"' in target_resolver_src or 'cardDef.Target == "Ally"' in combat_service_src, "TargetResolver/CombatService validates Ally targeting")
+test("Target enemy is already defeated." in target_resolver_src or "Target enemy is already defeated." in combat_service_src, "TargetResolver/CombatService rejects dead enemy target")
+test("Self cards cannot target other entities." in target_resolver_src or "Self cards cannot target other entities." in combat_service_src, "TargetResolver/CombatService rejects Self card targeting other entity")
 
 # 8. First Aid & Revive Mechanics
 print("\n--- [Check 8] First Aid Revive & Heal Correctness ---")
-test('effect.Type == "Revive"' in combat_service_src, "CombatService handles Revive effect")
-test('didReviveThisCard' in combat_service_src, "CombatService prevents double-heal on revive")
+effect_resolver_src = (ROOT / "src/server/services/EffectResolver.luau").read_text(encoding="utf-8")
+test('handlers["Revive"]' in effect_resolver_src or 'effect.Type == "Revive"' in effect_resolver_src or 'effect.Type == "Revive"' in combat_service_src, "EffectResolver/CombatService handles Revive effect")
+test('context.DidRevive' in effect_resolver_src or 'didReviveThisCard' in combat_service_src, "EffectResolver/CombatService prevents double-heal on revive")
 
 # 9. Relic Double-Trigger Bug Resolution
 print("\n--- [Check 9] Relic Trigger Hardening ---")
@@ -222,16 +229,16 @@ test_runner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encod
 test("Duplicate RunManager.startRun() outside Lobby safely returns false" in test_runner_src, "TestRunner tests startRun outside Lobby idempotence")
 test("Specific claimed reward CardInstanceId" in test_runner_src, "TestRunner tests specific claimed CardInstanceId preserved in Combat 2")
 
-# 18. Phase 2 Boundary Verification (Phase 2 NOT started)
-print("\n--- [Check 18] Phase 2 Strict Boundary Verification ---")
-phase2_terms = ["EffectResolver", "ModifierResolver", "DamagePipeline", "StatusService", "EquipmentService", "SkillTreeService", "ActiveSkillService"]
-for term in phase2_terms:
+# 18. Phase 3 Boundary Verification (Phase 3 NOT started)
+print("\n--- [Check 18] Phase 3 Strict Boundary Verification ---")
+phase3_terms = ["EquipmentService", "SkillTreeService", "ActiveSkillService"]
+for term in phase3_terms:
     term_found = False
     for lf in all_luau_files:
         if term in lf.read_text(encoding="utf-8"):
             term_found = True
             break
-    test(not term_found, f"Phase 2 concept '{term}' NOT present in src/ (Phase 2 NOT started)")
+    test(not term_found, f"Phase 3 concept '{term}' NOT present in src/ (Phase 3 NOT started)")
 
 # 19. Phase 1.2 Disconnect Safety: Map Voting Consensus
 print("\n--- [Check 19] Disconnect Safety: Map Voting ---")
@@ -254,16 +261,15 @@ test("Disconnected players cannot vote ready." in combat_service_src, "CombatSer
 test("Disconnected players cannot rescue others." in combat_service_src, "CombatService.rescueTeammate rejects disconnected rescuer")
 test("Cannot rescue a disconnected teammate." in combat_service_src, "CombatService.rescueTeammate rejects disconnected target")
 
-# 23. Phase 1.2 Poison Damage Resolution & Shield Bypass
+# 23. Phase 1.2 & Phase 2 Poison Damage Resolution & Shield Bypass
 print("\n--- [Check 23] Poison Damage Resolution & Shield Bypass ---")
-poison_block_match = re.search(r"if enemy\.Poison > 0 then(.*?)if enemy\.HP <= 0 then", combat_service_src, re.DOTALL)
-test(poison_block_match is not None, "CombatService contains enemy.Poison > 0 resolution block")
-if poison_block_match:
-    pblock = poison_block_match.group(1)
-    test("applyDamageToEnemy" not in pblock, "Poison tick does NOT call applyDamageToEnemy (does not damage shield)")
-    test("enemy.HP = math.max(0, enemy.HP - pDmg)" in pblock or "enemy.HP = math.max(0, enemy.HP - enemy.Poison)" in pblock, "Poison directly subtracts from enemy.HP exactly once")
-    test("enemy.Poison = math.max(0, enemy.Poison - 1)" in pblock, "Poison stack decreases by 1 stack per tick")
-    test("enemy.Shield" not in pblock, "Enemy Shield remains untouched by poison")
+status_service_src = (ROOT / "src/server/services/StatusService.luau").read_text(encoding="utf-8")
+damage_pipeline_src = (ROOT / "src/server/services/DamagePipeline.luau").read_text(encoding="utf-8")
+test("StatusService.tickStatuses" in combat_service_src or "enemy.Poison > 0" in combat_service_src, "CombatService contains Poison resolution via StatusService")
+test("CanHitShield = false" in status_service_src, "StatusService poison damage specifies CanHitShield = false (bypasses shield)")
+test("applyDamageToEnemy" not in status_service_src, "StatusService poison tick does NOT call applyDamageToEnemy")
+test("inst.Stacks = math.max(0, inst.Stacks - 1)" in status_service_src or "enemy.Poison = math.max(0, enemy.Poison - 1)" in combat_service_src, "Poison stack decreases by 1 stack per tick")
+test("shieldAbsorbed = 0" in damage_pipeline_src and "hpLost = finalDamage" in damage_pipeline_src, "DamagePipeline direct HP bypass prevents shield absorption")
 
 # Mathematical simulation of poison tick progression
 def simulate_poison_tick(hp: int, shield: int, poison: int):
@@ -281,6 +287,46 @@ h, s, p = simulate_poison_tick(h, s, p)
 test(h == 88 and s == 20 and p == 2, "Poison Tick 3: 91 HP / 20 Shield / 3 Poison -> 88 HP / 20 Shield / 2 Poison")
 h_kill, s_kill, p_kill = simulate_poison_tick(3, 20, 5)
 test(h_kill == 0 and s_kill == 20 and p_kill == 4, "Lethal Poison: 3 HP / 20 Shield / 5 Poison -> 0 HP / 20 Shield / 4 Poison")
+
+# 24. Phase 2 Core Resolvers Existence & Strict Typing
+print("\n--- [Check 24] Phase 2 Core Resolvers & Services ---")
+phase2_services = [
+    "src/server/services/TargetResolver.luau",
+    "src/server/services/ModifierResolver.luau",
+    "src/server/services/DamagePipeline.luau",
+    "src/server/services/StatusService.luau",
+    "src/server/services/EffectResolver.luau",
+]
+for s in phase2_services:
+    sp = ROOT / s
+    test(sp.exists(), f"Phase 2 service exists: {s}")
+    if sp.exists():
+        stext = sp.read_text(encoding="utf-8")
+        test(stext.startswith("--!strict"), f"{s} starts with --!strict")
+        test("_G" not in stext, f"{s} contains 0 _G references")
+
+# 25. Phase 2 StatusService Data-Driven Definitions
+print("\n--- [Check 25] StatusService Data-Driven Definitions ---")
+test('Poison = {' in status_service_src, "StatusService defines Poison")
+test('Ignite = {' in status_service_src, "StatusService defines Ignite")
+test('Chill = {' in status_service_src, "StatusService defines Chill")
+test('Freeze = {' in status_service_src, "StatusService defines Freeze")
+test('Shock = {' in status_service_src, "StatusService defines Shock")
+test('Bleed = {' in status_service_src, "StatusService defines Bleed")
+
+# 26. Phase 2 Generic Card Effect Model & First Aid Generic Conditions
+print("\n--- [Check 26] First Aid Generic Conditions & Zero Card-Name Branching ---")
+test('Condition = "TargetDowned"' in card_data_src, "FirstAid Revive effect conditioned on TargetDowned")
+test('Condition = "TargetLiving"' in card_data_src, "FirstAid Heal effect conditioned on TargetLiving")
+test('card == "FirstAid"' not in combat_service_src and 'cardInst.CardData.Id == "FirstAid"' not in combat_service_src, "CombatService contains 0 card == 'FirstAid' branches")
+test('card == "FirstAid"' not in effect_resolver_src and 'cardInst.CardData.Id == "FirstAid"' not in effect_resolver_src, "EffectResolver contains 0 card == 'FirstAid' branches")
+
+# 27. Phase 2 ModifierResolver Deterministic Pipeline
+print("\n--- [Check 27] ModifierResolver Deterministic Pipeline ---")
+modifier_resolver_src = (ROOT / "src/server/services/ModifierResolver.luau").read_text(encoding="utf-8")
+test("function ModifierResolver.resolve" in modifier_resolver_src, "ModifierResolver.resolve exists")
+test("table.sort(applicable" in modifier_resolver_src, "ModifierResolver sorts modifiers deterministically")
+test("mod.Operation == \"Add\"" in modifier_resolver_src and "mod.Operation == \"Multiply\"" in modifier_resolver_src, "ModifierResolver supports Additive and Multiplicative operations")
 
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
