@@ -56,6 +56,77 @@ function CardService.toCardView(instance: StateTypes.CardInstance): StateTypes.C
 	}
 end
 
+-- Validates strict pile invariants across Deck, Hand, DiscardPile, and ExhaustPile
+function CardService.validatePileInvariants(playerState: StateTypes.PlayerState): (boolean, string?)
+	if not playerState then
+		return false, "PlayerState is nil"
+	end
+	if typeof(playerState.Deck) ~= "table" then
+		return false, "Deck is not a table"
+	end
+	if typeof(playerState.Hand) ~= "table" then
+		return false, "Hand is not a table"
+	end
+	if typeof(playerState.DiscardPile) ~= "table" then
+		return false, "DiscardPile is not a table"
+	end
+	if typeof(playerState.ExhaustPile) ~= "table" then
+		return false, "ExhaustPile is not a table"
+	end
+
+	local seenInstances: { [string]: string } = {}
+
+	-- Helper to validate an individual card instance
+	local function checkCard(card: any, pileName: string, expectedKey: string?): (boolean, string?)
+		if typeof(card) ~= "table" then
+			return false, string.format("Card in %s is not a table", pileName)
+		end
+		if typeof(card.InstanceId) ~= "string" or card.InstanceId == "" then
+			return false, string.format("Card in %s has missing or empty InstanceId", pileName)
+		end
+		if typeof(card.DefinitionId) ~= "string" or card.DefinitionId == "" then
+			return false, string.format("Card %s in %s has missing or empty DefinitionId", tostring(card.InstanceId), pileName)
+		end
+		if card.OwnerUserId ~= playerState.UserId then
+			return false, string.format("Card %s in %s has OwnerUserId %s, expected %d", card.InstanceId, pileName, tostring(card.OwnerUserId), playerState.UserId)
+		end
+		if expectedKey ~= nil and expectedKey ~= card.InstanceId then
+			return false, string.format("Hand key '%s' does not match CardInstanceId '%s'", tostring(expectedKey), card.InstanceId)
+		end
+		if seenInstances[card.InstanceId] then
+			return false, string.format("Duplicate CardInstance %s found in %s (already present in %s)", card.InstanceId, pileName, seenInstances[card.InstanceId])
+		end
+		seenInstances[card.InstanceId] = pileName
+		return true, nil
+	end
+
+	-- 1. Check Hand
+	for key, card in playerState.Hand do
+		local ok, err = checkCard(card, "Hand", key)
+		if not ok then return false, err end
+	end
+
+	-- 2. Check Deck
+	for idx, card in ipairs(playerState.Deck) do
+		local ok, err = checkCard(card, string.format("Deck[%d]", idx), nil)
+		if not ok then return false, err end
+	end
+
+	-- 3. Check DiscardPile
+	for idx, card in ipairs(playerState.DiscardPile) do
+		local ok, err = checkCard(card, string.format("DiscardPile[%d]", idx), nil)
+		if not ok then return false, err end
+	end
+
+	-- 4. Check ExhaustPile
+	for idx, card in ipairs(playerState.ExhaustPile) do
+		local ok, err = checkCard(card, string.format("ExhaustPile[%d]", idx), nil)
+		if not ok then return false, err end
+	end
+
+	return true, nil
+end
+
 -- Resets combat card piles between encounters without losing any acquired cards
 function CardService.resetCombatPiles(playerState: StateTypes.PlayerState)
 	-- Gather all cards from hand, discard pile, and exhaust pile back into deck
