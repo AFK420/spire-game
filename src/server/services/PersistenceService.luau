@@ -78,7 +78,18 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 		ProfileVersion = CURRENT_PROFILE_VERSION,
 		AetherShards = 0,
 		PremiumCurrency = 0,
-		UnlockedClasses = { "Warlord", "Shadowblade", "AetherMage", "Necrobinder", "Mechanist" },
+		UnlockedClasses = {
+			"Warlord",
+			"Shadowblade",
+			"AetherMage",
+			"Necrobinder",
+			"Mechanist",
+			"Gambler",
+			"Chronomancer",
+			"PlagueDoctor",
+			"BloodPriest",
+			"Beastmaster",
+		},
 		TotalVictories = 0,
 		TotalRuns = 0,
 		LastSavedTimestamp = now,
@@ -122,20 +133,24 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 		profile.TotalRuns = math.max(0, data.TotalRuns)
 	end
 
-	-- 2. Unlocked Classes
+	-- 2. Unlocked Classes (All 10 core classes guaranteed)
+	local seenClass: { [string]: boolean } = {}
+	local validClasses: { string } = {}
 	if typeof(data.UnlockedClasses) == "table" then
-		local validClasses: { string } = {}
-		local seenClass: { [string]: boolean } = {}
 		for _, c in data.UnlockedClasses do
 			if typeof(c) == "string" and #c > 0 and not seenClass[c] then
 				seenClass[c] = true
 				table.insert(validClasses, c)
 			end
 		end
-		if #validClasses > 0 then
-			profile.UnlockedClasses = validClasses
+	end
+	for _, hero in ClassData.getClassList() do
+		if not seenClass[hero.Id] then
+			seenClass[hero.Id] = true
+			table.insert(validClasses, hero.Id)
 		end
 	end
+	profile.UnlockedClasses = validClasses
 
 	-- 3. Permanent Card Collection (definitions and positive integer quantities only)
 	if typeof(data.CardCollection) == "table" then

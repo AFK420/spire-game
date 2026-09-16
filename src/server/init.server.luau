@@ -84,6 +84,13 @@ task.spawn(function()
 	if not success then
 		warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
 	end
+	-- Guarantee all connected players are present in active run after test completion
+	for _, player in Players:GetPlayers() do
+		if not RunManager.getPlayerState(player.UserId) then
+			RunManager.addPlayer(player)
+		end
+	end
+	RunManager.broadcastRunSnapshots("Server ready.")
 end)
 
 --------------------------------------------------------------------------------
@@ -106,12 +113,17 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 	if typeof(cId) ~= "string" or typeof(scId) ~= "string" then return end
 
 	local pState = RunManager.getPlayerState(player.UserId)
-	if not pState then return end
+	if not pState then
+		print(string.format("[Server] PlayerState missing for %s (UserId %d); adding to expedition party.", player.Name, player.UserId))
+		pState = RunManager.addPlayer(player)
+	end
 
 	local success, err = ClassService.selectClass(player, pState, cId, scId)
 	if success then
+		print(string.format("[Server] Player %s successfully locked in class %s (%s).", player.DisplayName, cId, scId))
 		RunManager.broadcastRunSnapshots(string.format("%s selected %s (%s)", player.DisplayName, cId, scId))
 	else
+		warn(string.format("[Server] Class selection rejected for %s: %s", player.DisplayName, tostring(err)))
 		RunManager.sendRunSnapshot(player, string.format("Class selection rejected: %s", tostring(err)))
 	end
 end)

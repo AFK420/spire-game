@@ -4752,6 +4752,12 @@ function TestRunner.runAllTests(): boolean
 	local otherPartyView = snapshot.Party[tostring(lockTestPlayer2.UserId)]
 	assertTest(otherPartyView ~= nil and otherPartyView.ClassLocked == false, "[ClassLock] PlayerView for unselected player reflects ClassLocked == false")
 
+	-- Clean up test mock entities and restore clean Lobby state for live game players
+	RunManager.resetRunForTesting()
+	for _, player in Players:GetPlayers() do
+		RunManager.addPlayer(player)
+	end
+
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2, 3 & PHASE 4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")

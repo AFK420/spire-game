@@ -26,9 +26,9 @@ local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 --------------------------------------------------------------------------------
 
 local function findEvent(eventName: string): RemoteEvent?
-	local networkFolder = ReplicatedStorage:WaitForChild("GameNetwork", 10) :: Folder?
+	local networkFolder = ReplicatedStorage:WaitForChild("GameNetwork", 15) :: Folder?
 	if networkFolder then
-		local ev = networkFolder:WaitForChild(eventName, 5)
+		local ev = networkFolder:WaitForChild(eventName, 10)
 		if ev and ev:IsA("RemoteEvent") then
 			return ev
 		end
@@ -38,6 +38,7 @@ end
 
 local SelectClassEvent = findEvent("SelectClass")
 local RunStateUpdateEvent = findEvent("RunStateUpdate")
+local RequestStateSyncEvent = findEvent("RequestStateSync")
 
 --------------------------------------------------------------------------------
 -- UI Creation Helpers
@@ -312,6 +313,7 @@ lockInButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 lockInButton.Font = Enum.Font.GothamBold
 lockInButton.TextSize = 14
 lockInButton.AutoButtonColor = true
+lockInButton.ZIndex = 15
 lockInButton.Parent = rightInspector
 
 createCorner(lockInButton, 8)
@@ -503,21 +505,31 @@ lockInButton.MouseButton1Click:Connect(function()
 	end
 	isLockingIn = true
 
+	print(string.format("[ClassSelectUI] Locking in: Class=%s, Subclass=%s", tostring(currentClassId), tostring(currentSubclassId)))
 	lockInButton.Text = "LOCKING IN..."
 	lockInButton.BackgroundColor3 = Color3.fromRGB(60, 75, 105)
 	lockInStroke.Color = Color3.fromRGB(90, 110, 145)
 	lockInButton.AutoButtonColor = false
+
+	if not SelectClassEvent then
+		SelectClassEvent = findEvent("SelectClass")
+	end
 
 	if SelectClassEvent then
 		SelectClassEvent:FireServer({
 			ClassId = currentClassId,
 			SubclassId = currentSubclassId,
 		})
+	else
+		warn("[ClassSelectUI] SelectClass RemoteEvent missing from GameNetwork!")
+		isLockingIn = false
+		restoreLockInButton()
 	end
 
 	-- Fallback timeout in case server doesn't respond or packet drop
 	task.delay(5, function()
 		if isLockingIn then
+			warn("[ClassSelectUI] Lock in request timed out waiting for server confirmation.")
 			isLockingIn = false
 			restoreLockInButton()
 		end
@@ -579,6 +591,20 @@ if RunStateUpdateEvent then
 			end
 		else
 			modal.Visible = true
+			if isLockingIn then
+				isLockingIn = false
+				restoreLockInButton()
+			end
+		end
+
+		if state.Message and string.find(string.lower(state.Message), "rejected") then
+			warn(string.format("[ClassSelectUI] Server message: %s", tostring(state.Message)))
+			subtitleLabel.Text = state.Message
+			subtitleLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+			task.delay(4, function()
+				subtitleLabel.Text = "Select 1 of 10 core classes and customize your subclass before descending into the Spire."
+				subtitleLabel.TextColor3 = Color3.fromRGB(160, 180, 210)
+			end)
 		end
 	end)
 end
@@ -591,6 +617,10 @@ buildClassCards()
 local defaultHero = ClassData.getClass("Warlord")
 if defaultHero then
 	updateInspector(defaultHero)
+end
+
+if RequestStateSyncEvent then
+	RequestStateSyncEvent:FireServer()
 end
 
 print("[ClassSelectUI] Initialized lobby hero selector.")

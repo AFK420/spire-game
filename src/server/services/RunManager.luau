@@ -587,8 +587,19 @@ function RunManager.getRunById(runId: string): StateTypes.RunState?
 	return nil
 end
 
-function RunManager.getPlayerState(userId: number): StateTypes.PlayerState?
-	return currentRun.PartyMembers[userId]
+function RunManager.getPlayerState(playerOrUserId: any): StateTypes.PlayerState?
+	local uid: number? = nil
+	if typeof(playerOrUserId) == "number" then
+		uid = playerOrUserId
+	elseif typeof(playerOrUserId) == "Instance" and playerOrUserId:IsA("Player") then
+		uid = playerOrUserId.UserId
+	elseif typeof(playerOrUserId) == "table" and typeof(playerOrUserId.UserId) == "number" then
+		uid = playerOrUserId.UserId
+	end
+	if uid then
+		return currentRun.PartyMembers[uid]
+	end
+	return nil
 end
 
 function RunManager.getDungeonRun(): DungeonMap.DungeonRun?
