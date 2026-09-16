@@ -913,6 +913,32 @@ test("[ConcurrencySafety] Older session profile cannot overwrite newer remote Da
 test("[ConcurrencySafety] Newer session profile is permitted to update older remote DataStore data" in testrunner_src, "Suite 59 tests concurrency timestamp update success")
 test("[RemoteSecurity] UnlockSkillEvent exists" in testrunner_src, "Suite 59 tests UnlockSkillEvent existence")
 
+# 50. Class Selection Lifecycle & Server Lock Authority
+print("\n--- [Check 50] Class Selection Lifecycle & Server Lock Authority ---")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+class_service_src = (ROOT / "src/server/services/ClassService.luau").read_text(encoding="utf-8")
+run_manager_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+class_ui_src = (ROOT / "src/client/ClassSelectUI.client.luau").read_text(encoding="utf-8")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+
+test("ClassLocked: boolean?" in state_types_src, "StateTypes defines ClassLocked field")
+test("playerState.ClassLocked = true" in class_service_src, "ClassService sets ClassLocked on valid selection")
+test("ClassLocked = pState.ClassLocked or false" in run_manager_src or "ClassLocked = pState.ClassLocked" in run_manager_src, "RunManager serializes ClassLocked in PlayerView")
+test("member.ClassLocked = false" in run_manager_src, "RunManager.resetToLobby resets ClassLocked to false")
+test("RunManager.sendRunSnapshot(player," in server_init_src, "init.server.luau sends snapshot on class selection rejection")
+test("isLockingIn" in class_ui_src, "ClassSelectUI implements isLockingIn debounce guard")
+test("LOCKING IN..." in class_ui_src, "ClassSelectUI displays LOCKING IN... during server validation")
+test("✓ CLASS LOCKED IN!" in class_ui_src, "ClassSelectUI displays confirmed state upon server lock")
+test("myView.ClassLocked == true" in class_ui_src, "ClassSelectUI hides modal strictly when server confirms ClassLocked")
+
+# Suite 60 checks
+test("--- SUITE 60: Class Selection Lifecycle & Server Lock Authority ---" in testrunner_src, "TestRunner includes Suite 60")
+test("[ClassLock] New player added to run has ClassLocked == false" in testrunner_src, "Suite 60 tests new player ClassLocked default")
+test("[ClassLock] Valid selectClass sets playerState.ClassLocked to true" in testrunner_src, "Suite 60 tests ClassLocked on valid selection")
+test("[ClassLock] Rejected class selection does not set ClassLocked to true" in testrunner_src, "Suite 60 tests rejection leaves ClassLocked false")
+test("[ClassLock] resetToLobby resets ClassLocked to false for player 1" in testrunner_src, "Suite 60 tests resetToLobby resets ClassLocked")
+test("[ClassLock] PlayerView in RunSnapshot correctly reflects ClassLocked == true" in testrunner_src, "Suite 60 tests RunSnapshot PlayerView serialization")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")
@@ -921,5 +947,6 @@ if failed > 0:
 	sys.exit(1)
 else:
     print("ALL LOGIC CHECKS VERIFIED 100% CLEAN!\n")
+
 
 

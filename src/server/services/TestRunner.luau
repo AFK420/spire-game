@@ -4714,6 +4714,44 @@ function TestRunner.runAllTests(): boolean
 	-- 9. Remote security check: UnlockSkillEvent rejects client requests
 	assertTest(NetworkService.UnlockSkillEvent ~= nil, "[RemoteSecurity] UnlockSkillEvent exists")
 
+	----------------------------------------------------------------------------
+	-- SUITE 60: Class Selection Lifecycle & Server Lock Authority
+	----------------------------------------------------------------------------
+	print("\n--- SUITE 60: Class Selection Lifecycle & Server Lock Authority ---")
+
+	-- Test 1: New player created in Lobby has ClassLocked == false
+	local lockTestPlayer = { UserId = 87001, Name = "ClassLockTester", DisplayName = "LockTester" }
+	RunManager.resetRunForTesting()
+	local lockTestState = RunManager.addPlayer(lockTestPlayer :: any)
+	assertTest(lockTestState.ClassLocked == false, "[ClassLock] New player added to run has ClassLocked == false")
+
+	-- Test 2: Valid ClassService.selectClass sets ClassLocked == true
+	local selectSuccess, selectErr = ClassService.selectClass(lockTestPlayer :: any, lockTestState, "Warlord", "Berserker")
+	assertTest(selectSuccess == true, "[ClassLock] Valid selectClass succeeds")
+	assertTest(lockTestState.ClassLocked == true, "[ClassLock] Valid selectClass sets playerState.ClassLocked to true")
+
+	-- Test 3: Invalid class definition ID returns false and leaves ClassLocked == false
+	local lockTestPlayer2 = { UserId = 87002, Name = "InvalidClassTester", DisplayName = "InvalidTester" }
+	local lockTestState2 = RunManager.addPlayer(lockTestPlayer2 :: any)
+	local invalidClassSuccess, _ = ClassService.selectClass(lockTestPlayer2 :: any, lockTestState2, "NonExistentClass", "Sub1")
+	assertTest(invalidClassSuccess == false, "[ClassLock] Invalid class ID is rejected")
+	assertTest(lockTestState2.ClassLocked == false, "[ClassLock] Rejected class selection does not set ClassLocked to true")
+
+	-- Test 4: RunManager.resetToLobby() resets ClassLocked to false for all party members
+	RunManager.resetToLobby()
+	local resetPlayer1State = RunManager.getPlayerState(lockTestPlayer :: any)
+	assertTest(resetPlayer1State ~= nil and resetPlayer1State.ClassLocked == false, "[ClassLock] resetToLobby resets ClassLocked to false for player 1")
+	local resetPlayer2State = RunManager.getPlayerState(lockTestPlayer2 :: any)
+	assertTest(resetPlayer2State ~= nil and resetPlayer2State.ClassLocked == false, "[ClassLock] resetToLobby resets ClassLocked to false for player 2")
+
+	-- Test 5: RunManager.getRunSnapshotForPlayer correctly serializes ClassLocked in PlayerView
+	ClassService.selectClass(lockTestPlayer :: any, resetPlayer1State :: any, "Shadowblade", "Assassin")
+	local snapshot = RunManager.getRunSnapshotForPlayer(lockTestPlayer :: any)
+	local myPartyView = snapshot.Party[tostring(lockTestPlayer.UserId)]
+	assertTest(myPartyView ~= nil and myPartyView.ClassLocked == true, "[ClassLock] PlayerView in RunSnapshot correctly reflects ClassLocked == true")
+	local otherPartyView = snapshot.Party[tostring(lockTestPlayer2.UserId)]
+	assertTest(otherPartyView ~= nil and otherPartyView.ClassLocked == false, "[ClassLock] PlayerView for unselected player reflects ClassLocked == false")
+
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2, 3 & PHASE 4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")

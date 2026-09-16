@@ -121,6 +121,7 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 			DiscardCount = #pState.DiscardPile,
 			IsReady = pState.IsReady,
 			IsDowned = pState.IsDowned,
+			ClassLocked = pState.ClassLocked or false,
 			Gold = pState.Gold,
 			RelicIds = pState.RelicIds,
 			EquippedItems = equippedItemsSummary,
@@ -180,6 +181,12 @@ function RunManager.broadcastRunSnapshots(message: string?)
 	end
 end
 
+function RunManager.sendRunSnapshot(player: any, message: string?)
+	local snapshot = RunManager.getRunSnapshotForPlayer(player)
+	snapshot.Message = message
+	NetworkService.sendRunState(player, snapshot)
+end
+
 --------------------------------------------------------------------------------
 -- Party Lifecycle & Reconnection Resilience
 --------------------------------------------------------------------------------
@@ -220,6 +227,7 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		IsReady = false,
 		IsDowned = false,
 		IsConnected = true,
+		ClassLocked = false,
 		VotedNodeId = nil,
 		EquippedItems = {},
 		EquipmentInventory = {},
@@ -585,6 +593,36 @@ end
 
 function RunManager.getDungeonRun(): DungeonMap.DungeonRun?
 	return internalDungeonRun
+end
+
+-- Resets existing party to clean Lobby state for a new expedition run
+function RunManager.resetToLobby()
+	currentRun.Phase = "Lobby"
+	currentRun.ActIndex = 1
+	currentRun.CurrentTier = 0
+	currentRun.CurrentNodeId = nil
+	currentRun.ClearedNodeIds = {}
+	currentRun.AvailableNodeIds = {}
+	currentRun.ActiveRoom = nil
+	currentRun.ActiveCombat = nil
+	currentRun.PendingRewards = nil
+	internalDungeonRun = nil
+
+	for _, member in currentRun.PartyMembers do
+		member.ClassLocked = false
+		member.IsReady = false
+		member.IsDowned = false
+		member.VotedNodeId = nil
+		member.Resources.HP = member.Resources.MaxHP
+		member.Resources.Energy = member.Resources.MaxEnergy
+		member.Resources.Shield = 0
+	end
+
+	if CombatService then
+		CombatService.cleanupCombat()
+	end
+
+	RunManager.broadcastRunSnapshots("Returned to Lobby.")
 end
 
 -- Resets the single run container to clean Lobby state (used for testing and new runs)

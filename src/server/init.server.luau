@@ -108,9 +108,11 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then return end
 
-	local success = ClassService.selectClass(player, pState, cId, scId)
+	local success, err = ClassService.selectClass(player, pState, cId, scId)
 	if success then
 		RunManager.broadcastRunSnapshots(string.format("%s selected %s (%s)", player.DisplayName, cId, scId))
+	else
+		RunManager.sendRunSnapshot(player, string.format("Class selection rejected: %s", tostring(err)))
 	end
 end)
 

@@ -485,10 +485,29 @@ local function buildClassCards()
 end
 
 --------------------------------------------------------------------------------
--- Lock In Action
+-- Lock In Action & Game Flow Synchronization
 --------------------------------------------------------------------------------
 
+local isLockingIn = false
+
+local function restoreLockInButton()
+	lockInButton.Text = "LOCK IN CLASS ➔"
+	lockInButton.BackgroundColor3 = Color3.fromRGB(45, 130, 240)
+	lockInStroke.Color = Color3.fromRGB(90, 180, 255)
+	lockInButton.AutoButtonColor = true
+end
+
 lockInButton.MouseButton1Click:Connect(function()
+	if isLockingIn then
+		return
+	end
+	isLockingIn = true
+
+	lockInButton.Text = "LOCKING IN..."
+	lockInButton.BackgroundColor3 = Color3.fromRGB(60, 75, 105)
+	lockInStroke.Color = Color3.fromRGB(90, 110, 145)
+	lockInButton.AutoButtonColor = false
+
 	if SelectClassEvent then
 		SelectClassEvent:FireServer({
 			ClassId = currentClassId,
@@ -496,19 +515,12 @@ lockInButton.MouseButton1Click:Connect(function()
 		})
 	end
 
-	lockInButton.Text = "✓ CLASS LOCKED IN!"
-	lockInButton.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
-	lockInStroke.Color = Color3.fromRGB(80, 240, 140)
-
-	-- Button bounce tween
-	local tween = TweenService:Create(lockInButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = UDim2.new(1, -28, 0, 44),
-	})
-	tween:Play()
-	tween.Completed:Connect(function()
-		TweenService:Create(lockInButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			Size = UDim2.new(1, -32, 0, 42),
-		}):Play()
+	-- Fallback timeout in case server doesn't respond or packet drop
+	task.delay(5, function()
+		if isLockingIn then
+			isLockingIn = false
+			restoreLockInButton()
+		end
 	end)
 end)
 
@@ -518,9 +530,55 @@ end)
 
 if RunStateUpdateEvent then
 	RunStateUpdateEvent.OnClientEvent:Connect(function(state: any)
-		if typeof(state) == "table" and state.Phase then
-			-- Show in Lobby, hide during MapSelect, ActiveRoom, Rewards
-			modal.Visible = (state.Phase == "Lobby")
+		if typeof(state) ~= "table" or not state.Phase then
+			return
+		end
+
+		if state.Phase ~= "Lobby" then
+			modal.Visible = false
+			isLockingIn = false
+			restoreLockInButton()
+			return
+		end
+
+		local myView: any = nil
+		if state.Party and localPlayer then
+			myView = state.Party[tostring(localPlayer.UserId)]
+		end
+
+		if myView then
+			local isClassLocked = (myView.ClassLocked == true)
+			if isClassLocked then
+				isLockingIn = false
+				lockInButton.Text = "✓ CLASS LOCKED IN!"
+				lockInButton.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
+				lockInStroke.Color = Color3.fromRGB(80, 240, 140)
+
+				-- Button bounce tween
+				local tween = TweenService:Create(lockInButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = UDim2.new(1, -28, 0, 44),
+				})
+				tween:Play()
+				tween.Completed:Connect(function()
+					TweenService:Create(lockInButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+						Size = UDim2.new(1, -32, 0, 42),
+					}):Play()
+				end)
+
+				task.delay(0.4, function()
+					modal.Visible = false
+				end)
+			else
+				modal.Visible = true
+				if isLockingIn then
+					isLockingIn = false
+					restoreLockInButton()
+				elseif not modal.Visible then
+					restoreLockInButton()
+				end
+			end
+		else
+			modal.Visible = true
 		end
 	end)
 end

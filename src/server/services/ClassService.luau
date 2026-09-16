@@ -75,35 +75,36 @@ local function getRunManager(): any
 end
 
 -- Validates and updates a player's class & subclass
-function ClassService.selectClass(player: any, playerState: StateTypes.PlayerState, classId: string, subclassId: string): boolean
+function ClassService.selectClass(player: any, playerState: StateTypes.PlayerState, classId: string, subclassId: string): (boolean, string?)
 	local rm = getRunManager()
 	if rm and rm.getRunState and rm.getRunState().Phase ~= "Lobby" then
 		warn(string.format("[ClassService] Cannot change class outside Lobby phase for %s", playerState.DisplayName))
-		return false
+		return false, "Cannot change class outside Lobby phase."
 	end
 
 	local heroClass = ClassData.getClass(classId)
 	if not heroClass then
 		warn("[ClassService] Unknown class: " .. tostring(classId))
-		return false
+		return false, "Unknown class: " .. tostring(classId)
 	end
 
 	local subclass = ClassData.getSubclass(classId, subclassId)
 	if not subclass then
 		warn("[ClassService] Unknown subclass: " .. tostring(subclassId))
-		return false
+		return false, "Unknown subclass: " .. tostring(subclassId)
 	end
 
 	-- Verify unlock in profile
 	if not PersistenceService.isClassUnlocked(player, classId) then
 		warn(string.format("[ClassService] Player %s has not unlocked class %s", tostring(playerState.DisplayName), classId))
-		return false
+		return false, "Class is locked: " .. tostring(classId)
 	end
 
 	playerState.ClassId = classId
 	playerState.SubclassId = subclassId
+	playerState.ClassLocked = true
 	ClassService.initializePlayerForRun(playerState)
-	return true
+	return true, nil
 end
 
 -- Sets hero class base resources (MaxHP, HP, MaxEnergy, Energy, and starting Shield)

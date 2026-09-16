@@ -85,6 +85,7 @@ export type PlayerState = {
 	IsReady: boolean,
 	IsDowned: boolean,
 	IsConnected: boolean?,
+	ClassLocked: boolean?,
 	VotedNodeId: string?,
 	-- =========================================================================
 	-- Phase 3 / 3.1 Run-Scoped Progression State
@@ -377,6 +378,7 @@ export type PlayerView = {
 	DiscardCount: number,
 	IsReady: boolean,
 	IsDowned: boolean,
+	ClassLocked: boolean?,
 	Gold: number,
 	RelicIds: { string },
 	EquippedItems: { [string]: string }?,
