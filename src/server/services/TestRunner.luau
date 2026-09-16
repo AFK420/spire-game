@@ -1627,8 +1627,534 @@ function TestRunner.runAllTests(): boolean
 	local clampedVal, _ = ModifierResolver.resolve(20, "Damage", { modNegative })
 	assertTest(clampedVal == 0, "[ModifierResolver] Negative result clamped to 0")
 
+	----------------------------------------------------------------------------
+	-- TEST 30: ModifyResource Multi-Targeting & Boundary Safety
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 30] ModifyResource Multi-Targeting & Boundary Safety ---")
+
+	local resP1: StateTypes.PlayerState = {
+		UserId = 30001,
+		PlayerInstance = nil,
+		DisplayName = "CasterP1",
+		ClassId = "Warrior",
+		SubclassId = "Juggernaut",
+		Resources = { HP = 50, MaxHP = 80, Shield = 10, Energy = 1, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 100,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		VotedNodeId = nil,
+	}
+
+	local resP2: StateTypes.PlayerState = {
+		UserId = 30002,
+		PlayerInstance = nil,
+		DisplayName = "AllyP2",
+		ClassId = "Mage",
+		SubclassId = "Elementalist",
+		Resources = { HP = 40, MaxHP = 80, Shield = 5, Energy = 1, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 50,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		VotedNodeId = nil,
+	}
+
+	local resParty = {
+		[resP1.UserId] = resP1,
+		[resP2.UserId] = resP2,
+	}
+
+	-- 1. ModifyResource targeting Self modifies caster
+	local ctxSelf: EffectResolver.ActionContext = {
+		SourcePlayer = resP1,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Player",
+			EnemyTarget = nil,
+			PlayerTarget = resP1,
+			TargetId = tostring(resP1.UserId),
+			TargetName = resP1.DisplayName,
+		},
+		Party = resParty,
+		Modifiers = {},
+	}
+	local resEffSelfEnergy: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 1, Target = "Self" }
+	local resRes1 = EffectResolver.resolveEffects({ resEffSelfEnergy }, ctxSelf)
+	assertTest(#resRes1 == 1 and resRes1[1].Success == true, "[ModifyResource] Energy modified on caster Self")
+	assertTest(resP1.Resources.Energy == 2 and resP2.Resources.Energy == 1, "[ModifyResource] Caster gained 1 Energy, Ally unchanged")
+
+	local resEffSelfGold: CardData.Effect = { Type = "ModifyResource", Resource = "Gold", Value = 25, Target = "Self" }
+	EffectResolver.resolveEffects({ resEffSelfGold }, ctxSelf)
+	assertTest(resP1.Gold == 125 and resP2.Gold == 50, "[ModifyResource] Caster gained 25 Gold on Self, Ally unchanged")
+
+	-- 2. ModifyResource targeting Ally modifies resolved recipient
+	local ctxAlly: EffectResolver.ActionContext = {
+		SourcePlayer = resP1,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Player",
+			EnemyTarget = nil,
+			PlayerTarget = resP2,
+			TargetId = tostring(resP2.UserId),
+			TargetName = resP2.DisplayName,
+		},
+		Party = resParty,
+		Modifiers = {},
+	}
+	local resEffAllyEnergy: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 2, Target = "Ally" }
+	local resRes2 = EffectResolver.resolveEffects({ resEffAllyEnergy }, ctxAlly)
+	assertTest(#resRes2 == 1 and resRes2[1].Success == true, "[ModifyResource] Energy modified on Ally")
+	assertTest(resP2.Resources.Energy == 3 and resP1.Resources.Energy == 2, "[ModifyResource] Ally gained 2 Energy, Caster unchanged")
+
+	local resEffAllyShield: CardData.Effect = { Type = "ModifyResource", Resource = "Shield", Value = 15, Target = "Ally" }
+	EffectResolver.resolveEffects({ resEffAllyShield }, ctxAlly)
+	assertTest(resP2.Resources.Shield == 20 and resP1.Resources.Shield == 10, "[ModifyResource] Ally gained 15 Shield on Ally target, Caster unchanged")
+
+	-- 3. ModifyResource targeting invalid player target fails cleanly
+	local ctxInvalid: EffectResolver.ActionContext = {
+		SourcePlayer = resP1,
+		Target = {
+			Success = false,
+			Error = "Target not found.",
+			TargetKind = "None",
+			EnemyTarget = nil,
+			PlayerTarget = nil,
+			TargetId = "",
+			TargetName = "",
+		},
+		Party = resParty,
+		Modifiers = {},
+	}
+	local resEffInvalid: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 1, Target = "Ally" }
+	local resRes3 = EffectResolver.resolveEffects({ resEffInvalid }, ctxInvalid)
+	assertTest(#resRes3 == 1 and resRes3[1].Success == false, "[ModifyResource] Fails cleanly when targeted to invalid player")
+	assertTest(resP1.Resources.Energy == 2 and resP2.Resources.Energy == 3, "[ModifyResource] No resources mutated on invalid target failure")
+
+	----------------------------------------------------------------------------
+	-- TEST 31: TriggerEvent Truthful Execution & Error Isolation
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 31] TriggerEvent Truthful Execution & Error Isolation ---")
+
+	-- 1. Normal event execution returns Success = true
+	local ctxEventNormal: EffectResolver.ActionContext = {
+		SourcePlayer = resP1,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Player",
+			EnemyTarget = nil,
+			PlayerTarget = resP1,
+			TargetId = tostring(resP1.UserId),
+			TargetName = resP1.DisplayName,
+		},
+		Party = resParty,
+		Modifiers = {},
+	}
+	local effNormalEvent: CardData.Effect = { Type = "TriggerEvent", EventId = "OnTurnStart", Value = 0 }
+	local eventRes1 = EffectResolver.resolveEffects({ effNormalEvent }, ctxEventNormal)
+	assertTest(#eventRes1 == 1 and eventRes1[1].Success == true, "[TriggerEvent] Normal event execution returns Success = true")
+
+	-- 2. Missing/empty EventId returns Success = false
+	local effMissingEvent: CardData.Effect = { Type = "TriggerEvent", EventId = nil, Value = 0 }
+	local eventRes2 = EffectResolver.resolveEffects({ effMissingEvent }, ctxEventNormal)
+	assertTest(#eventRes2 == 1 and eventRes2[1].Success == false, "[TriggerEvent] Missing EventId returns Success = false")
+
+	-- 3. Event dispatch error returns Success = false and isolates error
+	local badPlayer = table.clone(resP1)
+	badPlayer.RelicIds = { "Anchor" }
+	badPlayer.Resources = (nil :: any)
+	local ctxBadEvent: EffectResolver.ActionContext = {
+		SourcePlayer = badPlayer,
+		Target = ctxEventNormal.Target,
+		Party = resParty,
+		Modifiers = {},
+	}
+	local effErrorEvent: CardData.Effect = { Type = "TriggerEvent", EventId = "OnCombatStart", Value = 0 }
+	local eventRes3 = EffectResolver.resolveEffects({ effErrorEvent }, ctxBadEvent)
+	assertTest(#eventRes3 == 1 and eventRes3[1].Success == false, "[TriggerEvent] Event dispatch error caught via pcall and returns Success = false")
+
+	-- 4. Recursion counters remain intact and usable after dispatch
+	local normalAfterError = EffectResolver.resolveEffects({ effNormalEvent }, ctxEventNormal)
+	assertTest(#normalAfterError == 1 and normalAfterError[1].Success == true, "[TriggerEvent] Recursion depth safely restored and operational")
+
+	----------------------------------------------------------------------------
+	-- TEST 32: Real Target Resolution Context & Multi-Entity Integrity
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 32] Real Target Resolution Context & Multi-Entity Integrity ---")
+
+	-- 1. Resolving Enemy without CombatState fails cleanly
+	local resEnemyNoCombat = TargetResolver.resolveTarget(resP1, "Enemy", "enemy_1", nil, resParty)
+	assertTest(resEnemyNoCombat.Success == false and string.find(resEnemyNoCombat.Error or "", "CombatState") ~= nil, "[TargetResolver] Enemy target without CombatState fails cleanly")
+
+	-- 2. Resolving Ally without Party fails cleanly
+	local resAllyNoParty = TargetResolver.resolveTarget(resP1, "Ally", resP2.UserId, nil, nil)
+	assertTest(resAllyNoParty.Success == false and string.find(resAllyNoParty.Error or "", "Party") ~= nil, "[TargetResolver] Ally target without Party fails cleanly")
+
+	-- 3. 4-Player party resolution works without fallback
+	local p3: StateTypes.PlayerState = {
+		UserId = 30003,
+		PlayerInstance = nil,
+		DisplayName = "PlayerThree",
+		ClassId = "Rogue",
+		SubclassId = "Assassin",
+		Resources = { HP = 60, MaxHP = 60, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {}, RelicIds = {},
+		Gold = 0, IsReady = false, IsDowned = false, IsConnected = true, VotedNodeId = nil,
+	}
+	local p4: StateTypes.PlayerState = {
+		UserId = 30004,
+		PlayerInstance = nil,
+		DisplayName = "PlayerFour",
+		ClassId = "Cleric",
+		SubclassId = "Templar",
+		Resources = { HP = 75, MaxHP = 75, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {}, RelicIds = {},
+		Gold = 0, IsReady = false, IsDowned = false, IsConnected = true, VotedNodeId = nil,
+	}
+	local party4 = {
+		[resP1.UserId] = resP1,
+		[resP2.UserId] = resP2,
+		[p3.UserId] = p3,
+		[p4.UserId] = p4,
+	}
+	local resP4Target = TargetResolver.resolveTarget(resP1, "Ally", p4.UserId, nil, party4)
+	assertTest(resP4Target.Success == true and resP4Target.PlayerTarget == p4 and resP4Target.TargetId == tostring(p4.UserId), "[TargetResolver] 4-Player party targeting resolved exact player 4")
+
+	-- 4. Multi-enemy resolution targets exact requested instance
+	local enemyA: StateTypes.EnemyState = {
+		InstanceId = "enemy_multi_a",
+		DefinitionId = "SpireSentinel",
+		Name = "Sentinel Alpha",
+		HP = 40, MaxHP = 40, Shield = 0, Poison = 0, AttackPower = 8,
+		Intent = { Type = "Attack", Value = 8 }, ModelRef = nil,
+	}
+	local enemyB: StateTypes.EnemyState = {
+		InstanceId = "enemy_multi_b",
+		DefinitionId = "SpireSentinel",
+		Name = "Sentinel Beta",
+		HP = 45, MaxHP = 45, Shield = 0, Poison = 0, AttackPower = 8,
+		Intent = { Type = "Attack", Value = 8 }, ModelRef = nil,
+	}
+	local multiCombatState: StateTypes.CombatState = {
+		CombatId = "combat_multi_test",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = 0,
+		TurnDuration = 45,
+		Participants = { resP1.UserId },
+		Enemies = {
+			["enemy_multi_a"] = enemyA,
+			["enemy_multi_b"] = enemyB,
+		},
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+	local resTargetB = TargetResolver.resolveTarget(resP1, "Enemy", "enemy_multi_b", multiCombatState, party4)
+	assertTest(resTargetB.Success == true and resTargetB.EnemyTarget == enemyB and resTargetB.TargetId == "enemy_multi_b", "[TargetResolver] Multi-enemy resolved exact requested enemy instance")
+
+	-- 5. Dead or disconnected targets fail cleanly
+	enemyA.HP = 0
+	local resDeadEnemy = TargetResolver.resolveTarget(resP1, "Enemy", "enemy_multi_a", multiCombatState, party4)
+	assertTest(resDeadEnemy.Success == false and string.find(resDeadEnemy.Error or "", "defeated") ~= nil, "[TargetResolver] Defeated enemy target rejected cleanly")
+
+	p3.IsConnected = false
+	local resDisconnectedAlly = TargetResolver.resolveTarget(resP1, "Ally", p3.UserId, multiCombatState, party4)
+	assertTest(resDisconnectedAlly.Success == false and string.find(resDisconnectedAlly.Error or "", "disconnected") ~= nil, "[TargetResolver] Disconnected ally target rejected cleanly")
+
+	----------------------------------------------------------------------------
+	-- TEST 33: CreateCard Schema Strictness & Pile Placement
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 33] CreateCard Schema Strictness & Pile Placement ---")
+
+	-- 1. Fails cleanly when CardDefId is missing or empty
+	local effNoDef: CardData.Effect = { Type = "CreateCard", CardDefId = nil }
+	local resNoDef = EffectResolver.resolveEffects({ effNoDef }, ctxSelf)
+	assertTest(#resNoDef == 1 and resNoDef[1].Success == false, "[CreateCard] Missing CardDefId fails cleanly")
+
+	-- 2. Fails cleanly when CardDefId is not in CardData (no Strike fallback)
+	local effBadDef: CardData.Effect = { Type = "CreateCard", CardDefId = "NonExistentCardXYZ" }
+	local resBadDef = EffectResolver.resolveEffects({ effBadDef }, ctxSelf)
+	assertTest(#resBadDef == 1 and resBadDef[1].Success == false, "[CreateCard] Unknown CardDefId fails cleanly without Strike fallback")
+
+	-- 3. Successfully creates card in specified destination pile
+	local effCreateDeck: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = "Deck" }
+	local deckBefore = #resP1.Deck
+	local resCreateDeck = EffectResolver.resolveEffects({ effCreateDeck }, ctxSelf)
+	assertTest(#resCreateDeck == 1 and resCreateDeck[1].Success == true, "[CreateCard] Valid Strike created in Deck")
+	assertTest(#resP1.Deck == deckBefore + 1, "[CreateCard] Card inserted into Deck")
+
+	local effCreateHand: CardData.Effect = { Type = "CreateCard", CardDefId = "Defend", DestinationPile = "Hand" }
+	local handCountBefore = 0
+	for _ in resP1.Hand do handCountBefore += 1 end
+	local resCreateHand = EffectResolver.resolveEffects({ effCreateHand }, ctxSelf)
+	assertTest(#resCreateHand == 1 and resCreateHand[1].Success == true, "[CreateCard] Valid Defend created in Hand")
+	local handCountAfter = 0
+	for _ in resP1.Hand do handCountAfter += 1 end
+	assertTest(handCountAfter == handCountBefore + 1, "[CreateCard] Card inserted into Hand dictionary")
+
+	----------------------------------------------------------------------------
+	-- TEST 34: Card Pile Invariant Verification & Lifecycle Safety
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 34] Card Pile Invariant Verification & Lifecycle Safety ---")
+
+	local invPlayer: StateTypes.PlayerState = {
+		UserId = 34001,
+		PlayerInstance = nil,
+		DisplayName = "InvTester",
+		ClassId = "Warrior",
+		SubclassId = "Juggernaut",
+		Resources = { HP = 80, MaxHP = 80, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		VotedNodeId = nil,
+	}
+
+	-- Populate 5 cards in Deck
+	for i = 1, 5 do
+		local c = CardService.createCardInstance("Strike", invPlayer.UserId)
+		assert(c ~= nil)
+		table.insert(invPlayer.Deck, c)
+	end
+
+	-- 1. Valid state passes validator
+	local okInv, errInv = CardService.validatePileInvariants(invPlayer)
+	assertTest(okInv == true and errInv == nil, "[PileInvariants] Clean 5-card deck passes validation")
+
+	-- 2. Duplicate across piles (Deck & Hand) fails validator
+	local dupCard = invPlayer.Deck[1]
+	invPlayer.Hand[dupCard.InstanceId] = dupCard
+	local okDupAcross, errDupAcross = CardService.validatePileInvariants(invPlayer)
+	assertTest(okDupAcross == false and string.find(errDupAcross or "", "Duplicate") ~= nil, "[PileInvariants] Duplicate card across Deck & Hand correctly detected and rejected")
+	invPlayer.Hand[dupCard.InstanceId] = nil
+
+	-- 3. Duplicate within single pile (Deck) fails validator
+	table.insert(invPlayer.Deck, dupCard)
+	local okDupSingle, errDupSingle = CardService.validatePileInvariants(invPlayer)
+	assertTest(okDupSingle == false and string.find(errDupSingle or "", "Duplicate") ~= nil, "[PileInvariants] Duplicate card within Deck correctly detected and rejected")
+	table.remove(invPlayer.Deck, #invPlayer.Deck)
+
+	-- 4. Mismatched OwnerUserId fails validator
+	local foreignCard = CardService.createCardInstance("Defend", 99999)
+	assert(foreignCard ~= nil)
+	table.insert(invPlayer.Deck, foreignCard)
+	local okForeign, errForeign = CardService.validatePileInvariants(invPlayer)
+	assertTest(okForeign == false and string.find(errForeign or "", "OwnerUserId") ~= nil, "[PileInvariants] Mismatched OwnerUserId correctly detected and rejected")
+	table.remove(invPlayer.Deck, #invPlayer.Deck)
+
+	-- 5. Lifecycle transitions: draw, play, discard, exhaust, reset
+	CardService.drawCards(invPlayer, 3)
+	local okDraw, _ = CardService.validatePileInvariants(invPlayer)
+	assertTest(okDraw == true, "[PileInvariants] State valid after drawCards")
+
+	local playedCard: StateTypes.CardInstance? = nil
+	for instId in invPlayer.Hand do
+		playedCard = CardService.playCardFromHand(invPlayer, instId)
+		break
+	end
+	assertTest(playedCard ~= nil, "[PileInvariants] Successfully played card from hand")
+	local okPlay, _ = CardService.validatePileInvariants(invPlayer)
+	assertTest(okPlay == true, "[PileInvariants] State valid after playCardFromHand")
+
+	CardService.discardHand(invPlayer)
+	local okDiscard, _ = CardService.validatePileInvariants(invPlayer)
+	assertTest(okDiscard == true, "[PileInvariants] State valid after discardHand")
+
+	assert(playedCard ~= nil)
+	local exhaustedCard = CardService.exhaustCard(invPlayer, playedCard.InstanceId)
+	assertTest(exhaustedCard ~= nil, "[PileInvariants] Successfully exhausted card")
+	local okExhaust, _ = CardService.validatePileInvariants(invPlayer)
+	assertTest(okExhaust == true, "[PileInvariants] State valid after exhaustCard")
+
+	CardService.resetCombatPiles(invPlayer)
+	local okReset, _ = CardService.validatePileInvariants(invPlayer)
+	assertTest(okReset == true and #invPlayer.Deck == 5, "[PileInvariants] State valid after resetCombatPiles (all 5 cards returned to deck)")
+
+	----------------------------------------------------------------------------
+	-- TEST 35: Status Authority Boundary & Projection Output Contracts
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 35] Status Authority Boundary & Projection Output Contracts ---")
+
+	StatusService.resetCombat()
+
+	local boundEnemy: StateTypes.EnemyState = {
+		InstanceId = "enemy_boundary",
+		DefinitionId = "SpireSentinel",
+		Name = "Boundary Sentinel",
+		HP = 100, MaxHP = 100, Shield = 0, Poison = 0, AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 }, ModelRef = nil,
+	}
+
+	-- 1. Apply status authoritatively via StatusService
+	StatusService.applyStatus(boundEnemy.InstanceId, "Poison", 4, nil, "TestPlayer", boundEnemy)
+	assertTest(boundEnemy.Poison == 4, "[StatusAuthority] Projection enemy.Poison initialized to 4 as output")
+
+	-- 2. Ticking reads from StatusService, ignoring rogue writes to enemy.Poison
+	boundEnemy.Poison = 99
+	local tickResB = StatusService.tickStatuses(boundEnemy.InstanceId, "TurnStart", boundEnemy, true)
+	assertTest(#tickResB == 1 and tickResB[1].DamageDealt == 4, "[StatusAuthority] Ticking ignored rogue write of 99 and dealt canonical 4 damage")
+	assertTest(boundEnemy.HP == 96, "[StatusAuthority] HP reduced by canonical 4 damage (100 - 4 = 96)")
+	assertTest(boundEnemy.Poison == 3, "[StatusAuthority] Projection enemy.Poison overwritten by canonical remaining stacks (3)")
+
+	-- 3. Backward compatibility sync only applies when StatusService has NO record
+	local legacyEnemy: StateTypes.EnemyState = {
+		InstanceId = "enemy_legacy",
+		DefinitionId = "SpireSentinel",
+		Name = "Legacy Sentinel",
+		HP = 50, MaxHP = 50, Shield = 0, Poison = 6, AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 }, ModelRef = nil,
+	}
+	assertTest(StatusService.getStatus(legacyEnemy.InstanceId, "Poison") == nil, "[StatusAuthority] No initial record in StatusService")
+	StatusService.syncEntityFromProjection(legacyEnemy.InstanceId, legacyEnemy)
+	local legacyInst = StatusService.getStatus(legacyEnemy.InstanceId, "Poison")
+	assertTest(legacyInst ~= nil and legacyInst.Stacks == 6, "[StatusAuthority] Backward compat sync populated 6 stacks when no record existed")
+
+	----------------------------------------------------------------------------
+	-- TEST 36: Cross-System Multi-Action Integration Chains
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 36] Cross-System Multi-Action Integration Chains ---")
+
+	StatusService.resetCombat()
+
+	local chainPlayer: StateTypes.PlayerState = {
+		UserId = 36001,
+		PlayerInstance = nil,
+		DisplayName = "ChainWarrior",
+		ClassId = "Warrior",
+		SubclassId = "Juggernaut",
+		Resources = { HP = 50, MaxHP = 80, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {}, RelicIds = {},
+		Gold = 0, IsReady = false, IsDowned = false, IsConnected = true, VotedNodeId = nil,
+	}
+	local chainAlly: StateTypes.PlayerState = {
+		UserId = 36002,
+		PlayerInstance = nil,
+		DisplayName = "ChainCleric",
+		ClassId = "Cleric",
+		SubclassId = "Templar",
+		Resources = { HP = 0, MaxHP = 70, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {}, RelicIds = {},
+		Gold = 0, IsReady = false, IsDowned = true, IsConnected = true, VotedNodeId = nil,
+	}
+	local chainEnemy: StateTypes.EnemyState = {
+		InstanceId = "enemy_chain",
+		DefinitionId = "SpireSentinel",
+		Name = "Chain Sentinel",
+		HP = 60, MaxHP = 60, Shield = 15, Poison = 0, AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 }, ModelRef = nil,
+	}
+	local chainParty = {
+		[chainPlayer.UserId] = chainPlayer,
+		[chainAlly.UserId] = chainAlly,
+	}
+	local chainCombatState: StateTypes.CombatState = {
+		CombatId = "combat_chain",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = 0,
+		TurnDuration = 45,
+		Participants = { chainPlayer.UserId, chainAlly.UserId },
+		Enemies = { ["enemy_chain"] = chainEnemy },
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+
+	-- 1. Damage Enemy + Shield Self compound action
+	local effDmgEnemy: CardData.Effect = { Type = "Damage", Value = 10, Target = "Enemy" }
+	local effShieldSelf: CardData.Effect = { Type = "Shield", Value = 8, Target = "Self" }
+	local ctxCompound: EffectResolver.ActionContext = {
+		SourcePlayer = chainPlayer,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Enemy",
+			EnemyTarget = chainEnemy,
+			PlayerTarget = nil,
+			TargetId = chainEnemy.InstanceId,
+			TargetName = chainEnemy.Name,
+		},
+		Party = chainParty,
+		CombatState = chainCombatState,
+		Modifiers = {},
+	}
+	local compoundRes = EffectResolver.resolveEffects({ effDmgEnemy, effShieldSelf }, ctxCompound)
+	assertTest(#compoundRes == 2 and compoundRes[1].Success == true and compoundRes[2].Success == true, "[CrossSystem] Compound Damage Enemy + Shield Self succeeded")
+	assertTest(chainEnemy.Shield == 5 and chainEnemy.HP == 60, "[CrossSystem] Enemy Shield took 10 damage (15 - 10 = 5)")
+	assertTest(chainPlayer.Resources.Shield == 8, "[CrossSystem] Caster gained 8 Shield")
+
+	-- 2. Revive Ally on downed ally succeeds
+	local effRevive: CardData.Effect = { Type = "Revive", Value = 25, Target = "Ally" }
+	local ctxRevive: EffectResolver.ActionContext = {
+		SourcePlayer = chainPlayer,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "Player",
+			EnemyTarget = nil,
+			PlayerTarget = chainAlly,
+			TargetId = tostring(chainAlly.UserId),
+			TargetName = chainAlly.DisplayName,
+		},
+		Party = chainParty,
+		CombatState = chainCombatState,
+		Modifiers = {},
+	}
+	local reviveRes = EffectResolver.resolveEffects({ effRevive }, ctxRevive)
+	assertTest(#reviveRes == 1 and reviveRes[1].Success == true, "[CrossSystem] Revive Ally succeeded")
+	assertTest(chainAlly.IsDowned == false and chainAlly.Resources.HP == 25, "[CrossSystem] Ally revived with 25 HP")
+
+	-- 3. CreateCard + Draw integration
+	for i = 1, 2 do
+		local c = CardService.createCardInstance("Defend", chainPlayer.UserId)
+		assert(c ~= nil)
+		table.insert(chainPlayer.Deck, c)
+	end
+	local effCreate: CardData.Effect = { Type = "CreateCard", CardDefId = "Strike", DestinationPile = "Deck" }
+	local effDraw: CardData.Effect = { Type = "Draw", Value = 1 }
+	local chainCardCtx: EffectResolver.ActionContext = {
+		SourcePlayer = chainPlayer,
+		Target = {
+			Success = true,
+			Error = nil,
+			TargetKind = "None",
+			EnemyTarget = nil,
+			PlayerTarget = nil,
+			TargetId = "",
+			TargetName = "None",
+		},
+		Party = chainParty,
+		CombatState = chainCombatState,
+		Modifiers = {},
+	}
+	local chainCreateDraw = EffectResolver.resolveEffects({ effCreate, effDraw }, chainCardCtx)
+	assertTest(#chainCreateDraw == 2 and chainCreateDraw[1].Success == true and chainCreateDraw[2].Success == true, "[CrossSystem] CreateCard + Draw succeeded")
+	local countInHand = 0
+	for _ in chainPlayer.Hand do countInHand += 1 end
+	assertTest(countInHand == 1, "[CrossSystem] Exactly 1 card drawn into hand")
+	local okFinalInv, _ = CardService.validatePileInvariants(chainPlayer)
+	assertTest(okFinalInv == true, "[CrossSystem] Pile invariants preserved after CreateCard + Draw")
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 2 & 2.1 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 2, 2.1 & 2.2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end

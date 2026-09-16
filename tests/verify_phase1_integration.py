@@ -379,6 +379,49 @@ test("--- [Suite 27] Status Authority & Tick Behavior Registry" in testrunner_sr
 test("--- [Suite 28] Damage Pipeline Edge Cases" in testrunner_src, "TestRunner includes Suite 28: Damage Pipeline Edge Cases")
 test("--- [Suite 29] Modifier Pipeline Determinism" in testrunner_src, "TestRunner includes Suite 29: Modifier Pipeline Determinism")
 
+# 33. Phase 2.2 ModifyResource Recipient Targeting & Event Error Isolation
+print("\n--- [Check 33] Phase 2.2 ModifyResource Targeting & Event Isolation ---")
+test("recipient.Resources.Energy = math.clamp(" in effect_resolver_src, "ModifyResource mutates recipient Energy")
+test("recipient.Resources.MaxEnergy = math.max(0," in effect_resolver_src, "ModifyResource mutates recipient MaxEnergy")
+test("recipient.Gold = math.max(0, recipient.Gold + count)" in effect_resolver_src, "ModifyResource mutates recipient Gold")
+test("pcall(function()" in effect_resolver_src and "RelicService.triggerRelics" in effect_resolver_src, "TriggerEvent dispatches via pcall for error isolation")
+
+# 34. Phase 2.2 TargetResolver Legality & Context Strictness
+print("\n--- [Check 34] Phase 2.2 TargetResolver Legality & Strict Context ---")
+target_resolver_src = (ROOT / "src/server/services/TargetResolver.luau").read_text(encoding="utf-8")
+test("if not combatState then" in target_resolver_src, "TargetResolver requires active CombatState for Enemy targets")
+test("if not party then" in target_resolver_src, "TargetResolver requires active Party for Ally targets")
+test("enemy.HP <= 0" in target_resolver_src, "TargetResolver rejects defeated enemies")
+test("allyState.IsConnected == false" in target_resolver_src, "TargetResolver rejects disconnected allies")
+
+# 35. Phase 2.2 CreateCard Schema Strictness & Pile Placement
+print("\n--- [Check 35] Phase 2.2 CreateCard Schema Strictness & Pile Placement ---")
+test("local cardDefId = effect.CardDefId" in effect_resolver_src, "CreateCard reads CardDefId directly")
+test("effect.StatusId or \"Strike\"" not in effect_resolver_src, "CreateCard contains 0 fallback to StatusId or Strike")
+test("local cardDef = CardData.getCard(cardDefId)" in effect_resolver_src, "CreateCard validates definition against CardData")
+test("effect.DestinationPile" in effect_resolver_src, "CreateCard supports destination pile placement")
+
+# 36. Phase 2.2 Card Pile Invariant Validator & Single Ownership
+print("\n--- [Check 36] Phase 2.2 Card Pile Invariants & Validator ---")
+card_service_src = (ROOT / "src/server/services/CardService.luau").read_text(encoding="utf-8")
+test("function CardService.validatePileInvariants" in card_service_src, "CardService.validatePileInvariants helper exists")
+test("Hand key '%s' does not match CardInstanceId" in card_service_src, "validatePileInvariants verifies Hand key integrity")
+test("Duplicate CardInstance" in card_service_src, "validatePileInvariants rejects duplicate instances across or within piles")
+test("OwnerUserId" in card_service_src, "validatePileInvariants verifies player ownership")
+
+# 37. Phase 2.2 Status Authority Boundary & TestRunner Suites 30-36
+print("\n--- [Check 37] Phase 2.2 Status Authority & Suites 30-36 ---")
+relic_service_src = (ROOT / "src/server/services/RelicService.luau").read_text(encoding="utf-8")
+test("StatusService.applyStatus(" in relic_service_src and "context.Enemy.Poison +=" not in relic_service_src, "RelicService applies VenomVial poison via StatusService")
+test("local statusTicks = StatusService.tickStatuses(enemyId, \"TurnStart\", enemy, true)" in combat_service_src, "CombatService ticks TurnStart statuses directly via StatusService")
+test("--- [Suite 30] ModifyResource Multi-Targeting" in testrunner_src, "TestRunner includes Suite 30: ModifyResource Multi-Targeting")
+test("--- [Suite 31] TriggerEvent Truthful Execution" in testrunner_src, "TestRunner includes Suite 31: TriggerEvent Truthful Execution")
+test("--- [Suite 32] Real Target Resolution Context" in testrunner_src, "TestRunner includes Suite 32: Real Target Resolution Context")
+test("--- [Suite 33] CreateCard Schema Strictness" in testrunner_src, "TestRunner includes Suite 33: CreateCard Schema Strictness")
+test("--- [Suite 34] Card Pile Invariant Verification" in testrunner_src, "TestRunner includes Suite 34: Card Pile Invariant Verification")
+test("--- [Suite 35] Status Authority Boundary" in testrunner_src, "TestRunner includes Suite 35: Status Authority Boundary")
+test("--- [Suite 36] Cross-System Multi-Action" in testrunner_src, "TestRunner includes Suite 36: Cross-System Multi-Action")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")
