@@ -194,6 +194,17 @@ export type Modifier = {
 	Priority: number,
 }
 
+export type ResolvedPlayerStats = {
+	MaxHP: number,
+	MaxEnergy: number,
+	BonusDamage: number,
+	BonusShieldGain: number,
+	BonusHealing: number,
+	CritChance: number,
+	CritMultiplier: number,
+	CostReduction: number,
+}
+
 export type DamageContext = {
 	RawDamage: number,
 	DamageType: DamageType,
