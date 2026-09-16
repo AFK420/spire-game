@@ -407,11 +407,12 @@ handlers["Exhaust"] = function(effect: CardData.Effect, context: ActionContext, 
 end
 
 -- 10. GainEnergy Effect
-handlers["GainEnergy"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
+handlers["GainEnergy"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
+	local recipient = (resolvedTarget.Success and resolvedTarget.PlayerTarget) or context.SourcePlayer
 	local count = effect.Value or 1
-	context.SourcePlayer.Resources.Energy = math.min(
-		context.SourcePlayer.Resources.MaxEnergy,
-		context.SourcePlayer.Resources.Energy + count
+	recipient.Resources.Energy = math.min(
+		recipient.Resources.MaxEnergy,
+		recipient.Resources.Energy + count
 	)
 	return {
 		Success = true,
@@ -422,9 +423,10 @@ handlers["GainEnergy"] = function(effect: CardData.Effect, context: ActionContex
 end
 
 -- 11. LoseEnergy Effect
-handlers["LoseEnergy"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
+handlers["LoseEnergy"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
+	local recipient = (resolvedTarget.Success and resolvedTarget.PlayerTarget) or context.SourcePlayer
 	local count = effect.Value or 1
-	context.SourcePlayer.Resources.Energy = math.max(0, context.SourcePlayer.Resources.Energy - count)
+	recipient.Resources.Energy = math.max(0, recipient.Resources.Energy - count)
 	return {
 		Success = true,
 		EffectType = "LoseEnergy",
@@ -449,6 +451,14 @@ end
 
 -- 13. ModifyResource Effect
 handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
+	if not resolvedTarget.Success or resolvedTarget.TargetKind ~= "Player" or not resolvedTarget.PlayerTarget then
+		return {
+			Success = false,
+			EffectType = "ModifyResource",
+			Message = resolvedTarget.Error or "ModifyResource requires a valid Player target.",
+		}
+	end
+
 	local count = effect.Value or 0
 	local resType: StateTypes.ResourceType? = effect.Resource
 
@@ -457,7 +467,7 @@ handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionCo
 		resType = "Gold"
 	end
 
-	local recipient = resolvedTarget.PlayerTarget or context.SourcePlayer
+	local recipient = resolvedTarget.PlayerTarget
 
 	if resType == "HP" then
 		if recipient.IsDowned and count > 0 then
@@ -473,20 +483,20 @@ handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionCo
 	elseif resType == "Shield" then
 		recipient.Resources.Shield = math.max(0, recipient.Resources.Shield + count)
 	elseif resType == "Energy" then
-		context.SourcePlayer.Resources.Energy = math.clamp(
-			context.SourcePlayer.Resources.Energy + count,
+		recipient.Resources.Energy = math.clamp(
+			recipient.Resources.Energy + count,
 			0,
-			context.SourcePlayer.Resources.MaxEnergy
+			recipient.Resources.MaxEnergy
 		)
 	elseif resType == "MaxEnergy" then
-		context.SourcePlayer.Resources.MaxEnergy = math.max(0, context.SourcePlayer.Resources.MaxEnergy + count)
-		context.SourcePlayer.Resources.Energy = math.clamp(
-			context.SourcePlayer.Resources.Energy,
+		recipient.Resources.MaxEnergy = math.max(0, recipient.Resources.MaxEnergy + count)
+		recipient.Resources.Energy = math.clamp(
+			recipient.Resources.Energy,
 			0,
-			context.SourcePlayer.Resources.MaxEnergy
+			recipient.Resources.MaxEnergy
 		)
 	elseif resType == "Gold" then
-		context.SourcePlayer.Gold = math.max(0, context.SourcePlayer.Gold + count)
+		recipient.Gold = math.max(0, recipient.Gold + count)
 	else
 		return {
 			Success = false,
@@ -509,7 +519,7 @@ handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionCo
 		Success = true,
 		EffectType = "ModifyResource",
 		Value = count,
-		Message = string.format("Modified %s by %d.", resType, count),
+		Message = string.format("Modified %s by %d on %s.", resType, count, recipient.DisplayName),
 	}
 end
 
@@ -534,9 +544,19 @@ handlers["TriggerEvent"] = function(effect: CardData.Effect, context: ActionCont
 		TargetPlayer = resolvedTarget.PlayerTarget,
 	}
 
-	pcall(function()
+	local ok, err = pcall(function()
 		RelicService.triggerRelics(context.SourcePlayer, eventId :: any, context.CombatState, combatContext)
 	end)
+
+	if not ok then
+		warn(string.format("[EffectResolver] TriggerEvent dispatch failed for event '%s': %s", eventId, tostring(err)))
+		return {
+			Success = false,
+			EffectType = "TriggerEvent",
+			Value = effect.Value,
+			Message = string.format("Event dispatch failed for '%s': %s", eventId, tostring(err)),
+		}
+	end
 
 	if context.LogEvent then
 		context.LogEvent("CustomEvent", context.SourcePlayer.DisplayName, resolvedTarget.TargetName, effect.Value, eventId)
