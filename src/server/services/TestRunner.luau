@@ -87,7 +87,8 @@ function TestRunner.runAllTests(): boolean
 	print("       STARTING FULL END-TO-END REAL API INTEGRATION SUITE  ")
 	print("============================================================")
 
-	-- Reset test environment to a clean state
+	-- Isolate test environment from live server state
+	RunManager.beginTestIsolation()
 	RunManager.resetRunForTesting()
 	local runState = RunManager.getRunState()
 
@@ -4752,11 +4753,36 @@ function TestRunner.runAllTests(): boolean
 	local otherPartyView = snapshot.Party[tostring(lockTestPlayer2.UserId)]
 	assertTest(otherPartyView ~= nil and otherPartyView.ClassLocked == false, "[ClassLock] PlayerView for unselected player reflects ClassLocked == false")
 
-	-- Clean up test mock entities and restore clean Lobby state for live game players
-	RunManager.resetRunForTesting()
-	for _, player in Players:GetPlayers() do
-		RunManager.addPlayer(player)
-	end
+	-- Test 6: Invalid subclass returns false and leaves ClassLocked == false
+	local invalidSubSuccess, invalidSubErr = ClassService.selectClass(lockTestPlayer2 :: any, resetPlayer2State :: any, "Warlord", "NonExistentSubclass")
+	assertTest(invalidSubSuccess == false, "[ClassLock] Invalid subclass ID is rejected")
+	assertTest(resetPlayer2State.ClassLocked == false, "[ClassLock] Rejected subclass selection does not set ClassLocked")
+
+	-- Test 7: Out-of-phase selection is rejected and leaves ClassLocked == false
+	local currentRunForTest = RunManager.getRunState()
+	currentRunForTest.Phase = "MapSelect"
+	local outOfPhaseSuccess, outOfPhaseErr = ClassService.selectClass(lockTestPlayer2 :: any, resetPlayer2State :: any, "Warlord", "Berserker")
+	assertTest(outOfPhaseSuccess == false, "[ClassLock] Out-of-phase class selection is rejected")
+	assertTest(resetPlayer2State.ClassLocked == false, "[ClassLock] Out-of-phase selection does not set ClassLocked")
+	currentRunForTest.Phase = "Lobby"
+
+	-- Test 8: Reconnecting player in Lobby preserves ClassLocked == true and class selection
+	RunManager.removePlayer(lockTestPlayer :: any)
+	local reconnectedState = RunManager.addPlayer(lockTestPlayer :: any)
+	assertTest(reconnectedState.ClassLocked == true, "[ClassLock] Reconnected player in Lobby preserves ClassLocked == true")
+	assertTest(reconnectedState.ClassId == "Shadowblade", "[ClassLock] Reconnected player preserves selected ClassId")
+	assertTest(reconnectedState.SubclassId == "Assassin", "[ClassLock] Reconnected player preserves selected SubclassId")
+
+	-- Test 9: RequestStateSync produces authoritative snapshot reflecting ClassLocked == true
+	local syncSnapshot = RunManager.getRunSnapshotForPlayer(lockTestPlayer :: any)
+	assertTest(syncSnapshot ~= nil, "[ClassLock] RequestStateSync returns valid snapshot")
+	assertTest(syncSnapshot.Party[tostring(lockTestPlayer.UserId)].ClassLocked == true, "[ClassLock] RequestStateSync reflects player ClassLocked == true")
+	assertTest(syncSnapshot.Party[tostring(lockTestPlayer2.UserId)].ClassLocked == false, "[ClassLock] RequestStateSync reflects other player ClassLocked == false")
+
+	-- Test 10: Test isolation mode ensures live state is not mutated
+	assertTest(RunManager.isTestIsolationActive() == true, "[ClassLock] Test isolation is active during test execution")
+	RunManager.endTestIsolation()
+	assertTest(RunManager.isTestIsolationActive() == false, "[ClassLock] Test isolation tears down cleanly")
 
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2, 3 & PHASE 4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))

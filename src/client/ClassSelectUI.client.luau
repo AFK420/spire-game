@@ -561,25 +561,30 @@ if RunStateUpdateEvent then
 		if myView then
 			local isClassLocked = (myView.ClassLocked == true)
 			if isClassLocked then
-				isLockingIn = false
-				lockInButton.Text = "✓ CLASS LOCKED IN!"
-				lockInButton.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
-				lockInStroke.Color = Color3.fromRGB(80, 240, 140)
+				if isLockingIn then
+					isLockingIn = false
+					lockInButton.Text = "✓ CLASS LOCKED IN!"
+					lockInButton.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
+					lockInStroke.Color = Color3.fromRGB(80, 240, 140)
 
-				-- Button bounce tween
-				local tween = TweenService:Create(lockInButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Size = UDim2.new(1, -28, 0, 44),
-				})
-				tween:Play()
-				tween.Completed:Connect(function()
-					TweenService:Create(lockInButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-						Size = UDim2.new(1, -32, 0, 42),
-					}):Play()
-				end)
+					-- Button bounce tween
+					local tween = TweenService:Create(lockInButton, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						Size = UDim2.new(1, -28, 0, 44),
+					})
+					tween:Play()
+					tween.Completed:Connect(function()
+						TweenService:Create(lockInButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+							Size = UDim2.new(1, -32, 0, 42),
+						}):Play()
+					end)
 
-				task.delay(0.4, function()
+					task.delay(0.4, function()
+						modal.Visible = false
+					end)
+				else
+					isLockingIn = false
 					modal.Visible = false
-				end)
+				end
 			else
 				modal.Visible = true
 				if isLockingIn then
@@ -599,6 +604,9 @@ if RunStateUpdateEvent then
 
 		if state.Message and string.find(string.lower(state.Message), "rejected") then
 			warn(string.format("[ClassSelectUI] Server message: %s", tostring(state.Message)))
+			isLockingIn = false
+			restoreLockInButton()
+			modal.Visible = true
 			subtitleLabel.Text = state.Message
 			subtitleLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
 			task.delay(4, function()

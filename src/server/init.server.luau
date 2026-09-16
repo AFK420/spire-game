@@ -84,13 +84,6 @@ task.spawn(function()
 	if not success then
 		warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
 	end
-	-- Guarantee all connected players are present in active run after test completion
-	for _, player in Players:GetPlayers() do
-		if not RunManager.getPlayerState(player.UserId) then
-			RunManager.addPlayer(player)
-		end
-	end
-	RunManager.broadcastRunSnapshots("Server ready.")
 end)
 
 --------------------------------------------------------------------------------
@@ -187,6 +180,10 @@ end)
 -- 9. Client Full State Sync Request
 NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Player)
 	if not NetworkService.checkRateLimit(player, "General") then return end
+
+	if not RunManager.getPlayerState(player.UserId) then
+		RunManager.addPlayer(player)
+	end
 
 	local runSnapshot = RunManager.getRunSnapshotForPlayer(player)
 	NetworkService.sendRunState(player, runSnapshot)

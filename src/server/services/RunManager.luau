@@ -48,22 +48,50 @@ local RunManager = {}
 -- Isolated Authoritative Run State
 --------------------------------------------------------------------------------
 
-local currentRun: StateTypes.RunState = {
-	RunId = "run_init",
-	Seed = 0,
-	Phase = "Lobby",
-	ActIndex = 1,
-	CurrentTier = 0,
-	CurrentNodeId = nil,
-	ClearedNodeIds = {},
-	AvailableNodeIds = {},
-	PartyMembers = {},
-	ActiveRoom = nil,
-	ActiveCombat = nil,
-	PendingRewards = nil,
-}
+local function createInitialRun(runId: string?): StateTypes.RunState
+	return {
+		RunId = runId or "run_init",
+		Seed = 0,
+		Phase = "Lobby",
+		ActIndex = 1,
+		CurrentTier = 0,
+		CurrentNodeId = nil,
+		ClearedNodeIds = {},
+		AvailableNodeIds = {},
+		PartyMembers = {},
+		ActiveRoom = nil,
+		ActiveCombat = nil,
+		PendingRewards = nil,
+	}
+end
 
+local liveRun: StateTypes.RunState = createInitialRun("run_init")
+local isolatedTestRun: StateTypes.RunState? = nil
+local isIsolatedTesting = false
+
+local currentRun: StateTypes.RunState = liveRun
 local internalDungeonRun: DungeonMap.DungeonRun? = nil
+local liveDungeonRun: DungeonMap.DungeonRun? = nil
+
+function RunManager.beginTestIsolation()
+	isIsolatedTesting = true
+	liveDungeonRun = internalDungeonRun
+	isolatedTestRun = createInitialRun("run_test_isolated")
+	currentRun = isolatedTestRun
+	internalDungeonRun = nil
+end
+
+function RunManager.endTestIsolation()
+	isIsolatedTesting = false
+	isolatedTestRun = nil
+	currentRun = liveRun
+	internalDungeonRun = liveDungeonRun
+	liveDungeonRun = nil
+end
+
+function RunManager.isTestIsolationActive(): boolean
+	return isIsolatedTesting
+end
 
 --------------------------------------------------------------------------------
 -- Snapshot Generators
@@ -174,6 +202,7 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 end
 
 function RunManager.broadcastRunSnapshots(message: string?)
+	if isIsolatedTesting then return end
 	for _, player in Players:GetPlayers() do
 		local snapshot = RunManager.getRunSnapshotForPlayer(player)
 		snapshot.Message = message
@@ -182,6 +211,7 @@ function RunManager.broadcastRunSnapshots(message: string?)
 end
 
 function RunManager.sendRunSnapshot(player: any, message: string?)
+	if isIsolatedTesting then return end
 	local snapshot = RunManager.getRunSnapshotForPlayer(player)
 	snapshot.Message = message
 	NetworkService.sendRunState(player, snapshot)
@@ -244,6 +274,9 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	SkillService.unlockSkill(pState, "Whirlwind")
 
 	currentRun.PartyMembers[userId] = pState
+	if isIsolatedTesting and typeof(player) == "Instance" and player:IsA("Player") then
+		liveRun.PartyMembers[userId] = pState
+	end
 	ClassService.initializePlayerForRun(pState)
 
 	RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName))
@@ -638,20 +671,14 @@ end
 
 -- Resets the single run container to clean Lobby state (used for testing and new runs)
 function RunManager.resetRunForTesting()
-	currentRun = {
-		RunId = "run_test_" .. HttpService:GenerateGUID(false):sub(1, 6),
-		Seed = 10001,
-		Phase = "Lobby",
-		ActIndex = 1,
-		CurrentTier = 0,
-		CurrentNodeId = nil,
-		ClearedNodeIds = {},
-		AvailableNodeIds = {},
-		PartyMembers = {},
-		ActiveRoom = nil,
-		ActiveCombat = nil,
-		PendingRewards = nil,
-	}
+	local newRun = createInitialRun("run_test_" .. HttpService:GenerateGUID(false):sub(1, 6))
+	if isIsolatedTesting then
+		isolatedTestRun = newRun
+		currentRun = isolatedTestRun
+	else
+		liveRun = newRun
+		currentRun = liveRun
+	end
 	internalDungeonRun = nil
 	if CombatService then
 		CombatService.cleanupCombat()
