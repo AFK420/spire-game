@@ -328,6 +328,57 @@ test("function ModifierResolver.resolve" in modifier_resolver_src, "ModifierReso
 test("table.sort(applicable" in modifier_resolver_src, "ModifierResolver sorts modifiers deterministically")
 test("mod.Operation == \"Add\"" in modifier_resolver_src and "mod.Operation == \"Multiply\"" in modifier_resolver_src, "ModifierResolver supports Additive and Multiplicative operations")
 
+# 28. Phase 2.1 Card Pile Invariant & Exhaust Uniqueness
+print("\n--- [Check 28] Phase 2.1 Card Pile Invariants & Exhaust Safety ---")
+card_service_src = (ROOT / "src/server/services/CardService.luau").read_text(encoding="utf-8")
+effect_resolver_src = (ROOT / "src/server/services/EffectResolver.luau").read_text(encoding="utf-8")
+test("function CardService.exhaustCard" in card_service_src, "CardService.exhaustCard helper exists")
+test("table.insert(playerState.ExhaustPile" in card_service_src, "CardService.exhaustCard moves card to ExhaustPile")
+test("CardService.exhaustCard(context.SourcePlayer" in effect_resolver_src, "EffectResolver.handlers['Exhaust'] invokes CardService.exhaustCard")
+
+# 29. Phase 2.1 Effect-Level Target Overrides
+print("\n--- [Check 29] Phase 2.1 Effect-Level Target Overrides ---")
+test("local function resolveEffectTarget" in effect_resolver_src, "EffectResolver defines resolveEffectTarget helper")
+test("TargetResolver.resolveTarget" in effect_resolver_src, "EffectResolver invokes TargetResolver for effect-level overrides")
+test("handlers[\"Damage\"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget)" in effect_resolver_src, "Damage handler consumes resolvedTarget")
+test("handlers[\"Shield\"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget)" in effect_resolver_src, "Shield handler consumes resolvedTarget")
+
+# 30. Phase 2.1 Status Authority & Tick Behavior Registry
+print("\n--- [Check 30] Phase 2.1 Status Authority & Tick Behavior Registry ---")
+status_service_src = (ROOT / "src/server/services/StatusService.luau").read_text(encoding="utf-8")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+test("function StatusService.syncEntityFromProjection" in status_service_src, "StatusService.syncEntityFromProjection exists")
+test("local tickBehaviors: { [string]: TickBehaviorFn }" in status_service_src, "StatusService registers data-driven tickBehaviors table")
+test("TickBehaviorId = \"DirectHPPoison\"" in status_service_src, "Poison status mapped to DirectHPPoison behavior")
+test("TickBehaviorId = \"FireDoT\"" in status_service_src, "Ignite status mapped to FireDoT behavior")
+test("TickBehaviorId = \"BleedDoT\"" in status_service_src, "Bleed status mapped to BleedDoT behavior")
+test("Implemented = false" in status_service_src, "Unimplemented statuses explicitly flagged Implemented = false")
+test("Implemented: boolean" in state_types_src and "TickBehaviorId: string?" in state_types_src, "StateTypes.StatusDefinition includes Implemented and TickBehaviorId")
+
+# 31. Phase 2.1 DamagePipeline Input Validation & Clamping
+print("\n--- [Check 31] Phase 2.1 DamagePipeline Input Validation & Clamping ---")
+damage_pipeline_src = (ROOT / "src/server/services/DamagePipeline.luau").read_text(encoding="utf-8")
+test("context.RawDamage < 0" in damage_pipeline_src, "DamagePipeline validates RawDamage >= 0")
+test("context.TargetEntityKind == \"Enemy\" and not context.TargetEnemy" in damage_pipeline_src, "DamagePipeline validates Enemy existence")
+test("context.TargetEntityKind == \"Player\" and not context.TargetPlayer" in damage_pipeline_src, "DamagePipeline validates Player existence")
+test("math.max(0, enemy.Shield - shieldAbsorbed)" in damage_pipeline_src, "DamagePipeline clamps enemy Shield to >= 0")
+test("math.max(0, enemy.HP - hpLost)" in damage_pipeline_src, "DamagePipeline clamps enemy HP to >= 0")
+
+# 32. Phase 2.1 Generalized Effects & Recursion Safety
+print("\n--- [Check 32] Phase 2.1 Generalized Effects & Recursion Safety ---")
+test("resType == \"HP\"" in effect_resolver_src and "resType == \"Shield\"" in effect_resolver_src and "resType == \"Energy\"" in effect_resolver_src, "handlers['ModifyResource'] supports typed HP, Shield, and Energy")
+test("handlers[\"TriggerEvent\"]" in effect_resolver_src, "handlers['TriggerEvent'] registered")
+test("RelicService.triggerRelics" in effect_resolver_src, "TriggerEvent dispatches to RelicService")
+test("currentDepth >= MAX_RECURSION_DEPTH" in effect_resolver_src, "EffectResolver protects against recursion depth overflow")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+test("--- [Suite 23] Exhaust Pile Uniqueness" in testrunner_src, "TestRunner includes Suite 23: Exhaust Pile Uniqueness")
+test("--- [Suite 24] Effect-Level Target Overrides" in testrunner_src, "TestRunner includes Suite 24: Effect-Level Target Overrides")
+test("--- [Suite 25] ModifyResource Safety & Clamping" in testrunner_src, "TestRunner includes Suite 25: ModifyResource Safety")
+test("--- [Suite 26] Event Triggering & Recursion Protection" in testrunner_src, "TestRunner includes Suite 26: Event Triggering & Recursion Protection")
+test("--- [Suite 27] Status Authority & Tick Behavior Registry" in testrunner_src, "TestRunner includes Suite 27: Status Authority & Tick Behaviors")
+test("--- [Suite 28] Damage Pipeline Edge Cases" in testrunner_src, "TestRunner includes Suite 28: Damage Pipeline Edge Cases")
+test("--- [Suite 29] Modifier Pipeline Determinism" in testrunner_src, "TestRunner includes Suite 29: Modifier Pipeline Determinism")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================")

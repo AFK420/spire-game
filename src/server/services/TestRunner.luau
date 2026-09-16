@@ -1140,8 +1140,495 @@ function TestRunner.runAllTests(): boolean
 	assertTest(allyHero.IsDowned == false, "[First Aid - Downed Ally] Ally successfully revived from downed state")
 	assertTest(allyHero.Resources.HP == 30, string.format("[First Aid - Downed Ally] HP revived to exactly 30 without double-healing (Actual: %d)", allyHero.Resources.HP))
 
+	----------------------------------------------------------------------------
+	-- TEST 23: Exhaust Pile Uniqueness & Pile Invariants
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 23] Exhaust Pile Uniqueness & Pile Invariants ---")
+
+	local exPlayer: StateTypes.PlayerState = {
+		UserId = 90101,
+		PlayerInstance = nil,
+		DisplayName = "ExhaustTester",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 80, MaxHP = 80, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	-- Create 3 cards in Deck, 2 in Hand
+	local c1 = CardService.createCardInstance("Strike", exPlayer.UserId)
+	local c2 = CardService.createCardInstance("Defend", exPlayer.UserId)
+	local c3 = CardService.createCardInstance("FirstAid", exPlayer.UserId)
+	local cExhaust = CardService.createCardInstance("Defend", exPlayer.UserId)
+	assertTest(c1 ~= nil and c2 ~= nil and c3 ~= nil and cExhaust ~= nil, "[Exhaust] Cards created")
+
+	if c1 and c2 and c3 and cExhaust then
+		table.insert(exPlayer.Deck, c1)
+		table.insert(exPlayer.Deck, c2)
+		table.insert(exPlayer.Deck, c3)
+		exPlayer.Hand[cExhaust.InstanceId] = cExhaust
+
+		local totalCardsBefore = #exPlayer.Deck + 1 + #exPlayer.DiscardPile + #exPlayer.ExhaustPile
+		assertTest(totalCardsBefore == 4, "[Exhaust] Player starts with exactly 4 total cards")
+
+		-- Simulate card played from Hand to DiscardPile
+		local playedCard = CardService.playCardFromHand(exPlayer, cExhaust.InstanceId)
+		assertTest(playedCard ~= nil, "[Exhaust] playCardFromHand moved card to DiscardPile")
+		assertTest(exPlayer.Hand[cExhaust.InstanceId] == nil, "[Exhaust] Card removed from Hand")
+		assertTest(#exPlayer.DiscardPile == 1, "[Exhaust] Card present in DiscardPile")
+
+		-- Now execute Exhaust effect via EffectResolver
+		local exhaustEff: CardData.Effect = { Type = "Exhaust" }
+		local exCtx: EffectResolver.ActionContext = {
+			SourcePlayer = exPlayer,
+			Target = effTargetSelf,
+			CardInstance = cExhaust,
+		}
+		local exResList = EffectResolver.resolveEffects({ exhaustEff }, exCtx)
+		assertTest(#exResList == 1 and exResList[1].Success == true, "[Exhaust] EffectResolver.handlers['Exhaust'] succeeded")
+
+		-- Verify card exists in ExhaustPile exactly once
+		local inExhaustCount = 0
+		for _, c in exPlayer.ExhaustPile do
+			if c.InstanceId == cExhaust.InstanceId then
+				inExhaustCount += 1
+			end
+		end
+		assertTest(inExhaustCount == 1, "[Exhaust] Card exists in ExhaustPile exactly once")
+
+		-- Verify card does NOT exist in DiscardPile
+		local inDiscardCount = 0
+		for _, c in exPlayer.DiscardPile do
+			if c.InstanceId == cExhaust.InstanceId then
+				inDiscardCount += 1
+			end
+		end
+		assertTest(inDiscardCount == 0, "[Exhaust] Card does NOT exist in DiscardPile")
+
+		-- Verify card does NOT exist in Hand
+		assertTest(exPlayer.Hand[cExhaust.InstanceId] == nil, "[Exhaust] Card does NOT exist in Hand")
+
+		-- Verify total cards across all piles remains constant invariant
+		local totalCardsAfter = #exPlayer.Deck + 0 + #exPlayer.DiscardPile + #exPlayer.ExhaustPile
+		assertTest(totalCardsAfter == 4, string.format("[Exhaust] Pile count invariant preserved: %d == 4", totalCardsAfter))
+	end
+
+	----------------------------------------------------------------------------
+	-- TEST 24: Effect-Level Target Overrides
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 24] Effect-Level Target Overrides ---")
+
+	local hybridEnemy: StateTypes.EnemyState = {
+		InstanceId = "enemy_hybrid",
+		DefinitionId = "SpireSentinel",
+		Name = "Hybrid Sentinel",
+		HP = 60,
+		MaxHP = 60,
+		Shield = 10,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 },
+		ModelRef = nil,
+	}
+
+	local hybridPlayer: StateTypes.PlayerState = {
+		UserId = 90102,
+		PlayerInstance = nil,
+		DisplayName = "HybridCaster",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 50, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local hybridCombatState: StateTypes.CombatState = {
+		CombatId = "combat_hybrid",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = 0,
+		TurnDuration = 45,
+		Participants = { hybridPlayer.UserId },
+		Enemies = { [hybridEnemy.InstanceId] = hybridEnemy },
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+
+	local hybridTargetEnemy: StateTypes.ResolvedTarget = {
+		Success = true,
+		Error = nil,
+		TargetKind = "Enemy",
+		EnemyTarget = hybridEnemy,
+		PlayerTarget = nil,
+		TargetId = hybridEnemy.InstanceId,
+		TargetName = hybridEnemy.Name,
+	}
+
+	-- Card has 2 effects:
+	-- Effect 1: Damage 20 to Enemy (no explicit Target, inherits primary context target = Enemy)
+	-- Effect 2: Shield 8 to Self (explicit Target = "Self")
+	local hybridEffects: { CardData.Effect } = {
+		{ Type = "Damage", Value = 20, Target = "Enemy" },
+		{ Type = "Shield", Value = 8, Target = "Self" },
+	}
+
+	local hybridCtx: EffectResolver.ActionContext = {
+		SourcePlayer = hybridPlayer,
+		Target = hybridTargetEnemy,
+		CombatState = hybridCombatState,
+		Party = { [hybridPlayer.UserId] = hybridPlayer },
+	}
+
+	local hybridRes = EffectResolver.resolveEffects(hybridEffects, hybridCtx)
+	assertTest(#hybridRes == 2, "[TargetOverride] Both effects resolved")
+	assertTest(hybridRes[1].Success and hybridRes[2].Success, "[TargetOverride] Both effects succeeded")
+
+	-- Enemy took 20 damage (10 Shield absorbed, 10 HP lost -> 50 HP)
+	assertTest(hybridEnemy.Shield == 0, "[TargetOverride] Enemy shield broken to 0")
+	assertTest(hybridEnemy.HP == 50, "[TargetOverride] Enemy HP reduced to 50")
+
+	-- Source player received 8 Shield
+	assertTest(hybridPlayer.Resources.Shield == 8, "[TargetOverride] Source player gained 8 Shield")
+	-- Enemy did NOT gain any shield from effect 2
+	assertTest(hybridEnemy.Shield == 0, "[TargetOverride] Enemy did NOT receive the Shield effect")
+
+	----------------------------------------------------------------------------
+	-- TEST 25: ModifyResource Safety & Clamping
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 25] ModifyResource Safety & Clamping ---")
+
+	local resPlayer: StateTypes.PlayerState = {
+		UserId = 90103,
+		PlayerInstance = nil,
+		DisplayName = "ResourceTester",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 40, MaxHP = 100, Shield = 5, Energy = 2, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 50,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+
+	local resTargetSelf: StateTypes.ResolvedTarget = {
+		Success = true,
+		Error = nil,
+		TargetKind = "Player",
+		EnemyTarget = nil,
+		PlayerTarget = resPlayer,
+		TargetId = tostring(resPlayer.UserId),
+		TargetName = resPlayer.DisplayName,
+	}
+
+	local resCtx: EffectResolver.ActionContext = {
+		SourcePlayer = resPlayer,
+		Target = resTargetSelf,
+	}
+
+	-- 1. Modify HP up to MaxHP (40 + 80 = 120 -> clamped to 100)
+	local hpUpEff: CardData.Effect = { Type = "ModifyResource", Resource = "HP", Value = 80 }
+	EffectResolver.resolveEffects({ hpUpEff }, resCtx)
+	assertTest(resPlayer.Resources.HP == 100, "[ModifyResource] HP clamped to MaxHP (100)")
+
+	-- 2. Modify HP down to 0 triggers IsDowned
+	local hpDownEff: CardData.Effect = { Type = "ModifyResource", Resource = "HP", Value = -150 }
+	EffectResolver.resolveEffects({ hpDownEff }, resCtx)
+	assertTest(resPlayer.Resources.HP == 0, "[ModifyResource] HP reduced to 0")
+	assertTest(resPlayer.IsDowned == true, "[ModifyResource] Reaching 0 HP set IsDowned to true")
+
+	-- 3. Modify HP of downed player rejected
+	local hpDownedHeal: CardData.Effect = { Type = "ModifyResource", Resource = "HP", Value = 20 }
+	local downedRes = EffectResolver.resolveEffects({ hpDownedHeal }, resCtx)
+	assertTest(#downedRes == 1 and downedRes[1].Success == false, "[ModifyResource] Cannot heal downed player via ModifyResource HP")
+	resPlayer.IsDowned = false
+	resPlayer.Resources.HP = 50
+
+	-- 4. Shield cannot become negative (5 - 20 = -15 -> clamped to 0)
+	local shieldDownEff: CardData.Effect = { Type = "ModifyResource", Resource = "Shield", Value = -20 }
+	EffectResolver.resolveEffects({ shieldDownEff }, resCtx)
+	assertTest(resPlayer.Resources.Shield == 0, "[ModifyResource] Shield clamped to minimum 0")
+
+	-- 5. Energy clamping (2 + 5 = 7 -> clamped to MaxEnergy 3; then -10 -> clamped to 0)
+	local energyUpEff: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = 5 }
+	EffectResolver.resolveEffects({ energyUpEff }, resCtx)
+	assertTest(resPlayer.Resources.Energy == 3, "[ModifyResource] Energy clamped to MaxEnergy (3)")
+
+	local energyDownEff: CardData.Effect = { Type = "ModifyResource", Resource = "Energy", Value = -10 }
+	EffectResolver.resolveEffects({ energyDownEff }, resCtx)
+	assertTest(resPlayer.Resources.Energy == 0, "[ModifyResource] Energy clamped to minimum 0")
+
+	-- 6. Gold modification (50 + 25 = 75, then -100 -> clamped to 0)
+	local goldUpEff: CardData.Effect = { Type = "ModifyResource", Resource = "Gold", Value = 25 }
+	EffectResolver.resolveEffects({ goldUpEff }, resCtx)
+	assertTest(resPlayer.Gold == 75, "[ModifyResource] Gold increased to 75")
+
+	local goldDownEff: CardData.Effect = { Type = "ModifyResource", Resource = "Gold", Value = -100 }
+	EffectResolver.resolveEffects({ goldDownEff }, resCtx)
+	assertTest(resPlayer.Gold == 0, "[ModifyResource] Gold clamped to minimum 0")
+
+	-- 7. Invalid resource type returns failure
+	local invalidResEff: CardData.Effect = { Type = "ModifyResource", Resource = "InvalidResource" :: any, Value = 10 }
+	local invResList = EffectResolver.resolveEffects({ invalidResEff }, resCtx)
+	assertTest(#invResList == 1 and invResList[1].Success == false, "[ModifyResource] Rejected invalid resource type cleanly")
+
+	----------------------------------------------------------------------------
+	-- TEST 26: Event Triggering & Recursion Protection
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 26] Event Triggering & Recursion Protection ---")
+
+	local loggedEvents: { string } = {}
+	local logCallback = function(eventType: string, _sourceId: string, _targetId: string, value: number?, text: string?)
+		table.insert(loggedEvents, eventType .. ":" .. tostring(value) .. ":" .. tostring(text))
+	end
+
+	local eventCtx: EffectResolver.ActionContext = {
+		SourcePlayer = resPlayer,
+		Target = resTargetSelf,
+		LogEvent = logCallback,
+	}
+
+	-- 1. TriggerEvent executes and logs
+	local triggerEff: CardData.Effect = { Type = "TriggerEvent", EventId = "CustomTestEvent", Value = 42 }
+	local triggerRes = EffectResolver.resolveEffects({ triggerEff }, eventCtx)
+	assertTest(#triggerRes == 1 and triggerRes[1].Success == true, "[TriggerEvent] TriggerEvent succeeded")
+	assertTest(#loggedEvents == 1, "[TriggerEvent] Event logged to callback")
+
+	-- 2. Reject empty EventId
+	local emptyEff: CardData.Effect = { Type = "TriggerEvent", EventId = "" }
+	local emptyRes = EffectResolver.resolveEffects({ emptyEff }, eventCtx)
+	assertTest(#emptyRes == 1 and emptyRes[1].Success == false, "[TriggerEvent] Rejected empty EventId")
+
+	-- 3. Recursion depth protection
+	local recursiveEff: CardData.Effect = { Type = "GainEnergy", Value = 1 }
+	local recurseCount = 0
+	local function triggerRecursiveCall(depth: number)
+		if depth > 10 then return end
+		recurseCount += 1
+		local res = EffectResolver.resolveEffects({ recursiveEff }, eventCtx)
+		if #res > 0 then
+			triggerRecursiveCall(depth + 1)
+		end
+	end
+
+	triggerRecursiveCall(1)
+	assertTest(recurseCount <= 6, string.format("[Recursion] Recursion limited safely (ran %d levels, max allowed is 5)", recurseCount))
+
+	----------------------------------------------------------------------------
+	-- TEST 27: Status Authority & Tick Behavior Registry
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 27] Status Authority & Tick Behavior Registry ---")
+	StatusService.resetCombat()
+
+	local authEnemy: StateTypes.EnemyState = {
+		InstanceId = "enemy_auth",
+		DefinitionId = "SpireSentinel",
+		Name = "Auth Sentinel",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 30,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 },
+		ModelRef = nil,
+	}
+
+	-- 1. Direct write to enemy.Poison reconciled via syncEntityFromProjection
+	authEnemy.Poison = 7
+	StatusService.syncEntityFromProjection(authEnemy.InstanceId, authEnemy)
+	local syncedInst = StatusService.getStatus(authEnemy.InstanceId, "Poison")
+	assertTest(syncedInst ~= nil and syncedInst.Stacks == 7, "[StatusAuthority] syncEntityFromProjection populated StatusInstance with 7 stacks")
+
+	-- 2. StatusService is canonical; enemy.Poison is projection
+	local tickRes = StatusService.tickStatuses(authEnemy.InstanceId, "TurnStart", authEnemy, true)
+	assertTest(#tickRes == 1 and tickRes[1].DamageDealt == 7, "[StatusAuthority] DirectHPPoison ticked for 7 damage")
+	assertTest(authEnemy.HP == 93, "[StatusAuthority] Enemy HP reduced to 93 (100 - 7)")
+	assertTest(authEnemy.Shield == 30, "[StatusAuthority] Shield untouched at 30 (bypasses shield)")
+	assertTest(authEnemy.Poison == 6, "[StatusAuthority] Projection enemy.Poison synchronized to 6")
+	local canonicalPoison = StatusService.getStatus(authEnemy.InstanceId, "Poison")
+	assertTest(canonicalPoison ~= nil and canonicalPoison.Stacks == 6, "[StatusAuthority] Canonical StatusInstance has 6 stacks")
+
+	-- 3. Unimplemented statuses (Chill, Freeze, Shock) do not tick
+	StatusService.applyStatus(authEnemy.InstanceId, "Chill", 5, 2, "test", authEnemy)
+	local chillDef = StatusService.getDefinition("Chill")
+	assertTest(chillDef ~= nil and chillDef.Implemented == false, "[StatusAuthority] Chill explicitly marked Implemented = false")
+	local chillTicks = StatusService.tickStatuses(authEnemy.InstanceId, "TurnEnd", authEnemy, true)
+	assertTest(#chillTicks == 0, "[StatusAuthority] Unimplemented Chill did not tick")
+
+	-- 4. Bleed and Ignite tick through registry handlers
+	StatusService.applyStatus(authEnemy.InstanceId, "Ignite", 4, 2, "test", authEnemy)
+	local igniteDef = StatusService.getDefinition("Ignite")
+	assertTest(igniteDef ~= nil and igniteDef.TickBehaviorId == "FireDoT", "[StatusAuthority] Ignite mapped to FireDoT")
+
+	local igniteTicks = StatusService.tickStatuses(authEnemy.InstanceId, "TurnStart", authEnemy, true)
+	local igniteDmg = 0
+	for _, t in igniteTicks do
+		if t.DefinitionId == "Ignite" then igniteDmg = t.DamageDealt end
+	end
+	assertTest(igniteDmg == 8, string.format("[StatusAuthority] Ignite FireDoT dealt 8 damage (Actual: %d)", igniteDmg))
+
+	----------------------------------------------------------------------------
+	-- TEST 28: Damage Pipeline Edge Cases & Mitigations
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 28] Damage Pipeline Edge Cases & Mitigations ---")
+
+	local edgeEnemy: StateTypes.EnemyState = {
+		InstanceId = "enemy_edge",
+		DefinitionId = "SpireSentinel",
+		Name = "Edge Sentinel",
+		HP = 50,
+		MaxHP = 50,
+		Shield = 20,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = { Type = "Attack", Value = 10 },
+		ModelRef = nil,
+	}
+
+	-- 1. Negative RawDamage returns deterministic 0 result
+	local negCtx: StateTypes.DamageContext = {
+		RawDamage = -25,
+		DamageType = "Physical",
+		SourceId = "test",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = edgeEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	}
+	local negRes = DamagePipeline.executeDamage(negCtx)
+	assertTest(negRes.FinalDamage == 0 and negRes.HPLost == 0 and negRes.ShieldAbsorbed == 0, "[DamagePipeline] Negative damage safely clamped to 0")
+	assertTest(edgeEnemy.HP == 50 and edgeEnemy.Shield == 20, "[DamagePipeline] Enemy unchanged after negative damage")
+
+	-- 2. Missing TargetEnemy handled gracefully
+	local missingCtx: StateTypes.DamageContext = {
+		RawDamage = 20,
+		DamageType = "Physical",
+		SourceId = "test",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = nil,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	}
+	local missRes = DamagePipeline.executeDamage(missingCtx)
+	assertTest(missRes.FinalDamage == 0 and missRes.IsDefeatedOrDowned == false, "[DamagePipeline] Missing target entity returns deterministic 0 result")
+
+	-- 3. Direct HP bypass (CanHitShield = false) does not reduce shield
+	local bypassCtx: StateTypes.DamageContext = {
+		RawDamage = 15,
+		DamageType = "Venom",
+		SourceId = "test",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = edgeEnemy,
+		TargetPlayer = nil,
+		CanHitShield = false,
+		IsPeriodic = true,
+	}
+	local bypassRes = DamagePipeline.executeDamage(bypassCtx)
+	assertTest(bypassRes.FinalDamage == 15 and bypassRes.ShieldAbsorbed == 0 and bypassRes.HPLost == 15, "[DamagePipeline] Direct HP bypass absorbed 0 shield")
+	assertTest(edgeEnemy.Shield == 20, "[DamagePipeline] Shield remains intact at 20")
+	assertTest(edgeEnemy.HP == 35, "[DamagePipeline] HP reduced directly (50 - 15 = 35)")
+
+	-- 4. Exact Shield absorption (damage <= shield consumes shield only, HP unchanged)
+	local exactShieldCtx: StateTypes.DamageContext = {
+		RawDamage = 12,
+		DamageType = "Physical",
+		SourceId = "test",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = edgeEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	}
+	local exactRes = DamagePipeline.executeDamage(exactShieldCtx)
+	assertTest(exactRes.ShieldAbsorbed == 12 and exactRes.HPLost == 0, "[DamagePipeline] Damage fully absorbed by shield")
+	assertTest(edgeEnemy.Shield == 8, "[DamagePipeline] Shield reduced to 8 (20 - 12)")
+	assertTest(edgeEnemy.HP == 35, "[DamagePipeline] HP untouched at 35")
+
+	-- 5. Shield overflow (damage > shield breaks shield, remainder to HP)
+	local overflowCtx: StateTypes.DamageContext = {
+		RawDamage = 15,
+		DamageType = "Physical",
+		SourceId = "test",
+		SourceName = "Tester",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = edgeEnemy,
+		TargetPlayer = nil,
+		CanHitShield = true,
+		IsPeriodic = false,
+	}
+	local overflowRes = DamagePipeline.executeDamage(overflowCtx)
+	assertTest(overflowRes.ShieldAbsorbed == 8 and overflowRes.HPLost == 7, "[DamagePipeline] Shield absorbed 8, remainder 7 lost from HP")
+	assertTest(edgeEnemy.Shield == 0, "[DamagePipeline] Shield reduced to 0")
+	assertTest(edgeEnemy.HP == 28, "[DamagePipeline] HP reduced to 28 (35 - 7)")
+
+	----------------------------------------------------------------------------
+	-- TEST 29: Modifier Pipeline Determinism & Immutability
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 29] Modifier Pipeline Determinism & Immutability ---")
+
+	-- 1. Additive before Multiplicative regardless of registration order
+	local modAdd = ModifierResolver.createModifier("mod_add", "Skill", "Damage", "Add", 10, 100)
+	local modMul = ModifierResolver.createModifier("mod_mul", "Buff", "Damage", "Multiply", 1.5, 200)
+
+	-- Pass Multiply first in array to verify sorting and pipeline order
+	local resolvedVal, appliedMods = ModifierResolver.resolve(20, "Damage", { modMul, modAdd })
+	-- (20 + 10) * 1.5 = 45
+	assertTest(resolvedVal == 45, string.format("[ModifierResolver] (20 + 10) * 1.5 = 45 (Actual: %d)", resolvedVal))
+	assertTest(#appliedMods == 2, "[ModifierResolver] Both modifiers applied")
+
+	-- 2. Input modifiers table is immutable
+	local originalTable = { modMul, modAdd }
+	ModifierResolver.resolve(20, "Damage", originalTable)
+	assertTest(originalTable[1] == modMul and originalTable[2] == modAdd, "[ModifierResolver] Input modifier table order preserved (not mutated in-place)")
+
+	-- 3. Deterministic alphabetical sorting by Id when Priority matches
+	local modA = ModifierResolver.createModifier("A_Mod", "Item", "Damage", "Add", 5, 100)
+	local modB = ModifierResolver.createModifier("B_Mod", "Item", "Damage", "Add", 5, 100)
+	local _, sortedApplied = ModifierResolver.resolve(10, "Damage", { modB, modA })
+	assertTest(sortedApplied[1].Id == "A_Mod" and sortedApplied[2].Id == "B_Mod", "[ModifierResolver] Deterministically sorted identical priority by Id")
+
+	-- 4. Override takes absolute precedence
+	local modOverride = ModifierResolver.createModifier("mod_override", "Curse", "Damage", "Override", 99, 50)
+	local overVal, _ = ModifierResolver.resolve(20, "Damage", { modMul, modAdd, modOverride })
+	assertTest(overVal == 99, string.format("[ModifierResolver] Override took absolute precedence: %d == 99", overVal))
+
+	-- 5. Clamping negative final result to 0
+	local modNegative = ModifierResolver.createModifier("mod_neg", "Debuff", "Damage", "Add", -100, 100)
+	local clampedVal, _ = ModifierResolver.resolve(20, "Damage", { modNegative })
+	assertTest(clampedVal == 0, "[ModifierResolver] Negative result clamped to 0")
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 2 & 2.1 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end
