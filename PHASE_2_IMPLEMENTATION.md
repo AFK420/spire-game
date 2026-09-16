@@ -286,9 +286,49 @@ A surgical correctness pass was completed to resolve mixed-target card definitio
 
 ---
 
-## 10. Strict Scope Boundary Confirmation
-- Phase 2, Phase 2.1, Phase 2.2, and Phase 2.3 are complete and hardened.
+## 10. Phase 2.4 Final Schema Hardening (CreateCard Destination & ModifyResource Strictness)
+
+A final surgical schema-hardening pass was completed to eliminate silent fallbacks in `CreateCard` and `ModifyResource`:
+
+### 1. Strict CreateCard Destination Validation
+- **Problem**: Previously, `handlers["CreateCard"]` used `local dest = effect.DestinationPile or "Deck"` and placed the card in `Deck` on any unmatched value in the `if/elseif` chain, silently accepting typos and invalid strings. Additionally, the card instance was instantiated before validating `DestinationPile`.
+- **Resolution**:
+  - Enforce exact allowed values: `Deck`, `Hand`, `DiscardPile`, `ExhaustPile`.
+  - `nil DestinationPile` defaults to `Deck` (allowed default).
+  - Explicit valid destination places card directly into specified pile.
+  - Invalid destination (e.g. `"Banana"`) returns `{ Success = false, Message = ... }`.
+  - Empty string `""` is strictly rejected as an invalid destination with `{ Success = false }`.
+  - Validation occurs *before* `CardService.createCardInstance` is called, ensuring zero card instances are created on failure.
+  - Zero silent fallback to `Deck` on unrecognized destinations.
+  - Verified static card validation in `CardData.validateCard` also rejects invalid `DestinationPile` configurations.
+
+### 2. Removal of ModifyResource Implicit Gold Fallback
+- **Problem**: Previously, `handlers["ModifyResource"]` contained `if not resType then resType = "Gold" end`, causing cards with missing or empty `Resource` fields to silently modify player Gold.
+- **Resolution**:
+  - Removed the implicit Gold fallback entirely.
+  - Missing `Resource` (`nil`) or empty string `""` returns `{ Success = false, Message = "ModifyResource requires a valid non-empty Resource type." }`.
+  - Invalid `Resource` strings fall through to the terminal rejection branch returning `{ Success = false }`.
+  - Valid `ResourceType` union (`HP`, `MaxHP`, `Shield`, `Energy`, `MaxEnergy`, `Gold`) executes normally.
+  - Zero accidental Gold modification occurs.
+  - Maintained strict target awareness: `Self` modifies caster; `Ally` modifies ally while caster remains untouched.
+
+### 3. Test Coverage & Verification (39 Suites Total, 270 Verifier Checks)
+- **Suite 39 (Final Schema Strictness & Resource Boundary Safety)**:
+  - **CreateCard Valid Destinations**: Verified `Deck`, `Hand`, `DiscardPile`, `ExhaustPile`, and default `nil -> Deck`.
+  - **CreateCard Invalid Destinations**: Verified that `"Banana"` and `""` return `Success = false` and create zero cards across any pile.
+  - **Card Pile Invariant Verification**: Validated single ownership across all card piles after card creations (`ok == true`).
+  - **ModifyResource Missing/Invalid Rejection**: Verified `nil`, `""`, and `"InvalidResourceXYZ"` return `Success = false` with zero Gold modification.
+  - **ModifyResource Valid Execution**: Verified `Gold`, `Energy`, `Self Energy`, and `Ally Energy` execute cleanly without cross-player side effects.
+- **Offline Integration Verifier (`verify_phase1_integration.py`)**:
+  - **270 / 270 Checks Passed** (100% success rate, 0 failed).
+- **Rojo Build**: Clean build with exit code 0.
+
+---
+
+## 11. Strict Scope Boundary Confirmation
+- Phase 2, Phase 2.1, Phase 2.2, Phase 2.3, and Phase 2.4 are complete and hardened.
 - Equipment systems, passive skill trees, active skill trees, and large content rosters were **NOT** started.
 - `PHASE 3 STARTED: NO`
+
 
 
