@@ -102,6 +102,31 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 		local handCount = 0
 		for _ in pState.Hand do handCount += 1 end
 
+		local equippedItemsSummary: { [string]: string } = {}
+		if pState.EquippedItems then
+			for slot, item in pState.EquippedItems do
+				if item then
+					equippedItemsSummary[slot] = item.DefinitionId
+				end
+			end
+		end
+
+		local equippedSkillsSummary: { [string]: string } = {}
+		if pState.EquippedSkills then
+			for slot, skill in pState.EquippedSkills do
+				if skill then
+					equippedSkillsSummary[slot] = skill.DefinitionId
+				end
+			end
+		end
+
+		local skillInventoryList: { string } = {}
+		if pState.SkillInventory then
+			for _, skill in ipairs(pState.SkillInventory) do
+				table.insert(skillInventoryList, skill.DefinitionId)
+			end
+		end
+
 		partyViews[tostring(pUserId)] = {
 			UserId = pUserId,
 			DisplayName = pState.DisplayName,
@@ -119,6 +144,11 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 			IsDowned = pState.IsDowned,
 			Gold = pState.Gold,
 			RelicIds = pState.RelicIds,
+			EquippedItems = equippedItemsSummary,
+			EquippedSkills = equippedSkillsSummary,
+			SkillInventory = skillInventoryList,
+			UnlockedPassives = table.clone(pState.UnlockedPassives or {}),
+			PassivePoints = pState.PassivePoints or 0,
 		}
 	end
 

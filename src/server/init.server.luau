@@ -30,6 +30,23 @@ local SkillService = require(services:WaitForChild("SkillService") :: ModuleScri
 local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
 local TestRunner = require(services:WaitForChild("TestRunner") :: ModuleScript)
 
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
+local PassiveData = require(Shared:WaitForChild("PassiveData") :: ModuleScript)
+
+local VALID_EQUIPMENT_SLOTS: { [string]: boolean } = {
+	["Weapon"] = true,
+	["Armor"] = true,
+	["Accessory"] = true,
+}
+
+local VALID_SKILL_SLOTS: { [string]: boolean } = {
+	["Skill1"] = true,
+	["Skill2"] = true,
+	["Skill3"] = true,
+	["Skill4"] = true,
+}
+
 print("============================================================")
 print("       CARD RIFT: CO-OP DUNGEON — SERVER STARTUP            ")
 print("============================================================")
@@ -165,7 +182,7 @@ end)
 -- 10. Equip Equipment
 NetworkService.EquipEquipmentEvent.OnServerEvent:Connect(function(player: Player, equipmentInstanceId: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(equipmentInstanceId) ~= "string" then return end
+	if typeof(equipmentInstanceId) ~= "string" or #equipmentInstanceId == 0 then return end
 
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then return end
@@ -181,7 +198,7 @@ end)
 -- 11. Unequip Equipment
 NetworkService.UnequipEquipmentEvent.OnServerEvent:Connect(function(player: Player, slot: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(slot) ~= "string" then return end
+	if typeof(slot) ~= "string" or not VALID_EQUIPMENT_SLOTS[slot] then return end
 
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then return end
@@ -195,19 +212,24 @@ NetworkService.UnequipEquipmentEvent.OnServerEvent:Connect(function(player: Play
 end)
 
 -- 12. Equip Skill
-NetworkService.EquipSkillEvent.OnServerEvent:Connect(function(player: Player, skillDefId: any, slot: any)
+NetworkService.EquipSkillEvent.OnServerEvent:Connect(function(player: Player, skillIdentifier: any, slot: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(skillDefId) ~= "string" or typeof(slot) ~= "string" then return end
+	if typeof(skillIdentifier) ~= "string" or #skillIdentifier == 0 then return end
+	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
 
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then return end
 
-	local skillInst = SkillService.createInstance(skillDefId, player.UserId, slot :: any)
-	if not skillInst then return end
+	-- Authoritative Ownership Check: look up player's already-owned skill instance
+	local ownedSkill = SkillService.getOwnedSkill(pState, skillIdentifier)
+	if not ownedSkill then
+		warn(string.format("[Server] EquipSkill rejected unowned skill '%s' for %s.", tostring(skillIdentifier), player.Name))
+		return
+	end
 
-	local success, err = SkillService.equipSkill(pState, skillInst)
+	local success, err = SkillService.equipSkill(pState, ownedSkill, slot :: any)
 	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s equipped skill %s.", player.DisplayName, skillDefId))
+		RunManager.broadcastRunSnapshots(string.format("%s equipped skill %s.", player.DisplayName, ownedSkill.DefinitionId))
 	elseif err then
 		warn(string.format("[Server] EquipSkill failed for %s: %s", player.Name, err))
 	end
@@ -216,7 +238,7 @@ end)
 -- 13. Unequip Skill
 NetworkService.UnequipSkillEvent.OnServerEvent:Connect(function(player: Player, slot: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(slot) ~= "string" then return end
+	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
 
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then return end
@@ -232,7 +254,13 @@ end)
 -- 14. Unlock Passive Node
 NetworkService.UnlockPassiveEvent.OnServerEvent:Connect(function(player: Player, nodeId: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(nodeId) ~= "string" then return end
+	if typeof(nodeId) ~= "string" or #nodeId == 0 then return end
+
+	local def = PassiveData.getNode(nodeId)
+	if not def then
+		warn(string.format("[Server] UnlockPassive rejected invalid nodeId '%s' for %s.", tostring(nodeId), player.Name))
+		return
+	end
 
 	local pState = RunManager.getPlayerState(player.UserId)
 	if not pState then return end
@@ -245,10 +273,32 @@ NetworkService.UnlockPassiveEvent.OnServerEvent:Connect(function(player: Player,
 	end
 end)
 
--- 15. Use Skill in Combat
+-- 15. Unlock Skill Definition
+NetworkService.UnlockSkillEvent.OnServerEvent:Connect(function(player: Player, skillDefId: any)
+	if not NetworkService.checkRateLimit(player, "General") then return end
+	if typeof(skillDefId) ~= "string" or #skillDefId == 0 then return end
+
+	local def = SkillData.getSkill(skillDefId)
+	if not def then
+		warn(string.format("[Server] UnlockSkill rejected invalid skillDefId '%s' for %s.", tostring(skillDefId), player.Name))
+		return
+	end
+
+	local pState = RunManager.getPlayerState(player.UserId)
+	if not pState then return end
+
+	local success, err = SkillService.unlockSkill(pState, skillDefId)
+	if success then
+		RunManager.broadcastRunSnapshots(string.format("%s unlocked skill %s.", player.DisplayName, skillDefId))
+	elseif err then
+		warn(string.format("[Server] UnlockSkill failed for %s: %s", player.Name, err))
+	end
+end)
+
+-- 16. Use Skill in Combat
 NetworkService.UseSkillEvent.OnServerEvent:Connect(function(player: Player, slot: any, targetParam: any)
 	if not NetworkService.checkRateLimit(player, "Combat") then return end
-	if typeof(slot) ~= "string" then return end
+	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
 
 	local success, err = CombatService.useSkill(player, slot :: any, targetParam)
 	if not success and err then

@@ -137,7 +137,7 @@ Suite 44 in `TestRunner.luau` verifies the complete end-to-end flow:
 
 ## 4. Test Suite Summary
 
-The test runner now covers **50 distinct test suites** and **395 automated assertions**:
+The test runner now covers **51 distinct test suites** and **432 automated assertions**:
 
 - **Suite 40**: Phase 3 Equipment Foundation (Creation, slot assignment, equip/unequip lifecycle, single-slot replacement, inventory tracking, owner mismatch rejection, modifier aggregation).
 - **Suite 41**: Phase 3 Centralized Stat Resolution (Base class stats, additive stacking, multiplicative stacking, absolute override precedence, stat bounds clamping, derived stat synchronization).
@@ -150,12 +150,15 @@ The test runner now covers **50 distinct test suites** and **395 automated asser
 - **Suite 48**: Phase 3.1 Active Skill Transactional Execution (Disconnected player rejection, downed player rejection, non-PlayerPhase rejection, target failure zero-cost & zero-cooldown rollback, defeated enemy rejection, successful execution).
 - **Suite 49**: Phase 3.1 Network Contracts & Remote Event Authority (All 6 RemoteEvents registered in `NetworkService`, category rate limiting enforcement, player-inferred sender authority).
 - **Suite 50**: Phase 3.1 Extended Vertical Slice End-to-End (Complete expedition lifecycle: gear provisioning & equipping, passive unlocks, skill unlocks, transactional execution, cooldown enforcement and turn reset, and gear unequip modifier cleanup with zero stale leaks).
+- **Suite 51**: Phase 3.2 Network Ownership Boundary & Contract Validation (Authoritative skill ownership via `SkillInventory`, `getOwnedSkill` lookup, rejection of unowned/invalid/foreign skills, complete removal of `bypassInventoryCheck`, strict whitelist slot contracts, snapshot serialization consistency for `PlayerView`).
 
 ---
 
-## 5. Phase 3.1 Hardening Architecture
+## 5. Phase 3.1 & 3.2 Hardening Architecture
 
-For complete details on Phase 3.1 hardening changes, state boundaries (ephemeral run vs persistent account profile), and formal stat semantics, see [PHASE_3.1_HARDENING.md](file:///c:/Users/owner/Documents/spire-game/PHASE_3.1_HARDENING.md).
+For complete details on Phase 3.1 and Phase 3.2 hardening changes, see:
+- [PHASE_3.1_HARDENING.md](file:///c:/Users/owner/Documents/spire-game/PHASE_3.1_HARDENING.md) (Equipment authority, transactional skills, negative modifier stacking, state boundaries).
+- [PHASE_3.2_NETWORK_OWNERSHIP.md](file:///c:/Users/owner/Documents/spire-game/PHASE_3.2_NETWORK_OWNERSHIP.md) (Closing network ownership boundaries, strict slot validation, snapshot serialization consistency, remote event security audit).
 
 ---
 
@@ -169,3 +172,4 @@ To maintain surgical focus and avoid content sprawl, the following systems remai
 - CraftingService, MonetizationService, BattlePassService (verified absent by verification suite).
 - Persistent Account Profiles (deferred to Phase 4+; clear state boundaries established in `StateTypes.luau`).
 - Complex UI visualizers for skill bars and passive trees (visual presentation deferred to client polish pass).
+

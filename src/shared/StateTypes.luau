@@ -53,7 +53,7 @@ export type SkillInstance = {
 	InstanceId: string,
 	DefinitionId: string,
 	OwnerUserId: number,
-	Slot: SkillSlot,
+	Slot: SkillSlot?,
 	CurrentCooldown: number,
 }
 
@@ -102,6 +102,7 @@ export type PlayerState = {
 	EquippedItems: { [EquipmentSlot]: EquipmentInstance }?,
 	EquipmentInventory: { EquipmentInstance }?,
 	EquippedSkills: { [SkillSlot]: SkillInstance }?,
+	SkillInventory: { SkillInstance }?, -- Authoritative owned skill instances for this run
 	UnlockedSkills: { [string]: boolean }?, -- Skills legitimately unlocked for this run
 	UnlockedPassives: { [string]: boolean }?,
 	PassivePoints: number?,
@@ -378,6 +379,11 @@ export type PlayerView = {
 	IsDowned: boolean,
 	Gold: number,
 	RelicIds: { string },
+	EquippedItems: { [string]: string }?,
+	EquippedSkills: { [string]: string }?,
+	SkillInventory: { string }?,
+	UnlockedPassives: { [string]: boolean }?,
+	PassivePoints: number?,
 }
 
 export type EnemyView = {

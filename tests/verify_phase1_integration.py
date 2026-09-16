@@ -619,6 +619,64 @@ test("[ExtSlice] HeroicStrike executed end-to-end" in testrunner_src, "Suite 50 
 test("[ExtSlice] Second use blocked by active cooldown" in testrunner_src, "Suite 50 tests cooldown blocking second use")
 test("[ExtSlice] BonusDamage dropped from 8 to 3" in testrunner_src, "Suite 50 tests modifier cleanup on gear unequip")
 
+# 43. Phase 3.2 Network Ownership Boundary & Contract Validation
+print("\n--- [Check 43] Phase 3.2 Network Ownership Boundary & Contract Validation ---")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+equip_service_src = (ROOT / "src/server/services/EquipmentService.luau").read_text(encoding="utf-8")
+skill_service_src = (ROOT / "src/server/services/SkillService.luau").read_text(encoding="utf-8")
+network_service_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+server_init_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+
+# StateTypes schema checks
+test("SkillInventory: { SkillInstance }?" in state_types_src, "StateTypes defines SkillInventory in PlayerState")
+test("EquippedSkills: { [string]: string }?" in state_types_src, "StateTypes defines EquippedSkills in PlayerView")
+test("SkillInventory: { string }?" in state_types_src, "StateTypes defines SkillInventory in PlayerView")
+test("UnlockedPassives: { [string]: boolean }?" in state_types_src, "StateTypes defines UnlockedPassives in PlayerView")
+test("PassivePoints: number?" in state_types_src, "StateTypes defines PassivePoints in PlayerView")
+
+# SkillService & Network ownership checks
+test("function SkillService.getOwnedSkill(" in skill_service_src, "SkillService provides getOwnedSkill API")
+test("SkillService.getOwnedSkill(pState, skillIdentifier)" in server_init_src, "init.server.luau verifies skill ownership via getOwnedSkill")
+test("SkillService.createInstance" not in server_init_src, "init.server.luau contains 0 SkillService.createInstance calls")
+
+# Equipment inventory boundary checks
+test("bypassInventoryCheck" not in equip_service_src, "EquipmentService contains 0 bypassInventoryCheck references")
+
+# Slot validation checks
+test("VALID_EQUIPMENT_SLOTS" in server_init_src, "init.server.luau validates VALID_EQUIPMENT_SLOTS")
+test("VALID_SKILL_SLOTS" in server_init_src, "init.server.luau validates VALID_SKILL_SLOTS")
+
+# NetworkService registration & init connection
+test("NetworkService.UnlockSkillEvent" in network_service_src, "NetworkService registers UnlockSkillEvent")
+test("NetworkService.UnlockSkillEvent.OnServerEvent:Connect" in server_init_src, "init.server.luau listens to UnlockSkillEvent")
+
+# TestRunner Suite 51 checks
+test("--- [Suite 51] Phase 3.2 Network Ownership Boundary & Contract Validation" in testrunner_src, "TestRunner includes Suite 51: Network Ownership Boundary")
+test("[NetBoundary] UnlockSkillEvent registered in NetworkService" in testrunner_src, "Suite 51 tests UnlockSkillEvent registration")
+test("[NetContract] Weapon is valid equipment slot" in testrunner_src, "Suite 51 tests valid equipment slot contract")
+test("[NetContract] Skill1 is valid skill slot" in testrunner_src, "Suite 51 tests valid skill slot contract")
+test("[NetContract] Banana rejected as equipment slot" in testrunner_src, "Suite 51 tests invalid equipment slot rejection")
+test("[NetContract] Skill99 rejected as skill slot" in testrunner_src, "Suite 51 tests invalid skill slot rejection")
+test("[NetBoundary] Unowned skill definition returns nil from getOwnedSkill" in testrunner_src, "Suite 51 tests unowned skill lookup rejection")
+test("[NetBoundary] Equipping unowned skill definition rejected" in testrunner_src, "Suite 51 tests unowned skill equip rejection")
+test("[NetBoundary] Foreign skill instance rejected by equipSkill" in testrunner_src, "Suite 51 tests foreign skill instance equip rejection")
+test("[NetBoundary] Player 1 authoritatively unlocked HeroicStrike" in testrunner_src, "Suite 51 tests authoritative skill unlock")
+test("[NetBoundary] Equipping valid owned skill succeeds" in testrunner_src, "Suite 51 tests valid owned skill equip")
+test("[NetBoundary] Equipping same instance in another slot rejected" in testrunner_src, "Suite 51 tests duplicate skill instance equip rejection")
+test("[NetBoundary] Fabricated equipment instance ID rejected" in testrunner_src, "Suite 51 tests fabricated equipment instance rejection")
+test("[NetBoundary] Equipment instance not in inventory rejected" in testrunner_src, "Suite 51 tests unowned equipment instance rejection")
+test("[NetBoundary] Foreign equipment owner mismatch rejected" in testrunner_src, "Suite 51 tests foreign equipment owner mismatch rejection")
+test("[NetBoundary] Equipment forged slot mismatch rejected" in testrunner_src, "Suite 51 tests equipment forged slot mismatch rejection")
+test("[NetBoundary] Equipping legitimate inventory item succeeds" in testrunner_src, "Suite 51 tests legitimate equipment equip")
+test("[NetBoundary] Number skill slot rejected safely" in testrunner_src, "Suite 51 tests non-string slot type rejection")
+test("[NetBoundary] Number equipment instance ID rejected safely" in testrunner_src, "Suite 51 tests non-string equipment ID rejection")
+test("[NetSnapshot] Run snapshot serializes equipped weapon definition ID" in testrunner_src, "Suite 51 tests run snapshot equipped items serialization")
+test("[NetSnapshot] Run snapshot serializes equipped skill definition ID" in testrunner_src, "Suite 51 tests run snapshot equipped skills serialization")
+test("[NetSnapshot] Run snapshot serializes skill inventory array" in testrunner_src, "Suite 51 tests run snapshot skill inventory serialization")
+test("[NetSnapshot] Run snapshot serializes unlocked passives set" in testrunner_src, "Suite 51 tests run snapshot passives serialization")
+test("[NetSnapshot] Run snapshot serializes accurate remaining passive points" in testrunner_src, "Suite 51 tests run snapshot passive points serialization")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")
@@ -627,4 +685,5 @@ if failed > 0:
 	sys.exit(1)
 else:
     print("ALL LOGIC CHECKS VERIFIED 100% CLEAN!\n")
+
 

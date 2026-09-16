@@ -38,6 +38,7 @@ local ClassService = require(servicesFolder:WaitForChild("ClassService") :: Modu
 local DungeonService = require(servicesFolder:WaitForChild("DungeonService") :: ModuleScript)
 local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
 local PersistenceService = require(servicesFolder:WaitForChild("PersistenceService") :: ModuleScript)
+local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
 
 local CombatService: any = nil
 
@@ -80,6 +81,31 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		local handCount = 0
 		for _ in pState.Hand do handCount += 1 end
 
+		local equippedItemsSummary: { [string]: string } = {}
+		if pState.EquippedItems then
+			for slot, item in pState.EquippedItems do
+				if item then
+					equippedItemsSummary[slot] = item.DefinitionId
+				end
+			end
+		end
+
+		local equippedSkillsSummary: { [string]: string } = {}
+		if pState.EquippedSkills then
+			for slot, skill in pState.EquippedSkills do
+				if skill then
+					equippedSkillsSummary[slot] = skill.DefinitionId
+				end
+			end
+		end
+
+		local skillInventoryList: { string } = {}
+		if pState.SkillInventory then
+			for _, skill in ipairs(pState.SkillInventory) do
+				table.insert(skillInventoryList, skill.DefinitionId)
+			end
+		end
+
 		partyViews[tostring(pUserId)] = {
 			UserId = pUserId,
 			DisplayName = pState.DisplayName,
@@ -97,6 +123,11 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 			IsDowned = pState.IsDowned,
 			Gold = pState.Gold,
 			RelicIds = pState.RelicIds,
+			EquippedItems = equippedItemsSummary,
+			EquippedSkills = equippedSkillsSummary,
+			SkillInventory = skillInventoryList,
+			UnlockedPassives = table.clone(pState.UnlockedPassives or {}),
+			PassivePoints = pState.PassivePoints or 0,
 		}
 	end
 
@@ -193,15 +224,16 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		EquippedItems = {},
 		EquipmentInventory = {},
 		EquippedSkills = {},
-		UnlockedSkills = {
-			["HeroicStrike"] = true,
-			["AegisBarrier"] = true,
-			["BattleRally"] = true,
-			["Whirlwind"] = true,
-		},
+		SkillInventory = {},
+		UnlockedSkills = {},
 		UnlockedPassives = {},
 		PassivePoints = 0,
 	}
+
+	SkillService.unlockSkill(pState, "HeroicStrike")
+	SkillService.unlockSkill(pState, "AegisBarrier")
+	SkillService.unlockSkill(pState, "BattleRally")
+	SkillService.unlockSkill(pState, "Whirlwind")
 
 	currentRun.PartyMembers[userId] = pState
 	ClassService.initializePlayerForRun(pState)

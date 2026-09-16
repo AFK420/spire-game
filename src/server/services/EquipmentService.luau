@@ -92,8 +92,7 @@ end
 -- Accepts either an EquipmentInstance table or an InstanceId string
 function EquipmentService.equipItem(
 	playerState: StateTypes.PlayerState,
-	equipInstOrId: any,
-	bypassInventoryCheck: boolean?
+	equipInstOrId: any
 ): (boolean, string?)
 	if not playerState then
 		return false, "Player state is nil."
@@ -129,8 +128,7 @@ function EquipmentService.equipItem(
 			end
 		end
 
-		-- Phase 3.1: Enforce that the instance must exist in inventory unless internal bypass is explicitly flagged
-		if not invIndex and not bypassInventoryCheck then
+		if not invIndex then
 			return false, string.format("Equipment instance '%s' not found in player's inventory.", targetInst.InstanceId)
 		end
 	else

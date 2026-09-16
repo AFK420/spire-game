@@ -60,6 +60,7 @@ NetworkService.UnequipEquipmentEvent = getOrCreateRemoteEvent("UnequipEquipment"
 NetworkService.EquipSkillEvent = getOrCreateRemoteEvent("EquipSkill")
 NetworkService.UnequipSkillEvent = getOrCreateRemoteEvent("UnequipSkill")
 NetworkService.UnlockPassiveEvent = getOrCreateRemoteEvent("UnlockPassive")
+NetworkService.UnlockSkillEvent = getOrCreateRemoteEvent("UnlockSkill")
 NetworkService.UseSkillEvent = getOrCreateRemoteEvent("UseSkill")
 
 -- Server -> Client State & Feedback Events

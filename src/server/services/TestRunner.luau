@@ -3763,6 +3763,196 @@ function TestRunner.runAllTests(): boolean
 	assertTest(postUnequipStats.BonusDamage == 3, "[ExtSlice] BonusDamage dropped from 8 to 3 (Weapon removed, Passive remains)")
 	assertTest(extPlayer.Resources.MaxHP == 145, "[ExtSlice] MaxHP dropped from 155 to 145 (10 Weapon HP removed)")
 
+	----------------------------------------------------------------------------
+	-- TEST 51: Phase 3.2 Network Ownership Boundary & Contract Validation
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 51] Phase 3.2 Network Ownership Boundary & Contract Validation ---")
+
+	-- 1. Remote Event Registration: UnlockSkillEvent registered
+	assertTest(NetworkService.UnlockSkillEvent ~= nil, "[NetBoundary] UnlockSkillEvent registered in NetworkService")
+
+	-- 2. Network Slot Contract Validation
+	local validEquipmentSlots: { [string]: boolean } = { ["Weapon"] = true, ["Armor"] = true, ["Accessory"] = true }
+	local validSkillSlots: { [string]: boolean } = { ["Skill1"] = true, ["Skill2"] = true, ["Skill3"] = true, ["Skill4"] = true }
+
+	local function isValidEquipSlot(slot: any): boolean
+		return typeof(slot) == "string" and validEquipmentSlots[slot] == true
+	end
+	local function isValidSkillSlot(slot: any): boolean
+		return typeof(slot) == "string" and validSkillSlots[slot] == true
+	end
+
+	assertTest(isValidEquipSlot("Weapon") == true, "[NetContract] Weapon is valid equipment slot")
+	assertTest(isValidEquipSlot("Armor") == true, "[NetContract] Armor is valid equipment slot")
+	assertTest(isValidEquipSlot("Accessory") == true, "[NetContract] Accessory is valid equipment slot")
+	assertTest(isValidEquipSlot("Banana") == false, "[NetContract] Banana rejected as equipment slot")
+	assertTest(isValidEquipSlot("Skill1") == false, "[NetContract] Skill1 rejected as equipment slot")
+	assertTest(isValidEquipSlot(123) == false, "[NetContract] Number rejected as equipment slot")
+	assertTest(isValidEquipSlot("") == false, "[NetContract] Empty string rejected as equipment slot")
+	assertTest(isValidEquipSlot({}) == false, "[NetContract] Table rejected as equipment slot")
+
+	assertTest(isValidSkillSlot("Skill1") == true, "[NetContract] Skill1 is valid skill slot")
+	assertTest(isValidSkillSlot("Skill4") == true, "[NetContract] Skill4 is valid skill slot")
+	assertTest(isValidSkillSlot("Skill99") == false, "[NetContract] Skill99 rejected as skill slot")
+	assertTest(isValidSkillSlot("Weapon") == false, "[NetContract] Weapon rejected as skill slot")
+	assertTest(isValidSkillSlot(42) == false, "[NetContract] Number rejected as skill slot")
+	assertTest(isValidSkillSlot(false) == false, "[NetContract] Boolean rejected as skill slot")
+
+	-- 3. Skill Network Ownership Boundary
+	local netUser1 = 9101
+	local netUser2 = 9102
+	local netPlayer1: StateTypes.PlayerState = {
+		UserId = netUser1,
+		DisplayName = "NetHeroOne",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		EquippedItems = {},
+		EquipmentInventory = {},
+		EquippedSkills = {},
+		SkillInventory = {},
+		UnlockedSkills = {},
+		UnlockedPassives = {},
+		PassivePoints = 0,
+	}
+	local netPlayer2: StateTypes.PlayerState = {
+		UserId = netUser2,
+		DisplayName = "NetHeroTwo",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		EquippedItems = {},
+		EquipmentInventory = {},
+		EquippedSkills = {},
+		SkillInventory = {},
+		UnlockedSkills = {},
+		UnlockedPassives = {},
+		PassivePoints = 0,
+	}
+
+	-- 3a. Client requests valid but unowned skill definition -> rejected, zero mutation
+	local unownedResolved = SkillService.getOwnedSkill(netPlayer1, "Whirlwind")
+	assertTest(unownedResolved == nil, "[NetBoundary] Unowned skill definition returns nil from getOwnedSkill")
+	local okEquipUnowned, errEquipUnowned = SkillService.equipSkill(netPlayer1, "Whirlwind", "Skill1")
+	assertTest(okEquipUnowned == false and string.find(errEquipUnowned or "", "unlocked") ~= nil, "[NetBoundary] Equipping unowned skill definition rejected")
+	assertTest(netPlayer1.EquippedSkills["Skill1"] == nil, "[NetBoundary] Zero state mutation on unowned skill equip")
+
+	-- 3b. Client requests invalid skill definition -> rejected, zero mutation
+	local badDefResolved = SkillService.getOwnedSkill(netPlayer1, "FakeSkillDef")
+	assertTest(badDefResolved == nil, "[NetBoundary] Non-existent skill definition returns nil from getOwnedSkill")
+	local okBadDef, _ = SkillService.equipSkill(netPlayer1, "FakeSkillDef", "Skill1")
+	assertTest(okBadDef == false, "[NetBoundary] Equipping non-existent skill definition rejected")
+	assertTest(netPlayer1.EquippedSkills["Skill1"] == nil, "[NetBoundary] Zero state mutation on non-existent skill equip")
+
+	-- 3c. Client requests another player's skill -> rejected, zero mutation
+	local okUnlockP2, _, p2SkillInst = SkillService.unlockSkill(netPlayer2, "HeroicStrike")
+	assertTest(okUnlockP2 == true and p2SkillInst ~= nil, "[NetBoundary] Player 2 unlocked HeroicStrike")
+	local foreignLookup = SkillService.getOwnedSkill(netPlayer1, (p2SkillInst :: any).InstanceId)
+	assertTest(foreignLookup == nil, "[NetBoundary] Player 1 cannot look up Player 2's skill instance via getOwnedSkill")
+	local okForeignEquip, errForeignEquip = SkillService.equipSkill(netPlayer1, p2SkillInst, "Skill1")
+	assertTest(okForeignEquip == false and string.find(errForeignEquip or "", "does not match player") ~= nil, "[NetBoundary] Foreign skill instance rejected by equipSkill")
+	assertTest(netPlayer1.EquippedSkills["Skill1"] == nil, "[NetBoundary] Zero state mutation on foreign skill equip")
+
+	-- 3d. Authoritative unlock of skill for player 1
+	local okUnlockP1, _, p1SkillInst = SkillService.unlockSkill(netPlayer1, "HeroicStrike")
+	assertTest(okUnlockP1 == true and p1SkillInst ~= nil, "[NetBoundary] Player 1 authoritatively unlocked HeroicStrike")
+	assertTest(#netPlayer1.SkillInventory == 1, "[NetBoundary] HeroicStrike added to Player 1 SkillInventory")
+	assertTest(SkillService.getOwnedSkill(netPlayer1, "HeroicStrike") == p1SkillInst, "[NetBoundary] getOwnedSkill resolves by definition ID")
+	assertTest(SkillService.getOwnedSkill(netPlayer1, (p1SkillInst :: any).InstanceId) == p1SkillInst, "[NetBoundary] getOwnedSkill resolves by instance ID")
+
+	-- 3e. Client requests valid owned skill -> succeeds, slotted correctly
+	local okValidEquip, _ = SkillService.equipSkill(netPlayer1, p1SkillInst, "Skill1")
+	assertTest(okValidEquip == true, "[NetBoundary] Equipping valid owned skill succeeds")
+	assertTest(netPlayer1.EquippedSkills["Skill1"] == p1SkillInst, "[NetBoundary] Skill placed into EquippedSkills['Skill1']")
+	assertTest((p1SkillInst :: any).Slot == "Skill1", "[NetBoundary] SkillInstance.Slot updated to Skill1")
+
+	-- 3f. Repeated equip of same instance in same slot -> handled deterministically
+	local okReEquip, _ = SkillService.equipSkill(netPlayer1, p1SkillInst, "Skill1")
+	assertTest(okReEquip == true, "[NetBoundary] Repeated equip in same slot succeeds idempotently")
+	assertTest(netPlayer1.EquippedSkills["Skill1"] == p1SkillInst, "[NetBoundary] EquippedSkills['Skill1'] unchanged")
+
+	-- 3g. Repeated equip of same instance in another slot -> rejected
+	local okDupSlot, errDupSlot = SkillService.equipSkill(netPlayer1, p1SkillInst, "Skill2")
+	assertTest(okDupSlot == false and string.find(errDupSlot or "", "already equipped") ~= nil, "[NetBoundary] Equipping same instance in another slot rejected")
+	assertTest(netPlayer1.EquippedSkills["Skill2"] == nil, "[NetBoundary] Slot 2 remains empty")
+
+	-- 4. Equipment Network Boundary Hardening
+	-- 4a. Fabricated equipment instance ID -> rejected
+	local okFakeGear, errFakeGear = EquipmentService.equipItem(netPlayer1, "fake_guid_99999")
+	assertTest(okFakeGear == false and string.find(errFakeGear or "", "not found in player's inventory") ~= nil, "[NetBoundary] Fabricated equipment instance ID rejected")
+
+	-- 4b. Forged instance object (created table, not in inventory) -> rejected
+	local forgedGear = EquipmentService.createInstance("IronBroadsword", netUser1)
+	local okForgedGear, errForgedGear = EquipmentService.equipItem(netPlayer1, forgedGear)
+	assertTest(okForgedGear == false and string.find(errForgedGear or "", "not found in player's inventory") ~= nil, "[NetBoundary] Equipment instance not in inventory rejected")
+
+	-- 4c. Equipment wrong owner -> rejected
+	local p2Gear = EquipmentService.grantEquipment(netPlayer2, "IronBroadsword")
+	assert(p2Gear, "p2Gear granted")
+	table.insert(netPlayer1.EquipmentInventory, p2Gear)
+	local okWrongOwner, errWrongOwner = EquipmentService.equipItem(netPlayer1, p2Gear)
+	assertTest(okWrongOwner == false and string.find(errWrongOwner or "", "does not match player") ~= nil, "[NetBoundary] Foreign equipment owner mismatch rejected")
+	table.remove(netPlayer1.EquipmentInventory, #netPlayer1.EquipmentInventory)
+
+	-- 4d. Equipment forged slot -> rejected
+	local p1LegitSword = EquipmentService.grantEquipment(netPlayer1, "IronBroadsword")
+	assert(p1LegitSword, "p1LegitSword granted")
+	(p1LegitSword :: any).Slot = "Armor"
+	local okForgedSlot, errForgedSlot = EquipmentService.equipItem(netPlayer1, p1LegitSword)
+	assertTest(okForgedSlot == false and string.find(errForgedSlot or "", "Forged slot") ~= nil, "[NetBoundary] Equipment forged slot mismatch rejected")
+	(p1LegitSword :: any).Slot = "Weapon"
+
+	-- 4e. Legitimate inventory instance -> succeeds
+	local okLegitEquip, _ = EquipmentService.equipItem(netPlayer1, p1LegitSword)
+	assertTest(okLegitEquip == true, "[NetBoundary] Equipping legitimate inventory item succeeds")
+	assertTest(netPlayer1.EquippedItems ~= nil and netPlayer1.EquippedItems["Weapon"] == p1LegitSword, "[NetBoundary] Item equipped in EquippedItems['Weapon']")
+
+	-- 5. Invalid argument types & enums rejected safely without unhandled error
+	local okBadSlotType, _ = SkillService.equipSkill(netPlayer1, p1SkillInst, 999 :: any)
+	assertTest(okBadSlotType == false, "[NetBoundary] Number skill slot rejected safely")
+	local okBadSlotTable, _ = SkillService.equipSkill(netPlayer1, p1SkillInst, {} :: any)
+	assertTest(okBadSlotTable == false, "[NetBoundary] Table skill slot rejected safely")
+	local okBadEquipIdType, _ = EquipmentService.equipItem(netPlayer1, 12345 :: any)
+	assertTest(okBadEquipIdType == false, "[NetBoundary] Number equipment instance ID rejected safely")
+	local okBadSkillEnum, _ = SkillService.equipSkill(netPlayer1, p1SkillInst, "Skill99" :: any)
+	assertTest(okBadSkillEnum == false, "[NetBoundary] Invalid enum slot 'Skill99' rejected without state mutation")
+
+	-- 6. Snapshot Consistency: PlayerView reflects exact authoritative state
+	PassiveService.grantPoints(netPlayer1, 1)
+	local okNodeUnlock, _ = PassiveService.unlockNode(netPlayer1, "Warlord_IronSkin")
+	assertTest(okNodeUnlock == true, "[NetSnapshot] Warlord_IronSkin unlocked authoritatively")
+
+	-- Register netPlayer1 in RunManager party for snapshot generation
+	local runStateNet = RunManager.getRunState()
+	runStateNet.PartyMembers[netUser1] = netPlayer1
+
+	local runSnap = RunManager.getRunSnapshotForPlayer({ UserId = netUser1 } :: any)
+	local pView = runSnap.Party[tostring(netUser1)]
+	assertTest(pView ~= nil, "[NetSnapshot] PlayerView generated in run snapshot")
+	assertTest(pView.EquippedItems ~= nil and pView.EquippedItems["Weapon"] == "IronBroadsword", "[NetSnapshot] Run snapshot serializes equipped weapon definition ID")
+	assertTest(pView.EquippedSkills ~= nil and pView.EquippedSkills["Skill1"] == "HeroicStrike", "[NetSnapshot] Run snapshot serializes equipped skill definition ID")
+	assertTest(pView.SkillInventory ~= nil and #pView.SkillInventory == 1 and pView.SkillInventory[1] == "HeroicStrike", "[NetSnapshot] Run snapshot serializes skill inventory array")
+	assertTest(pView.UnlockedPassives ~= nil and pView.UnlockedPassives["Warlord_IronSkin"] == true, "[NetSnapshot] Run snapshot serializes unlocked passives set")
+	assertTest(pView.PassivePoints == 0, "[NetSnapshot] Run snapshot serializes accurate remaining passive points")
+
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2 & PHASE 3 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
