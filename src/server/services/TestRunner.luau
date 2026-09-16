@@ -89,6 +89,8 @@ function TestRunner.runAllTests(): boolean
 
 	-- Isolate test environment from live server state
 	RunManager.beginTestIsolation()
+
+	local testOk, testErr = pcall(function()
 	RunManager.resetRunForTesting()
 	local runState = RunManager.getRunState()
 
@@ -4783,6 +4785,65 @@ function TestRunner.runAllTests(): boolean
 	assertTest(RunManager.isTestIsolationActive() == true, "[ClassLock] Test isolation is active during test execution")
 	RunManager.endTestIsolation()
 	assertTest(RunManager.isTestIsolationActive() == false, "[ClassLock] Test isolation tears down cleanly")
+
+	-- Test 11: Live state is intact and points to liveRun after isolation teardown
+	local liveState = RunManager.getRunState()
+	assertTest(liveState == RunManager.getLiveRunState(), "[IsolationSafety] currentRun points back to liveRun")
+	assertTest(liveState.PartyMembers[lockTestPlayer.UserId] == nil, "[IsolationSafety] LiveRun party members not contaminated by test players")
+	assertTest(liveState.PartyMembers[lockTestPlayer2.UserId] == nil, "[IsolationSafety] LiveRun contains zero test party members")
+
+	-- Test 12: runWithTestIsolation executes sub-test and tears down cleanly on normal completion
+	local subtestRan = false
+	local runWithOk, runWithResult = RunManager.runWithTestIsolation(function()
+		assert(RunManager.isTestIsolationActive() == true, "Isolation must be active inside runWithTestIsolation")
+		local isolatedPlayer = { UserId = 87099, Name = "IsoTester", DisplayName = "IsoTester" }
+		local isoState = RunManager.addPlayer(isolatedPlayer :: any)
+		assert(isoState ~= nil, "Isolated player must be added to isolated run")
+		assert(RunManager.getLiveRunState().PartyMembers[87099] == nil, "LiveRun must not have isolated player")
+		subtestRan = true
+		return "subtest_completed"
+	end)
+	assertTest(runWithOk == true and runWithResult == "subtest_completed" and subtestRan == true, "[IsolationSafety] runWithTestIsolation succeeds on normal execution")
+	assertTest(RunManager.isTestIsolationActive() == false, "[IsolationSafety] Isolation inactive after runWithTestIsolation returns")
+	assertTest(RunManager.getLiveRunState().PartyMembers[87099] == nil, "[IsolationSafety] LiveRun remains clean after isolated sub-test")
+
+	-- Test 13: runWithTestIsolation catches errors and guarantees isolation teardown
+	local livePlayerMock = { UserId = 87900, Name = "LivePartyMember", DisplayName = "LiveMember" }
+	local liveMemberState = RunManager.addPlayer(livePlayerMock :: any)
+	assertTest(RunManager.getLiveRunState().PartyMembers[87900] ~= nil, "[IsolationSafety] Live party member added to liveRun before error test")
+
+	local caughtOk, caughtErr = RunManager.runWithTestIsolation(function()
+		assert(RunManager.isTestIsolationActive() == true, "Isolation active prior to error")
+		local testPlayer = { UserId = 87901, Name = "CrashTester", DisplayName = "CrashTester" }
+		RunManager.addPlayer(testPlayer :: any)
+		error("Simulated test failure for exception safety verification")
+	end)
+	assertTest(caughtOk == false, "[IsolationSafety] runWithTestIsolation captures thrown error")
+	assertTest(string.find(tostring(caughtErr), "Simulated test failure") ~= nil, "[IsolationSafety] runWithTestIsolation preserves error message")
+	assertTest(RunManager.isTestIsolationActive() == false, "[IsolationSafety] Isolation ends automatically after error")
+	assertTest(RunManager.getRunState() == RunManager.getLiveRunState(), "[IsolationSafety] currentRun points to liveRun after isolated failure")
+	assertTest(RunManager.getLiveRunState().PartyMembers[87900] == liveMemberState, "[IsolationSafety] Live players remain intact after test failure")
+	assertTest(RunManager.getLiveRunState().PartyMembers[87901] == nil, "[IsolationSafety] Failed test state never leaked to liveRun")
+
+	-- Test 14: RequestStateSync during normal operation returns snapshot from liveRun with broadcasts unsuppressed
+	local liveSyncSnapshot = RunManager.getRunSnapshotForPlayer(livePlayerMock :: any)
+	assertTest(liveSyncSnapshot ~= nil, "[IsolationSafety] Normal RequestStateSync returns valid snapshot from liveRun")
+	assertTest(liveSyncSnapshot.Party[tostring(livePlayerMock.UserId)] ~= nil, "[IsolationSafety] Live snapshot contains live party member")
+	assertTest(liveSyncSnapshot.Party[tostring(lockTestPlayer.UserId)] == nil, "[IsolationSafety] Live snapshot contains zero test party members")
+	assertTest(RunManager.isTestIsolationActive() == false, "[IsolationSafety] Broadcasts are unsuppressed in live server mode")
+
+	-- Clean up mock live player
+	RunManager.removePlayer(livePlayerMock :: any)
+	end)
+
+	-- Defensive invariant: Isolation must NEVER remain active regardless of success or failure
+	if RunManager.isTestIsolationActive() then
+		RunManager.endTestIsolation()
+	end
+
+	if not testOk then
+		error(testErr)
+	end
 
 	print("\n============================================================")
 	print(string.format("  ALL %d PHASE 1, 2, 3 & PHASE 4 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))

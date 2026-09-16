@@ -74,8 +74,10 @@ local internalDungeonRun: DungeonMap.DungeonRun? = nil
 local liveDungeonRun: DungeonMap.DungeonRun? = nil
 
 function RunManager.beginTestIsolation()
-	isIsolatedTesting = true
-	liveDungeonRun = internalDungeonRun
+	if not isIsolatedTesting then
+		liveDungeonRun = internalDungeonRun
+		isIsolatedTesting = true
+	end
 	isolatedTestRun = createInitialRun("run_test_isolated")
 	currentRun = isolatedTestRun
 	internalDungeonRun = nil
@@ -87,10 +89,33 @@ function RunManager.endTestIsolation()
 	currentRun = liveRun
 	internalDungeonRun = liveDungeonRun
 	liveDungeonRun = nil
+
+	-- Safe reconnect sync: ensure real players connected during isolation are registered in liveRun
+	local okPlayers, players = pcall(function()
+		return Players:GetPlayers()
+	end)
+	if okPlayers and typeof(players) == "table" then
+		for _, player in ipairs(players) do
+			if player and player.UserId and not liveRun.PartyMembers[player.UserId] then
+				RunManager.addPlayer(player)
+			end
+		end
+	end
 end
 
 function RunManager.isTestIsolationActive(): boolean
 	return isIsolatedTesting
+end
+
+function RunManager.runWithTestIsolation<T>(testFn: () -> T): (boolean, any)
+	RunManager.beginTestIsolation()
+	local ok, result = pcall(testFn)
+	RunManager.endTestIsolation()
+	return ok, result
+end
+
+function RunManager.getLiveRunState(): StateTypes.RunState
+	return liveRun
 end
 
 --------------------------------------------------------------------------------
@@ -274,9 +299,6 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	SkillService.unlockSkill(pState, "Whirlwind")
 
 	currentRun.PartyMembers[userId] = pState
-	if isIsolatedTesting and typeof(player) == "Instance" and player:IsA("Player") then
-		liveRun.PartyMembers[userId] = pState
-	end
 	ClassService.initializePlayerForRun(pState)
 
 	RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName))
