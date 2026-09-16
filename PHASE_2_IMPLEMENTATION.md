@@ -228,8 +228,67 @@ A follow-up surgical hardening pass was completed to resolve deeper multiplayer 
 
 ---
 
-## 9. Strict Scope Boundary Confirmation
-- Phase 2, Phase 2.1, and Phase 2.2 are complete and hardened.
+## 9. Phase 2.3 Card Effect-Target Consistency & Mixed-Target Hardening
+
+A surgical correctness pass was completed to resolve mixed-target card definitions, enforce static effect-target compatibility rules, and prevent double-counting of bonus shield:
+
+### 1. Problem Analysis & Root Cause
+- **Target Incompatibility**: Phase 2 generic effect handlers enforce strict target kinds (`Damage`/`Poison` require `EnemyTarget`, `Shield`/`Heal`/`Revive`/`ModifyResource` require `PlayerTarget`). However, several multi-effect cards combined offensive and defensive effects while omitting explicit `Target` fields on sub-effects:
+  - `ShieldSlam` (Enemy target): Had `Shield` effect without explicit `Target = "Self"`.
+  - `WrenchThrow` (Enemy target): Had `Shield` effect without explicit `Target = "Self"`.
+  - `SoulHarvest` (Enemy target): Had `Heal` effect without explicit `Target = "Self"`.
+  - `TimeWarp` (Enemy target): Had `Shield` effect without explicit `Target = "Self"`.
+  - `DeployTurret` & `PackCall`: Had top-level `Target = "Self"`, which prevented client UI from allowing enemy targeting (`UIController.client.luau:646` requires `Target == "Enemy"` to select an enemy), rendering the offensive damage effect unexecutable.
+- **Double-Counting Bonus Shield**: In `CombatService.luau`, class gimmick bonus shield was being added directly to `playerState.Resources.Shield` *and* passed as `ActionBonusShield` into `EffectResolver`. When a card contained a `Shield` effect, the bonus shield was resolved twice.
+
+### 2. Implementation & Canonical Changes
+- **Mixed-Target Card Corrections (`src/shared/CardData.luau`)**:
+  - `ShieldSlam`: `Target = "Enemy"`, effects: `Shield -> Self` (8), `Damage -> Enemy` (8).
+  - `WrenchThrow`: `Target = "Enemy"`, effects: `Damage -> Enemy` (7), `Shield -> Self` (3).
+  - `SoulHarvest`: `Target = "Enemy"`, effects: `Damage -> Enemy` (7), `Heal -> Self` (3).
+  - `DeployTurret`: Top-level `Target = "Enemy"`, effects: `Shield -> Self` (6), `Damage -> Enemy` (6). Description updated: sentry turret shields caster and fires at target enemy.
+  - `TimeWarp`: `Target = "Enemy"`, effects: `Damage -> Enemy` (7), `Shield -> Self` (4).
+  - `PackCall`: Top-level `Target = "Enemy"`, effects: `Shield -> Self` (7), `Damage -> Enemy` (4). Description updated: rally pack to shield caster and deal damage to target enemy.
+  - Explicit `Target` added to `PoisonDart`, `FirstAid`, and `Contagion`.
+- **Static Validation Engine (`CardData.luau`)**:
+  - Implemented `CardData.validateCard(card: Card): (boolean, string?)` and `CardData.validateCardDefinitions(): (boolean, string?)`.
+  - Validates 7 core rules:
+    1. Every effect's effective target (`eff.Target or card.Target`) matches required target kind for the effect type.
+    2. Explicit effect targets use valid `TargetType` (`Enemy`, `Self`, `Ally`, `None`).
+    3. Mixed-target cards (containing both Enemy and Player effects) must explicitly declare `Target` on each sub-effect (no implicit fallback).
+    4. `Damage` and `Poison` effects cannot inherit or target `Self` or `Ally`.
+    5. `Shield`, `Heal`, and `Revive` effects cannot inherit or target `Enemy`.
+    6. `ModifyResource` effects require a legal Player target (`Self` or `Ally`).
+    7. All registered card definitions in `CardData` pass validation at runtime and startup.
+- **Bonus Shield Gimmick Safety (`CombatService.luau`)**:
+  - Checks `cardHasShieldEffect`. When a card has a `Shield` effect, `totalBonusShield` is passed exclusively through `ActionBonusShield` into `ModifierResolver`/`EffectResolver`. When a card lacks a `Shield` effect, bonus shield is applied directly to `playerState.Resources.Shield`. Zero double-counting occurs.
+
+### 3. Test Coverage & Verification (38 Suites Total, 255 Verifier Checks)
+- **Suite 37 (Static Card Effect Target Compatibility)**:
+  - All registered cards in `CardData` pass static validation.
+  - Verified explicit rejection of Damage inheriting `Self`/`Ally`.
+  - Verified explicit rejection of Shield inheriting `Enemy`.
+  - Verified explicit rejection of mixed-target cards missing effect `Target`.
+  - Verified explicit rejection of ModifyResource targeting `Enemy`.
+- **Suite 38 (End-to-End Mixed-Target Execution)**:
+  - **ShieldSlam**: Caster gained 8 Shield, Enemy took 8 damage, Enemy gained 0 shield.
+  - **WrenchThrow**: Enemy took 7 damage, Caster gained 3 Shield.
+  - **SoulHarvest**: Enemy took 7 damage, injured Caster healed 3 HP.
+  - **DeployTurret**: Caster gained 6 Shield, Enemy took 6 damage.
+  - **TimeWarp**: Enemy took 7 damage, Caster gained 4 Shield.
+  - **PackCall**: Caster gained 7 Shield, Enemy took 4 damage.
+  - **Contagion**: Enemy took 8 damage, afflicted with 4 Poison stacks.
+  - **FirstAid**: Downed ally revived to 30 HP (`IsDowned = false`), living ally healed 30 HP (40 -> 70).
+  - **BonusShield Safety**: `ActionBonusShield` modifier applied exactly once (base 8 + 4 = 12 Shield, not 16).
+- **Offline Integration Verifier (`verify_phase1_integration.py`)**:
+  - **255 / 255 Checks Passed** (100% success rate, 0 failed).
+- **Rojo Build**: Clean build with exit code 0.
+
+---
+
+## 10. Strict Scope Boundary Confirmation
+- Phase 2, Phase 2.1, Phase 2.2, and Phase 2.3 are complete and hardened.
 - Equipment systems, passive skill trees, active skill trees, and large content rosters were **NOT** started.
 - `PHASE 3 STARTED: NO`
+
 
