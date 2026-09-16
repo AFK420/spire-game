@@ -18,6 +18,8 @@ local ModifierResolver = require(servicesFolder:WaitForChild("ModifierResolver")
 local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: ModuleScript)
 local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
+local TargetResolver = require(servicesFolder:WaitForChild("TargetResolver") :: ModuleScript)
+local RelicService = require(servicesFolder:WaitForChild("RelicService") :: ModuleScript)
 
 local EffectResolver = {}
 
@@ -43,22 +45,73 @@ export type EffectExecutionResult = {
 	Message: string?,
 }
 
+-- Resolves target for an individual effect if specified, otherwise falls back to context.Target
+local function resolveEffectTarget(effect: CardData.Effect, context: ActionContext): StateTypes.ResolvedTarget
+	if not effect.Target then
+		return context.Target
+	end
+
+	local targetParam: any = nil
+	if effect.Target == "Self" then
+		targetParam = context.SourcePlayer.UserId
+	elseif effect.Target == "Enemy" then
+		if context.Target and context.Target.EnemyTarget then
+			targetParam = context.Target.EnemyTarget.InstanceId
+		end
+	elseif effect.Target == "Ally" then
+		if context.Target and context.Target.PlayerTarget then
+			targetParam = context.Target.PlayerTarget.UserId
+		else
+			targetParam = context.SourcePlayer.UserId
+		end
+	end
+
+	local combatState = context.CombatState or ({
+		CombatId = "dummy",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = 0,
+		TurnDuration = 45,
+		Participants = { context.SourcePlayer.UserId },
+		Enemies = (context.Target and context.Target.EnemyTarget) and { [context.Target.EnemyTarget.InstanceId] = context.Target.EnemyTarget } or {},
+		ReadyPlayers = {},
+		CombatLog = {},
+	} :: StateTypes.CombatState)
+
+	local party = context.Party or {
+		[context.SourcePlayer.UserId] = context.SourcePlayer,
+	}
+	if context.Target and context.Target.PlayerTarget then
+		party[context.Target.PlayerTarget.UserId] = context.Target.PlayerTarget
+	end
+
+	return TargetResolver.resolveTarget(
+		context.SourcePlayer,
+		effect.Target,
+		targetParam,
+		combatState,
+		party
+	)
+end
+
 -- Evaluates a condition against action context
-local function evaluateCondition(condition: string?, context: ActionContext): boolean
+local function evaluateCondition(condition: string?, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget?): boolean
 	if not condition or condition == "" then
 		return true
 	end
 
+	local t = resolvedTarget or context.Target
+
 	if condition == "TargetDowned" then
-		local p = context.Target.PlayerTarget
+		local p = t.PlayerTarget
 		return p ~= nil and p.IsDowned == true
 
 	elseif condition == "TargetLiving" then
-		local p = context.Target.PlayerTarget
+		local p = t.PlayerTarget
 		return p == nil or p.IsDowned ~= true
 
 	elseif condition == "LowHP" then
-		local p = context.Target.PlayerTarget or context.SourcePlayer
+		local p = t.PlayerTarget or context.SourcePlayer
 		return p.Resources.HP < (p.Resources.MaxHP * 0.5)
 	end
 
@@ -69,14 +122,14 @@ end
 -- Effect Handlers Table
 --------------------------------------------------------------------------------
 
-type EffectHandler = (effect: CardData.Effect, context: ActionContext) -> EffectExecutionResult
+type EffectHandler = (effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget) -> EffectExecutionResult
 
 local handlers: { [string]: EffectHandler } = {}
 
 -- 1. Damage Effect
-handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local rawVal = effect.Value or 0
-	local enemy = context.Target.EnemyTarget
+	local enemy = resolvedTarget.EnemyTarget
 	if not enemy or enemy.HP <= 0 then
 		return { Success = false, EffectType = "Damage", Message = "No living enemy target." }
 	end
@@ -130,20 +183,20 @@ handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext): 
 end
 
 -- 2. Shield Effect
-handlers["Shield"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Shield"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local rawVal = effect.Value or 0
 	local finalShield = rawVal
 
 	if context.Modifiers and #context.Modifiers > 0 then
 		local modCtx = {
 			SourcePlayer = context.SourcePlayer,
-			PlayerTarget = context.Target.PlayerTarget,
-			EnemyTarget = context.Target.EnemyTarget,
+			PlayerTarget = resolvedTarget.PlayerTarget,
+			EnemyTarget = resolvedTarget.EnemyTarget,
 		}
 		finalShield = ModifierResolver.resolve(rawVal, "Shield", context.Modifiers, modCtx)
 	end
 
-	local recipient = context.Target.PlayerTarget or context.SourcePlayer
+	local recipient = resolvedTarget.PlayerTarget or (resolvedTarget.TargetKind == "None" and context.SourcePlayer) or context.SourcePlayer
 	recipient.Resources.Shield += finalShield
 
 	if context.LogEvent then
@@ -165,9 +218,9 @@ handlers["Shield"] = function(effect: CardData.Effect, context: ActionContext): 
 end
 
 -- 3. Heal Effect
-handlers["Heal"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Heal"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local rawVal = effect.Value or 0
-	local recipient = context.Target.PlayerTarget or context.SourcePlayer
+	local recipient = resolvedTarget.PlayerTarget or context.SourcePlayer
 
 	-- Prevent healing downed players, or healing a player that was just revived by this same action
 	if context.DidRevive or recipient.IsDowned then
@@ -206,9 +259,9 @@ handlers["Heal"] = function(effect: CardData.Effect, context: ActionContext): Ef
 end
 
 -- 4. Revive Effect
-handlers["Revive"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Revive"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local rawVal = effect.Value or 0
-	local recipient = context.Target.PlayerTarget or context.SourcePlayer
+	local recipient = resolvedTarget.PlayerTarget or context.SourcePlayer
 
 	if not recipient.IsDowned then
 		return { Success = false, EffectType = "Revive", Message = "Player is not downed." }
@@ -237,14 +290,14 @@ handlers["Revive"] = function(effect: CardData.Effect, context: ActionContext): 
 end
 
 -- 5. ApplyStatus Effect
-handlers["ApplyStatus"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["ApplyStatus"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local statusId = effect.StatusId or "Poison"
 	local stacks = effect.Stacks or effect.Value or 1
 	local duration = effect.Duration
 
-	local targetEntity = context.Target.EnemyTarget or context.Target.PlayerTarget
-	local targetId = context.Target.TargetId
-	local targetName = context.Target.TargetName
+	local targetEntity = resolvedTarget.EnemyTarget or resolvedTarget.PlayerTarget
+	local targetId = resolvedTarget.TargetId
+	local targetName = resolvedTarget.TargetName
 
 	if not targetEntity or targetId == "" then
 		return { Success = false, EffectType = "ApplyStatus", Message = "Invalid target for status." }
@@ -272,22 +325,23 @@ handlers["ApplyStatus"] = function(effect: CardData.Effect, context: ActionConte
 end
 
 -- Backward compatibility alias: "Poison"
-handlers["Poison"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Poison"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local copy: CardData.Effect = {
 		Type = "ApplyStatus",
 		StatusId = "Poison",
 		Stacks = effect.Value or 1,
 		Value = effect.Value,
 		Duration = -1,
+		Target = effect.Target,
 	}
-	return handlers["ApplyStatus"](copy, context)
+	return handlers["ApplyStatus"](copy, context, resolvedTarget)
 end
 
 -- 6. RemoveStatus Effect
-handlers["RemoveStatus"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["RemoveStatus"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local statusId = effect.StatusId or "Poison"
-	local targetEntity = context.Target.EnemyTarget or context.Target.PlayerTarget
-	local targetId = context.Target.TargetId
+	local targetEntity = resolvedTarget.EnemyTarget or resolvedTarget.PlayerTarget
+	local targetId = resolvedTarget.TargetId
 
 	if not targetEntity or targetId == "" then
 		return { Success = false, EffectType = "RemoveStatus", Message = "Invalid target." }
@@ -302,7 +356,7 @@ handlers["RemoveStatus"] = function(effect: CardData.Effect, context: ActionCont
 end
 
 -- 7. Draw Effect
-handlers["Draw"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Draw"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local count = effect.Value or 1
 	CardService.drawCards(context.SourcePlayer, count)
 
@@ -315,7 +369,7 @@ handlers["Draw"] = function(effect: CardData.Effect, context: ActionContext): Ef
 end
 
 -- 8. Discard Effect
-handlers["Discard"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Discard"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	CardService.discardHand(context.SourcePlayer)
 	return {
 		Success = true,
@@ -325,19 +379,35 @@ handlers["Discard"] = function(effect: CardData.Effect, context: ActionContext):
 end
 
 -- 9. Exhaust Effect
-handlers["Exhaust"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["Exhaust"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	if context.CardInstance then
-		table.insert(context.SourcePlayer.ExhaustPile, context.CardInstance)
+		local exhausted = CardService.exhaustCard(context.SourcePlayer, context.CardInstance.InstanceId)
+		if exhausted then
+			if context.LogEvent then
+				context.LogEvent(
+					"CardExhausted",
+					context.SourcePlayer.DisplayName,
+					context.SourcePlayer.DisplayName,
+					nil,
+					string.format("%s exhausted.", context.CardInstance.CardDefId)
+				)
+			end
+			return {
+				Success = true,
+				EffectType = "Exhaust",
+				Message = string.format("Exhausted card %s.", context.CardInstance.CardDefId),
+			}
+		end
 	end
 	return {
-		Success = true,
+		Success = false,
 		EffectType = "Exhaust",
-		Message = "Exhausted card.",
+		Message = "Failed to exhaust card: card not found.",
 	}
 end
 
 -- 10. GainEnergy Effect
-handlers["GainEnergy"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["GainEnergy"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local count = effect.Value or 1
 	context.SourcePlayer.Resources.Energy = math.min(
 		context.SourcePlayer.Resources.MaxEnergy,
@@ -352,7 +422,7 @@ handlers["GainEnergy"] = function(effect: CardData.Effect, context: ActionContex
 end
 
 -- 11. LoseEnergy Effect
-handlers["LoseEnergy"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["LoseEnergy"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local count = effect.Value or 1
 	context.SourcePlayer.Resources.Energy = math.max(0, context.SourcePlayer.Resources.Energy - count)
 	return {
@@ -364,7 +434,7 @@ handlers["LoseEnergy"] = function(effect: CardData.Effect, context: ActionContex
 end
 
 -- 12. CreateCard Effect
-handlers["CreateCard"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["CreateCard"] = function(effect: CardData.Effect, context: ActionContext, _resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local cardDefId = effect.CardDefId or effect.StatusId or "Strike"
 	local inst = CardService.createCardInstance(cardDefId, context.SourcePlayer.UserId)
 	if inst then
@@ -378,26 +448,105 @@ handlers["CreateCard"] = function(effect: CardData.Effect, context: ActionContex
 end
 
 -- 13. ModifyResource Effect
-handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
+handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
 	local count = effect.Value or 0
-	context.SourcePlayer.Gold = math.max(0, context.SourcePlayer.Gold + count)
+	local resType: StateTypes.ResourceType? = effect.Resource
+
+	if not resType then
+		-- Default to Gold for backward compatibility with numeric-value cards
+		resType = "Gold"
+	end
+
+	local recipient = resolvedTarget.PlayerTarget or context.SourcePlayer
+
+	if resType == "HP" then
+		if recipient.IsDowned and count > 0 then
+			return { Success = false, EffectType = "ModifyResource", Message = "Cannot modify HP of downed player." }
+		end
+		recipient.Resources.HP = math.clamp(recipient.Resources.HP + count, 0, recipient.Resources.MaxHP)
+		if recipient.Resources.HP <= 0 then
+			recipient.IsDowned = true
+		end
+	elseif resType == "MaxHP" then
+		recipient.Resources.MaxHP = math.max(1, recipient.Resources.MaxHP + count)
+		recipient.Resources.HP = math.clamp(recipient.Resources.HP, 0, recipient.Resources.MaxHP)
+	elseif resType == "Shield" then
+		recipient.Resources.Shield = math.max(0, recipient.Resources.Shield + count)
+	elseif resType == "Energy" then
+		context.SourcePlayer.Resources.Energy = math.clamp(
+			context.SourcePlayer.Resources.Energy + count,
+			0,
+			context.SourcePlayer.Resources.MaxEnergy
+		)
+	elseif resType == "MaxEnergy" then
+		context.SourcePlayer.Resources.MaxEnergy = math.max(0, context.SourcePlayer.Resources.MaxEnergy + count)
+		context.SourcePlayer.Resources.Energy = math.clamp(
+			context.SourcePlayer.Resources.Energy,
+			0,
+			context.SourcePlayer.Resources.MaxEnergy
+		)
+	elseif resType == "Gold" then
+		context.SourcePlayer.Gold = math.max(0, context.SourcePlayer.Gold + count)
+	else
+		return {
+			Success = false,
+			EffectType = "ModifyResource",
+			Message = "Invalid or unsupported resource type: " .. tostring(resType),
+		}
+	end
+
+	if context.LogEvent then
+		context.LogEvent(
+			"ResourceModified",
+			context.SourcePlayer.DisplayName,
+			recipient.DisplayName,
+			count,
+			string.format("%s %+d (%s)", resType, count, recipient.DisplayName)
+		)
+	end
+
 	return {
 		Success = true,
 		EffectType = "ModifyResource",
 		Value = count,
-		Message = string.format("Modified resource by %d.", count),
+		Message = string.format("Modified %s by %d.", resType, count),
 	}
 end
 
 -- 14. TriggerEvent Effect
-handlers["TriggerEvent"] = function(effect: CardData.Effect, context: ActionContext): EffectExecutionResult
-	if context.LogEvent then
-		context.LogEvent("CustomEvent", context.SourcePlayer.DisplayName, context.Target.TargetName, effect.Value, effect.StatusId)
+handlers["TriggerEvent"] = function(effect: CardData.Effect, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget): EffectExecutionResult
+	local eventId = effect.EventId or effect.StatusId
+	if not eventId or eventId == "" or typeof(eventId) ~= "string" then
+		return {
+			Success = false,
+			EffectType = "TriggerEvent",
+			Message = "Missing or invalid EventId for TriggerEvent.",
+		}
 	end
+
+	local combatContext: StateTypes.CombatEventContext = {
+		Event = eventId,
+		CombatState = context.CombatState,
+		SourcePlayer = context.SourcePlayer,
+		Enemy = resolvedTarget.EnemyTarget,
+		Card = context.CardInstance,
+		Value = effect.Value,
+		TargetPlayer = resolvedTarget.PlayerTarget,
+	}
+
+	pcall(function()
+		RelicService.triggerRelics(context.SourcePlayer, eventId :: any, context.CombatState, combatContext)
+	end)
+
+	if context.LogEvent then
+		context.LogEvent("CustomEvent", context.SourcePlayer.DisplayName, resolvedTarget.TargetName, effect.Value, eventId)
+	end
+
 	return {
 		Success = true,
 		EffectType = "TriggerEvent",
-		Message = "Custom event triggered.",
+		Value = effect.Value,
+		Message = string.format("Triggered event %s.", eventId),
 	}
 end
 
@@ -415,20 +564,26 @@ function EffectResolver.resolveEffects(effects: { CardData.Effect }, context: Ac
 	currentDepth += 1
 	local results: { EffectExecutionResult } = {}
 
-	for _, effect in effects do
-		-- Check condition
-		if evaluateCondition(effect.Condition, context) then
-			local handler = handlers[effect.Type]
-			if handler then
-				local res = handler(effect, context)
-				table.insert(results, res)
-			else
-				warn("[EffectResolver] No handler registered for effect type: " .. tostring(effect.Type))
+	local ok, err = pcall(function()
+		for _, effect in effects do
+			local resolvedTarget = resolveEffectTarget(effect, context)
+			if evaluateCondition(effect.Condition, context, resolvedTarget) then
+				local handler = handlers[effect.Type]
+				if handler then
+					local res = handler(effect, context, resolvedTarget)
+					table.insert(results, res)
+				else
+					warn("[EffectResolver] No handler registered for effect type: " .. tostring(effect.Type))
+				end
 			end
 		end
-	end
+	end)
 
 	currentDepth -= 1
+	if not ok then
+		warn("[EffectResolver] Error during effect resolution: " .. tostring(err))
+	end
+
 	return results
 end
 

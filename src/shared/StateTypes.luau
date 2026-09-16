@@ -127,6 +127,8 @@ export type EffectType =
 	| "TriggerEvent"
 	| "Poison"
 
+export type ResourceType = "HP" | "MaxHP" | "Shield" | "Energy" | "MaxEnergy" | "Gold"
+
 export type DamageType =
 	| "Physical"
 	| "Fire"
@@ -198,6 +200,8 @@ export type StatusDefinition = {
 	MaxStacks: number?,
 	IsDebuff: boolean,
 	Icon: string?,
+	Implemented: boolean,
+	TickBehaviorId: string?,
 }
 
 export type StatusInstance = {

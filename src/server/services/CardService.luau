@@ -137,6 +137,57 @@ function CardService.discardHand(playerState: StateTypes.PlayerState)
 	table.clear(playerState.Hand)
 end
 
+-- Moves a CardInstance from Hand, DiscardPile, or Deck into ExhaustPile, ensuring it exists in exactly one pile
+function CardService.exhaustCard(playerState: StateTypes.PlayerState, instanceId: string): StateTypes.CardInstance?
+	local foundCard: StateTypes.CardInstance? = nil
+
+	-- 1. Check Hand
+	if playerState.Hand[instanceId] then
+		foundCard = playerState.Hand[instanceId]
+		playerState.Hand[instanceId] = nil
+	end
+
+	-- 2. Check DiscardPile (removes all matching instances to eliminate duplicate leaks)
+	for idx = #playerState.DiscardPile, 1, -1 do
+		local card = playerState.DiscardPile[idx]
+		if card.InstanceId == instanceId then
+			if not foundCard then
+				foundCard = card
+			end
+			table.remove(playerState.DiscardPile, idx)
+		end
+	end
+
+	-- 3. Check Deck
+	if not foundCard then
+		for idx = #playerState.Deck, 1, -1 do
+			local card = playerState.Deck[idx]
+			if card.InstanceId == instanceId then
+				foundCard = card
+				table.remove(playerState.Deck, idx)
+				break
+			end
+		end
+	end
+
+	if foundCard then
+		-- Ensure not duplicated in ExhaustPile
+		local alreadyExhausted = false
+		for _, card in playerState.ExhaustPile do
+			if card.InstanceId == instanceId then
+				alreadyExhausted = true
+				break
+			end
+		end
+		if not alreadyExhausted then
+			table.insert(playerState.ExhaustPile, foundCard)
+		end
+		return foundCard
+	end
+
+	return nil
+end
+
 function CardService.init()
 	print("[CardService] Initialized Definition vs Instance card engine.")
 end

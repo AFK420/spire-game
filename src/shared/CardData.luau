@@ -25,6 +25,8 @@ export type EffectType =
 
 export type TargetType = "Enemy" | "Self" | "Ally" | "None"
 
+export type ResourceType = "HP" | "MaxHP" | "Shield" | "Energy" | "MaxEnergy" | "Gold"
+
 export type Effect = {
 	Type: EffectType,
 	Value: number?,
@@ -36,6 +38,8 @@ export type Effect = {
 	Tags: { string }?,
 	Condition: string?,
 	CardDefId: string?,
+	Resource: ResourceType?,
+	EventId: string?,
 }
 
 export type Card = {
