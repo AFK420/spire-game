@@ -19,8 +19,8 @@ function TargetResolver.resolveTarget(
 	sourcePlayer: StateTypes.PlayerState,
 	targetType: CardData.TargetType,
 	targetParam: any?,
-	combatState: StateTypes.CombatState,
-	party: { [number]: StateTypes.PlayerState }
+	combatState: StateTypes.CombatState?,
+	party: { [number]: StateTypes.PlayerState }?
 ): StateTypes.ResolvedTarget
 	if targetType == "None" then
 		return {
@@ -59,6 +59,18 @@ function TargetResolver.resolveTarget(
 	end
 
 	if targetType == "Ally" then
+		if not party then
+			return {
+				Success = false,
+				Error = "Target resolution requires Party state for Ally targets.",
+				TargetKind = "None",
+				EnemyTarget = nil,
+				PlayerTarget = nil,
+				TargetId = "",
+				TargetName = "",
+			}
+		end
+
 		if targetParam == nil then
 			return {
 				Success = false,
@@ -121,6 +133,18 @@ function TargetResolver.resolveTarget(
 	end
 
 	if targetType == "Enemy" then
+		if not combatState then
+			return {
+				Success = false,
+				Error = "Target resolution requires active CombatState for Enemy targets.",
+				TargetKind = "None",
+				EnemyTarget = nil,
+				PlayerTarget = nil,
+				TargetId = "",
+				TargetName = "",
+			}
+		end
+
 		if targetParam == nil or typeof(targetParam) ~= "string" or targetParam == "" then
 			return {
 				Success = false,
