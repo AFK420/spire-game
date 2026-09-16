@@ -659,8 +659,12 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		playerState.Resources.Energy = math.min(playerState.Resources.MaxEnergy, playerState.Resources.Energy + relicTrigger.BonusEnergy)
 	end
 
-	if totalBonusShield > 0 then
-		playerState.Resources.Shield += totalBonusShield
+	local cardHasShieldEffect = false
+	for _, eff in cardInst.CardData.Effects do
+		if eff.Type == "Shield" then
+			cardHasShieldEffect = true
+			break
+		end
 	end
 
 	if gimmick.PoisonApplied > 0 and targetEnemy then
@@ -680,14 +684,18 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		))
 	end
 	if totalBonusShield > 0 then
-		table.insert(actionModifiers, ModifierResolver.createModifier(
-			"ActionBonusShield",
-			"GimmickAndRelics",
-			"Shield",
-			"Add",
-			totalBonusShield,
-			100
-		))
+		if cardHasShieldEffect then
+			table.insert(actionModifiers, ModifierResolver.createModifier(
+				"ActionBonusShield",
+				"GimmickAndRelics",
+				"Shield",
+				"Add",
+				totalBonusShield,
+				100
+			))
+		else
+			playerState.Resources.Shield += totalBonusShield
+		end
 	end
 
 	-- Execute Card Effects via generic EffectResolver
