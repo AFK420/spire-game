@@ -553,10 +553,16 @@ function CardData.validateCard(card: Card): (boolean, string?)
 			end
 		end
 
-		-- Rule 6: ModifyResource must have a legal Player target
+		-- Rule 6: ModifyResource must have a legal Player target and a valid Resource type
 		if eff.Type == "ModifyResource" then
 			if effectiveTarget ~= "Self" and effectiveTarget ~= "Ally" then
 				return false, string.format("Card '%s' effect #%d (ModifyResource) requires a legal Player target (Self or Ally), got '%s'", card.Id, idx, effectiveTarget)
+			end
+			if not eff.Resource or eff.Resource == "" then
+				return false, string.format("Card '%s' effect #%d (ModifyResource) requires a valid non-empty Resource", card.Id, idx)
+			end
+			if eff.Resource ~= "HP" and eff.Resource ~= "MaxHP" and eff.Resource ~= "Shield" and eff.Resource ~= "Energy" and eff.Resource ~= "MaxEnergy" and eff.Resource ~= "Gold" then
+				return false, string.format("Card '%s' effect #%d (ModifyResource) has invalid Resource '%s'", card.Id, idx, tostring(eff.Resource))
 			end
 		end
 

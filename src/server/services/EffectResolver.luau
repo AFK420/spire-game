@@ -516,9 +516,12 @@ handlers["ModifyResource"] = function(effect: CardData.Effect, context: ActionCo
 	local count = effect.Value or 0
 	local resType: StateTypes.ResourceType? = effect.Resource
 
-	if not resType then
-		-- Default to Gold for backward compatibility with numeric-value cards
-		resType = "Gold"
+	if not resType or resType == "" then
+		return {
+			Success = false,
+			EffectType = "ModifyResource",
+			Message = "ModifyResource requires a valid non-empty Resource type.",
+		}
 	end
 
 	local recipient = resolvedTarget.PlayerTarget
