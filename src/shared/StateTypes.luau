@@ -107,6 +107,121 @@ export type CombatState = {
 }
 
 --------------------------------------------------------------------------------
+-- 3.1 Phase 2 Generic Gameplay Engine Types
+--------------------------------------------------------------------------------
+
+export type EffectType =
+	| "Damage"
+	| "Heal"
+	| "Shield"
+	| "Revive"
+	| "ApplyStatus"
+	| "RemoveStatus"
+	| "Draw"
+	| "Discard"
+	| "Exhaust"
+	| "GainEnergy"
+	| "LoseEnergy"
+	| "CreateCard"
+	| "ModifyResource"
+	| "TriggerEvent"
+	| "Poison"
+
+export type DamageType =
+	| "Physical"
+	| "Fire"
+	| "Cold"
+	| "Lightning"
+	| "Light"
+	| "Void"
+	| "Venom"
+	| "Sonic"
+	| "Acid"
+
+export type TargetEntityKind = "Enemy" | "Player" | "None"
+
+export type ResolvedTarget = {
+	Success: boolean,
+	Error: string?,
+	TargetKind: TargetEntityKind,
+	EnemyTarget: EnemyState?,
+	PlayerTarget: PlayerState?,
+	TargetId: string,
+	TargetName: string,
+}
+
+export type ModifierOperation = "Add" | "Multiply" | "Override"
+export type ModifierStat = "Damage" | "Shield" | "Healing" | "Cost"
+
+export type Modifier = {
+	Id: string,
+	Source: string,
+	Stat: ModifierStat,
+	Operation: ModifierOperation,
+	Value: number,
+	Condition: string?,
+	Priority: number,
+}
+
+export type DamageContext = {
+	RawDamage: number,
+	DamageType: DamageType,
+	SourceId: string,
+	SourceName: string,
+	SourcePlayer: PlayerState?,
+	TargetEntityKind: TargetEntityKind,
+	TargetEnemy: EnemyState?,
+	TargetPlayer: PlayerState?,
+	Tags: { string }?,
+	Critical: boolean?,
+	CanHitShield: boolean,
+	IsPeriodic: boolean,
+}
+
+export type DamageResult = {
+	FinalDamage: number,
+	ShieldAbsorbed: number,
+	HPLost: number,
+	IsDefeatedOrDowned: boolean,
+}
+
+export type StatusStackingMode = "Stack" | "RefreshDuration" | "Independent" | "None"
+export type StatusTickTiming = "TurnStart" | "TurnEnd" | "OnAction" | "None"
+
+export type StatusDefinition = {
+	Id: string,
+	Name: string,
+	Description: string,
+	Stacking: StatusStackingMode,
+	DefaultDuration: number?,
+	TickTiming: StatusTickTiming,
+	MaxStacks: number?,
+	IsDebuff: boolean,
+	Icon: string?,
+}
+
+export type StatusInstance = {
+	InstanceId: string,
+	DefinitionId: string,
+	Stacks: number,
+	Duration: number,
+	SourceId: string,
+	TargetId: string,
+}
+
+export type CombatEventContext = {
+	Event: string,
+	CombatState: CombatState?,
+	SourcePlayer: PlayerState?,
+	Enemy: EnemyState?,
+	Card: CardInstance?,
+	Damage: number?,
+	Value: number?,
+	TargetPlayer: PlayerState?,
+	UnspentEnergy: number?,
+}
+
+--------------------------------------------------------------------------------
 -- 4. Dungeon Run Canonical State Model
 --------------------------------------------------------------------------------
 
