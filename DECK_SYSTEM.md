@@ -58,12 +58,16 @@ At the start of an expedition or when preparing player state:
 ```
 [ Persistent Profile ]
           │
-          ├── ActiveDeckId points to SavedDeck
+          ├── ActiveDeckId points to candidate SavedDeck
           ▼
-[ DeckService.validateDeck(player, activeDeck.Cards) ]
+[ DeckService.getActiveDeck(player) ]
           │
-          ├── If Valid ──> Extract CardDefinition IDs and counts
-          └── If Invalid ─> Fallback to ClassData.StartingDeck
+          ├── 1. Check if ActiveDeckId is valid via validateDeck
+          │      └── If Valid ──> Use active SavedDeck
+          ├── 2. If Invalid/Missing ──> Deterministically search sorted decks
+          │      └── If Valid Deck Found ──> Use that fallback SavedDeck
+          └── 3. If No Valid Decks ──> Return nil (Zero profile mutation)
+                 └── ClassService synthesizes default ClassData.StartingDeck
           ▼
 [ CardService.createCardInstance(cardDefId, userId) ]
           │
@@ -74,7 +78,10 @@ At the start of an expedition or when preparing player state:
           └── Run / Combat only manipulates runtime CardInstances
 ```
 
-Combat card movement (drawing, playing, discarding, exhausting, creating cards) NEVER alters the persistent `SavedDeck` or `CardCollection`.
+Key Runtime Invariants:
+1. **Zero Persistence Mutation on Resolution**: `getActiveDeck()` never mutates `ActiveDeckId` or any saved deck in the persistent profile during resolution or fallback.
+2. **Strict Run Isolation**: Combat card movement (drawing, playing, discarding, exhausting, creating cards) NEVER alters the persistent `SavedDeck` or permanent `CardCollection`.
+3. **Mid-Run Editing Safety**: Editing or deleting saved decks while a run is active has zero impact on the running expedition's in-progress card piles.
 
 ---
 

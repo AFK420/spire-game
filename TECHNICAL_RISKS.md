@@ -1,6 +1,20 @@
 # Technical Risks: Card Rift: Co-op Dungeon
 
-This document analyzes critical architectural, concurrency, security, and scalability risks present in the current implementation, along with required mitigation strategies for the long-term vision.
+> [!NOTE]
+> **Audit Resolution Status: 100% Mitigated & Resolved (Phases 1.0 – 4.1)**  
+> All architectural, concurrency, security, and persistence risks identified in this document have been eliminated through discrete vertical slice hardening passes. See the resolution matrix below.
+
+| Risk Category | Specific Flaw | Initial Severity | Resolved In | Resolution Mechanism |
+| :--- | :--- | :---: | :---: | :--- |
+| **1.1 State Divergence** | Triple-state split across 3 server scripts | **CRITICAL** | Phase 1.0 | Unified `RunManager` (RunState SSOT) and `CombatService` (CombatState SSOT). |
+| **1.2 Singleton Enemy** | `currentBoss` module singleton | **HIGH** | Phase 1.0 | Keyed entity table `Enemies: { [string]: EnemyState }` supporting 1..$N$ combatants. |
+| **1.3 Direct Stat Drift** | Uncontrolled mutations to base stats | **HIGH** | Phase 3.0 | `StatResolver`: deterministic `(Base + Add) * Mult` with absolute override priority. |
+| **2.1 Hand Index Shift** | Array index card plays causing race conditions | **CRITICAL** | Phase 1.0 | `CardInstance` unique GUIDs and keyed dictionary `Hand: { [InstanceId]: CardInstance }`. |
+| **2.2 Desynced Countdown** | Independent timers across client/server | **HIGH** | Phase 1.0 | Monotonic `TurnStartTime` via `os.clock()` and authoritative server ready voting. |
+| **3.1 Hardcoded Pipelines** | Giant `if-elseif` ladders in managers | **HIGH** | Phase 2.0 | Generic `EffectResolver`, `DamagePipeline`, `ModifierResolver`, `TargetResolver`. |
+| **3.2 Class-Tied Cards** | Cards rigidly hardcoded to single classes | **MEDIUM** | Phase 2.0 | Universal card foundation with data-driven effects and target constraints. |
+| **4.1 Network Spoofing** | Forged player identity / remote spamming | **CRITICAL** | Phase 1–4 | `NetworkService`: token-bucket rate limits; sender identity derived from `player.UserId`. |
+| **4.2 DataStore Overwrites** | Load failure creating fresh profiles & overwriting | **CRITICAL** | Phase 4.1 | Fail-closed `ProfileLoadState`: load failure aborts saving; `UpdateAsync` concurrency safety. |
 
 ---
 

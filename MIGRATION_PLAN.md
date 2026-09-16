@@ -1,6 +1,13 @@
 # Migration Plan: Moving to the ARPG Co-op Foundation
 
-This roadmap provides a phased, non-destructive migration path from the current fragmented prototype into a high-depth, production-grade Roblox multiplayer deckbuilder/ARPG foundation.
+> [!NOTE]
+> **Execution Status: Phases 1, 2, 3, 4 & 4.1 Completed & Fully Operational**  
+> The migration from legacy monoliths to a unified, service-oriented architecture has been successfully executed.
+> - **Phase 1 (1.0 – 1.2)**: Single Source of Truth architecture complete; legacy scripts removed.
+> - **Phase 2 (2.0 – 2.4)**: Decoupled effect, modifier, and damage pipelines complete.
+> - **Phase 3 (3.0 – 3.3)**: RPG foundation (Equipment, Passives DAG, Active Skills, StatResolver) complete.
+> - **Phase 4 (4.0 – 4.1)**: Persistent account profile, CardCollectionService, DeckService, and fail-closed persistence complete.
+> - **Verification Baseline**: 59 in-game integration suites, 608 verifier checks (100% pass).
 
 ---
 

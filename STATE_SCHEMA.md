@@ -1,6 +1,6 @@
 # CARD RIFT: CANONICAL STATE SCHEMA SPECIFICATION
 
-**Version**: 1.0 (Phase 1 Baseline)  
+**Version**: 4.1 (Phase 4.1 Hardened Baseline)  
 **Strict Luau Definition**: [`src/shared/StateTypes.luau`](src/shared/StateTypes.luau)  
 
 ---
@@ -8,10 +8,11 @@
 ## 1. Overview
 
 The *Card Rift* state architecture enforces a strict separation between:
-1. **Canonical Authoritative State**: Internal data structures maintained exclusively by server services (`RunManager`, `CombatService`).
-2. **Definition Data**: Read-only, immutable master definitions (`CardData`, `ClassData`, `RelicData`).
-3. **Runtime Instances**: Dynamic, instantiated objects with unique GUIDs (`CardInstance`, `EnemyState`).
-4. **Client View DTOs (Snapshots)**: Sanitized, serializable projections transmitted over the network to render client UIs.
+1. **Canonical Authoritative State**: Internal data structures maintained exclusively by server services (`RunManager`, `CombatService`, `EquipmentService`, `SkillService`, `PassiveService`).
+2. **Definition Data**: Read-only, immutable master definitions (`CardData`, `ClassData`, `RelicData`, `EquipmentData`, `SkillData`, `PassiveData`).
+3. **Runtime Instances**: Dynamic, instantiated objects with unique GUIDs (`CardInstance`, `EquipmentInstance`, `SkillInstance`, `EnemyState`).
+4. **Persistent Account Profile**: Cross-session player profile (`PlayerProfile`, `CardCollection`, `SavedDeck`, `DeckSlotEntitlement`, `ProfileLoadState`).
+5. **Client View DTOs (Snapshots)**: Sanitized, serializable projections transmitted over the network to render client UIs.
 
 ---
 
@@ -81,7 +82,16 @@ export type PlayerState = {
     Gold: number,
     IsReady: boolean,
     IsDowned: boolean,
+    IsConnected: boolean?,
     VotedNodeId: string?,
+    -- Phase 3 Run-Scoped RPG Progression State
+    EquippedItems: { [EquipmentSlot]: EquipmentInstance }?,
+    EquipmentInventory: { EquipmentInstance }?,
+    EquippedSkills: { [SkillSlot]: SkillInstance }?,
+    SkillInventory: { SkillInstance }?,
+    UnlockedSkills: { [string]: boolean }?,
+    UnlockedPassives: { [string]: boolean }?,
+    PassivePoints: number?,
 }
 ```
 
@@ -344,3 +354,95 @@ GameConfig.NetworkLimits = {
     General = { MaxTokens = 4, RefillRate = 2.0 },
 }
 ```
+
+---
+
+## 9. RPG Character & Progression Schemas (Phase 3)
+
+### 9.1 Equipment (`EquipmentInstance`)
+```luau
+export type EquipmentSlot = "Weapon" | "Armor" | "Accessory1" | "Accessory2"
+export type EquipmentRarity = "Common" | "Uncommon" | "Rare" | "Epic" | "Legendary"
+
+export type EquipmentInstance = {
+    InstanceId: string,              -- Server-generated GUID (e.g. "equip_10001_1_a8f9")
+    DefinitionId: string,            -- Reference to EquipmentData ID
+    Slot: EquipmentSlot,             -- Canonical slot matching definition
+    OwnerUserId: number,             -- Owner player's UserId
+    Equipped: boolean,               -- Active equipped flag
+}
+```
+
+### 9.2 Active Skills (`SkillInstance`)
+```luau
+export type SkillSlot = "Skill1" | "Skill2" | "Skill3" | "Skill4"
+
+export type SkillInstance = {
+    InstanceId: string,              -- Unique runtime GUID
+    DefinitionId: string,            -- Reference to SkillData ID
+    OwnerUserId: number,             -- Owner player's UserId
+    CurrentCooldown: number,         -- Turns until ready (0 = available)
+    Slot: SkillSlot?,                -- Slotted location
+}
+```
+
+### 9.3 Centralized Stat Resolution (`ResolvedPlayerStats`)
+```luau
+export type ResolvedPlayerStats = {
+    MaxHP: number,
+    MaxEnergy: number,
+    DamageMultiplier: number,
+    BonusDamage: number,
+    ShieldGainMultiplier: number,
+    BonusShield: number,
+    HealingMultiplier: number,
+    BonusHealing: number,
+    CostReduction: number,
+    CritChance: number,
+    CritMultiplier: number,
+}
+```
+
+---
+
+## 10. Persistent Account Profile & Deck Schemas (Phase 4 & 4.1)
+
+### 10.1 Versioned Player Profile (`PlayerProfile`)
+```luau
+export type ProfileLoadState = "NotLoaded" | "Loaded" | "New" | "LoadFailed" | "Saving"
+
+export type PlayerProfile = {
+    ProfileVersion: number,                    -- Current schema: 1
+    AetherShards: number,                      -- Meta currency earned from runs
+    PremiumCurrency: number,                   -- Placeholder for future currency
+    UnlockedClasses: { string },               -- Canonical unlocked HeroClass IDs
+    TotalVictories: number,                    -- Lifetime run victories
+    TotalRuns: number,                         -- Lifetime runs started
+    LastSavedTimestamp: number,                -- os.time() of last persistence save
+    CardCollection: { [string]: number },      -- Permanent CardDefinition ID -> Quantity owned
+    Decks: { [string]: SavedDeck },            -- Keyed by server-generated DeckId
+    ActiveDeckId: string?,                     -- Selected starting deck for runs
+    DeckSlotEntitlement: DeckSlotEntitlement,  -- Configurable deck slot capacity
+    UnlockedSkills: { [string]: boolean },     -- Account-wide unlocked skill IDs
+    EquipmentCollection: { [string]: any },    -- Future equipment collection schema
+    GachaBanners: { [string]: any },           -- Future banner/pity schema
+}
+```
+
+### 10.2 Saved Deck & Slot Entitlement
+```luau
+export type SavedDeck = {
+    DeckId: string,               -- Server-generated GUID (e.g. "deck_10001_172648_a8f9c2")
+    Name: string,                 -- Player deck name (trimmed, 1 to 24 chars)
+    Cards: { [string]: number },  -- CardDefinition ID -> Quantity (max 3 per card, 8-30 total)
+    ClassId: string?,             -- Optional target class binding
+    CreatedAt: number,            -- Timestamp created
+    UpdatedAt: number,            -- Timestamp last edited
+}
+
+export type DeckSlotEntitlement = {
+    BaseDeckSlots: number,        -- Base free slots (4)
+    AdditionalDeckSlots: number,  -- Earned/purchased extra slots
+}
+```
+

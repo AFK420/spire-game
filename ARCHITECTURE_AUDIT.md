@@ -5,6 +5,11 @@
 **Scope:** Complete codebase inspection of `spire-game` (`src/shared`, `src/server`, `src/client`, `default.project.json`)  
 **Objective:** Evaluate architectural integrity, state authority, multiplayer safety, security exposure, and structural readiness for scaling into a high-depth Co-op Roguelike ARPG/Deckbuilder.
 
+> [!NOTE]
+> **Historical Audit Document (Fully Resolved)**  
+> This document records the original pre-Phase 1 architecture inspection. All issues outlined herein—including the triple-state divergence, monolithic `.server.luau` scripts, `_G` reliance, and index-based card handling—have been resolved across Phases 1 through 4.1.  
+> See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`CURRENT_SYSTEM_MAP.md`](CURRENT_SYSTEM_MAP.md) for current production specifications.
+
 ---
 
 ## 1. Executive Summary

@@ -119,6 +119,65 @@ Each category operates an independent token bucket per connected player:
 - **Payload**: None.
 - **Server Action**: Fires fresh `RunSnapshot` and `CombatSnapshot` directly to the requesting client.
 
+#### 10. `EquipEquipment` / `UnequipEquipment`
+- **Category**: `General`
+- **Payload**: `instanceId: string, slot: string` / `slot: string`
+- **Server Action**: Validates slot identity against `EquipmentData`, validates instance exists in player's authoritative inventory, and equips/unequips item.
+
+#### 11. `EquipSkill` / `UnequipSkill`
+- **Category**: `General`
+- **Payload**: `slot: string, skillInstanceId: string` / `slot: string`
+- **Server Action**: Validates skill slot, resolves owned skill instance from `SkillInventory`, and equips/unequips without minting.
+
+#### 12. `UnlockPassive`
+- **Category**: `General`
+- **Payload**: `passiveId: string`
+- **Server Action**: Verifies player class, DAG prerequisites, and unspent passive points before unlocking.
+
+#### 13. `UnlockSkill` (Disabled)
+- **Category**: `General`
+- **Behavior**: Client requests are logged with a warning and rejected. Skill unlocking is server-authoritative.
+
+#### 14. `UseSkill`
+- **Category**: `Combat`
+- **Payload**: `slot: string, targetParam: any?`
+- **Server Action**: Validates `PlayerPhase`, living status, cooldown, energy/HP cost, and executes skill via `SkillService`.
+
+#### 15. `CreateDeck`
+- **Category**: `General`
+- **Payload**: `name: string, cards: { [string]: number }?, classId: string?`
+- **Server Action**: Generates server GUID, verifies slot entitlement capacity, validates card ownership, and saves deck.
+
+#### 16. `RenameDeck`
+- **Category**: `General`
+- **Payload**: `deckId: string, newName: string`
+- **Server Action**: Trims and bounds name length (1–24 chars) and updates deck.
+
+#### 17. `DeleteDeck`
+- **Category**: `General`
+- **Payload**: `deckId: string`
+- **Server Action**: Deletes deck from profile; if deleted deck was active, falls back safely to next available deck.
+
+#### 18. `SaveDeck`
+- **Category**: `General`
+- **Payload**: `deckId: string, cards: { [string]: number }`
+- **Server Action**: Authoritatively validates that card counts do not exceed permanent `CardCollection` ownership, bounds deck to 8–30 cards, max 3 copies, and saves.
+
+#### 19. `DuplicateDeck`
+- **Category**: `General`
+- **Payload**: `sourceDeckId: string, newName: string?`
+- **Server Action**: Verifies slot entitlement capacity, duplicates deck with fresh server GUID.
+
+#### 20. `SelectActiveDeck`
+- **Category**: `General`
+- **Payload**: `deckId: string`
+- **Server Action**: Validates that target deck is playable, updates `ActiveDeckId` in profile.
+
+#### 21. `RequestDecks` / `RequestCardCollection`
+- **Category**: `General`
+- **Payload**: None.
+- **Server Action**: Serializes saved decks / card collection and fires `DeckListUpdate` / `CardCollectionUpdate`.
+
 ---
 
 ### 3.2 Server $\to$ Client (State Projections & Feedback)
@@ -172,3 +231,31 @@ Each category operates an independent token bucket per connected player:
   }
   ```
 - **Client Handling**: Plays pulsing animation on player's relic HUD icon.
+
+#### 6. `DeckListUpdate`
+- **Target**: Targeted (`FireClient`).
+- **Payload**:
+  ```luau
+  {
+      Decks: { StateTypes.DeckSummaryView },
+      Entitlement: StateTypes.DeckSlotView,
+  }
+  ```
+- **Client Handling**: Updates lobby and deck manager UI with deck summaries and available slots.
+
+#### 7. `DeckDetailUpdate`
+- **Target**: Targeted (`FireClient`).
+- **Payload**:
+  ```luau
+  deckDetail: StateTypes.DeckDetailView
+  ```
+- **Client Handling**: Opens or updates the deck editor with full card list and validation status.
+
+#### 8. `CardCollectionUpdate`
+- **Target**: Targeted (`FireClient`).
+- **Payload**:
+  ```luau
+  collectionView: StateTypes.CardCollectionView
+  ```
+- **Client Handling**: Updates permanent card collection browser with owned card counts.
+

@@ -50,13 +50,18 @@ Each service operates with single responsibility and strict interface boundaries
 
 | Service Name | Path | Core Responsibility |
 | :--- | :--- | :--- |
-| **`NetworkService`** | `src/server/services/NetworkService.luau` | RemoteEvents owner (`ReplicatedStorage.GameNetwork`), category rate limiter (Combat 6/s, Map 3/s, Class 3/s, General 4/s), snapshot serializer/dispatcher. |
-| **`PersistenceService`** | `src/server/services/PersistenceService.luau` | Permanent meta-progression profiles (Aether Shards, unlocked classes, lifetime run victories). Reconciles data with studio fallbacks. |
-| **`CardService`** | `src/server/services/CardService.luau` | Runtime instance engine. Generates unique GUID `CardInstanceId`s from immutable `CardData` definitions. Manages deck shuffling, draw logic, and discard piles. |
-| **`ClassService`** | `src/server/services/ClassService.luau` | Handles class & subclass selection, stat application, starting deck synthesis, and combat gimmick evaluation (Rage, Combo, Overload, Soul Harvest, etc.). |
+| **`NetworkService`** | `src/server/services/NetworkService.luau` | RemoteEvents owner (`ReplicatedStorage.GameNetwork`), 25 events across 4 category rate limiters (Combat 6/s, Map 3/s, Class 3/s, General 4/s), snapshot serializer/dispatcher. |
+| **`PersistenceService`** | `src/server/services/PersistenceService.luau` | Versioned account profile (`ProfileVersion = 1`), `ProfileLoadState` fail-closed protection, reconciliation pipeline, and `UpdateAsync` concurrency conflict resolution. |
+| **`CardCollectionService`** | `src/server/services/CardCollectionService.luau` | Authoritative permanent card collection ownership tracking (`{ [cardDefId]: count }`), grant/deduct operations, and client view DTO serialization. |
+| **`DeckService`** | `src/server/services/DeckService.luau` | Authoritative saved deck CRUD, server GUID generation, configurable `DeckSlotEntitlement` (4 base slots), 8–30 card validation, and deterministic active deck fallback. |
+| **`CardService`** | `src/server/services/CardService.luau` | Runtime instance engine. Generates unique GUID `CardInstanceId`s from immutable `CardData` definitions. Manages deck shuffling, draw logic, and discard/exhaust piles. |
+| **`ClassService`** | `src/server/services/ClassService.luau` | Handles class & subclass selection, stat application, starting deck synthesis (with active SavedDeck integration), and combat gimmick evaluation. |
 | **`RelicService`** | `src/server/services/RelicService.luau` | Event-driven passive item triggers (`OnCombatStart`, `OnTurnStart`, `OnCardPlay`, `OnTurnEnd`, `OnDamageTaken`, `OnKill`). |
 | **`DungeonService`** | `src/server/services/DungeonService.luau` | Wraps procedural 4-Act, 10-Tier dungeon generation, adjacency validation, and path traversal. |
-| **`ArenaVisualizer`** | `src/server/services/ArenaVisualizer.luau` | Purely visual reactive layer. Builds 3D arena in Workspace, spawns physical enemy models with overhead BillboardGuis, and triggers attack/hit animations. |
+| **`EquipmentService`** | `src/server/services/EquipmentService.luau` | RPG equipment inventory, slot enforcement (`Weapon`, `Armor`, `Accessory1`, `Accessory2`), server validation, and stat modifier synthesis. |
+| **`StatResolver`** | `src/server/services/StatResolver.luau` | Centralized deterministic stat resolution engine `(Base + Add) * Mult` with absolute override precedence for all 9 core stats. |
+| **`SkillService`** | `src/server/services/SkillService.luau` | Active skills runtime (`Skill1`..`Skill4`), cooldown decrementing, resource costs, and transactional execution. |
+| **`PassiveService`** | `src/server/services/PassiveService.luau` | Class passive DAG skill tree traversal, point allocation, prerequisite validation, and passive modifier aggregation. |
 | **`TargetResolver`** | `src/server/services/TargetResolver.luau` | Authoritative target entity validator (`Enemy`, `Self`, `Ally`, `None`), entity existence checks, alive/downed constraints, and disconnect safety. |
 | **`ModifierResolver`** | `src/server/services/ModifierResolver.luau` | Deterministic modifier calculation engine (Base -> Additive -> Multiplicative -> Final Value). |
 | **`DamagePipeline`** | `src/server/services/DamagePipeline.luau` | Multi-phase damage calculation and application, shield absorption, direct HP bypass (`CanHitShield = false`), and lethal transitions. |
@@ -64,6 +69,7 @@ Each service operates with single responsibility and strict interface boundaries
 | **`EffectResolver`** | `src/server/services/EffectResolver.luau` | Data-driven generic effect dispatcher with recursion depth protection. Dispatches Damage, Heal, Shield, Revive, Status, Draw, Energy, etc. |
 | **`CombatService`** | `src/server/services/CombatService.luau` | Authoritative combat orchestrator. Governs turn flow, player action lifecycle, enemy action lifecycle, ready voting, and snapshot broadcasting. |
 | **`RunManager`** | `src/server/services/RunManager.luau` | Authoritative lifecycle engine for dungeon runs (`Lobby` $\to$ `MapSelect` $\to$ `ActiveRoom` $\to$ `Rewards` $\to$ `Victory`/`Defeat`). Coordinates party state and universal 3-card drafting. |
+| **`ArenaVisualizer`** | `src/server/services/ArenaVisualizer.luau` | Purely visual reactive layer. Builds 3D arena in Workspace, spawns physical enemy models with overhead BillboardGuis, and triggers attack/hit animations. |
 
 ---
 
