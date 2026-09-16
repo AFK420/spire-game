@@ -161,9 +161,6 @@ function ClassService.initializePlayerForRun(playerState: StateTypes.PlayerState
 	ClassService.resetClassCombatGimmicks(playerState.UserId)
 end
 
--- Alias for initializePlayerForRun (Must NEVER be called during combat)
-ClassService.applyClassToPlayer = ClassService.initializePlayerForRun
-
 -- Evaluates class-specific active gimmicks when playing a card
 function ClassService.processGimmickOnCardPlay(
 	playerState: StateTypes.PlayerState,

@@ -1,4 +1,4 @@
-﻿# Phase 1.2 — Final Pre-Phase-2 Readiness Report
+# Phase 1.2 — Final Pre-Phase-2 Readiness Report
 **Card Rift: Co-op Dungeon**  
 Repository: [AFK420/spire-game](https://github.com/AFK420/spire-game)  
 Phase: **Phase 1.2 (Final Pre-Phase-2 Cleanup)**  
@@ -24,8 +24,8 @@ Phase 1.2 is a targeted hardening and verification pass to close all remaining c
   - Preserved `--!strict` typing throughout.
   - Verified `cleanPlayer(userId)` flushes `playerBuckets[userId] = nil` upon player disconnect (`RunManager.removePlayer`).
 
-### 2. ClassService Initialization API Refactor
-- **Issue**: `applyClassToPlayer()` had an ambiguous name that could be mistaken as safe to call during combat, even though it cleared and regenerated the starting deck.
+### 2. ClassService Initialization API Refactor & Alias Removal
+- **Issue**: The original `applyClassToPlayer()` had an ambiguous name that could be mistaken as safe to call during combat, even though it cleared and regenerated the starting deck.
 - **Resolution**:
   - Renamed `ClassService.applyClassToPlayer()` to `ClassService.initializePlayerForRun()`:
     ```luau
@@ -35,8 +35,8 @@ Phase 1.2 is a targeted hardening and verification pass to close all remaining c
         ClassService.resetClassCombatGimmicks(playerState.UserId)
     end
     ```
-  - Provided a backwards-compatible alias `ClassService.applyClassToPlayer = ClassService.initializePlayerForRun` with clear documentation.
-  - Updated call sites in `RunManager.addPlayer()` and `ClassService.selectClass()`.
+  - Removed the obsolete `applyClassToPlayer` alias completely from `ClassService.luau`.
+  - Confirmed that **zero** references to `applyClassToPlayer` exist anywhere under `src/`.
   - Confirmed that **zero** combat routines call `initializeStartingDeck()`. Combat start strictly invokes `CardService.resetCombatPiles()` and `ClassService.resetCombatResources()`.
 
 ### 3. PersistenceService Save Error Logging
@@ -75,6 +75,14 @@ Phase 1.2 is a targeted hardening and verification pass to close all remaining c
   - `ClassManager`: 0 occurrences
   - `_G`: 0 occurrences
   - `currentBoss`: 0 occurrences
+  - `applyClassToPlayer`: 0 occurrences
+
+### 7. Disconnect Safety & Multiplayer Invariants (Phase 1.2 Final Isolated Fixes)
+- **Map Voting**: `RunManager.voteMapNode()` consensus calculation filters on `member.IsConnected ~= false` when summing `totalVoters` and aggregating votes. Disconnected players do not increase `totalVoters`, cannot submit votes, and do not block majority consensus.
+- **Enemy Targeting**: `CombatService.resolveTurn()` filters eligible attack and debuff targets on `not pState.IsDowned and pState.IsConnected ~= false`. Disconnected players cannot be selected as enemy attack targets and take no damage while offline.
+- **Defeat Detection**: `CombatService.areAllPlayersDowned()` calculates active connected players vs. downed connected players (`activePlayers > 0 and (downedPlayers == activePlayers)`). Disconnected players do not keep combat alive, cannot cause defeat while living connected players remain, and are not counted as active living players.
+- **Action Validation**: Disconnected players are rejected with explicit errors if attempting to `playCard()`, `voteReady()`, or `rescueTeammate()`.
+- **Reconnection State Preservation**: Verified that disconnecting mid-run or mid-combat preserves the player slot in `PartyMembers`, card decks, hand, discard piles, HP, and gold. Reconnecting reattaches `PlayerInstance` and restores access to the exact authoritative state without duplication or corruption.
 
 ---
 
@@ -107,8 +115,10 @@ The following Phase 2 subsystems have NOT been created or implemented:
 
 | Check | Result |
 |---|---|
-| Offline Integration Verifier (`tests/verify_phase1_integration.py`) | **120 / 120 Checks Passed** |
+| Offline Integration Verifier (`tests/verify_phase1_integration.py`) | **129 / 129 Checks Passed** |
 | Rojo Project Compilation (`rojo build -o test.rbxl`) | **Clean Build (0 errors)** |
+| In-Engine API Integration Test Suites (`TestRunner.luau`) | **15 Suites, 100% Passed** |
 | Strict Luau Typing (`--!strict` on all 21 files) | **100% Strict** |
+| Obsolete Alias Audit (`applyClassToPlayer` in `src/`) | **0 References (100% Clean)** |
 | Undeclared Variables Audit | **0 Undeclared Variables** |
 | Git Working Tree Status | **Clean** |

@@ -550,8 +550,121 @@ function TestRunner.runAllTests(): boolean
 	assertTest(reconnectedP2.Gold == p2GoldBefore, "Player Gold completely preserved")
 	assertTest(partyCount == 4, "Party integrity preserved with zero corruption")
 
+	----------------------------------------------------------------------------
+	-- TEST 15: Disconnect-Safety & Multiplayer Invariants (Phase 1.2 Regressions)
+	----------------------------------------------------------------------------
+	print("\n--- [Suite 15] Disconnect Safety: Targeting, Map Voting & Defeat Detection ---")
+
+	-- Part 15.1: Test B — Disconnected player cannot be selected as enemy attack target
+	local combat2Ref = CombatService.getActiveCombat()
+	assertTest(combat2Ref ~= nil, "Combat #2 is actively running for targeting regression")
+
+	-- Disconnect Player 2 during combat
+	RunManager.removePlayer(player2)
+	assertTest(p2State.IsConnected == false, "[Test B] Player 2 marked disconnected mid-combat")
+	local p2HpPreAttack = p2State.Resources.HP
+
+	-- Action rejection checks for disconnected players
+	local discPlaySuccess, discPlayErr = CombatService.playCard(player2, "dummy_card", "enemy_1")
+	assertTest(discPlaySuccess == false and discPlayErr == "Disconnected players cannot play cards.", "[Test B] Disconnected player rejected from playing cards")
+	local discReadySuccess, discReadyErr = CombatService.voteReady(player2)
+	assertTest(discReadySuccess == false and discReadyErr == "Disconnected players cannot vote ready.", "[Test B] Disconnected player rejected from voting ready")
+
+	-- Force turn resolution so enemy executes its attack intent
+	CombatService.forceTurnTimeout()
+	task.wait(0.6)
+
+	-- Disconnected Player 2 must have taken zero damage from enemy attack
+	assertTest(p2State.Resources.HP == p2HpPreAttack, "[Test B] Disconnected Player 2 HP unchanged (excluded from enemy attack targets)")
+	assertTest(runState.PartyMembers[10002] ~= nil, "[Test B] Disconnected Player 2 remains represented in PartyMembers")
+
+	-- Reconnect Player 2 (Test D verification)
+	local reP2 = RunManager.addPlayer(player2)
+	assertTest(reP2 == p2State, "[Test D] Reconnected Player 2 reused exact authoritative PlayerState")
+	assertTest(reP2.IsConnected == true, "[Test D] Player 2 reconnected successfully")
+	assertTest(reP2.Resources.HP == p2HpPreAttack, "[Test D] Player 2 HP preserved after reconnect")
+
+	-- Defeat enemy in Combat #2 to transition to Rewards & MapSelect
+	for _, e in combat2Ref.Enemies do
+		e.HP = 1
+		e.Shield = 0
+	end
+	local killCard = CardService.createCardInstance("Strike", 10001) :: StateTypes.CardInstance
+	p1State.Hand[killCard.InstanceId] = killCard
+	p1State.Resources.Energy = 3
+	CombatService.playCard(player1, killCard.InstanceId, next(combat2Ref.Enemies))
+	task.wait(2.0)
+	assertTest(runState.Phase == "Rewards", "Combat #2 won and transitioned to Rewards")
+
+	-- Continue to MapSelect
+	RunManager.continueFromRewards(player1)
+	assertTest(runState.Phase == "MapSelect", "Transitioned to MapSelect for next node selection")
+	assertTest(#runState.AvailableNodeIds > 0, "Available map nodes present")
+
+	-- Part 15.2: Test A — Map voting ignores disconnected members
+	local mapTargetNode = runState.AvailableNodeIds[1]
+	for _, id in runState.AvailableNodeIds do
+		local n = DungeonService.getNode(RunManager.getDungeonRun() :: any, id)
+		if n and (n.Type == "Combat" or n.Type == "Elite Monster") then
+			mapTargetNode = id
+			break
+		end
+	end
+
+	local p3StateRef = runState.PartyMembers[10003]
+	local p4StateRef = runState.PartyMembers[10004]
+
+	-- Disconnect Player 3 and Player 4: 2 connected voters remain (Player 1 & Player 2)
+	RunManager.removePlayer(player3)
+	RunManager.removePlayer(player4)
+	assertTest(p3StateRef.IsConnected == false and p4StateRef.IsConnected == false, "[Test A] Players 3 & 4 disconnected during MapSelect")
+
+	-- Disconnected player cannot submit a vote
+	local discVoteSuccess, discVoteErr = RunManager.voteMapNode(player3, mapTargetNode)
+	assertTest(discVoteSuccess == false and discVoteErr == "Player is disconnected.", "[Test A] Disconnected player cannot submit map vote")
+
+	-- With 2 connected players, majority threshold is math.ceil(2 / 2) = 1!
+	-- If disconnected members were counted, threshold would be math.ceil(4 / 2) = 2.
+	-- Single vote from Player 1 must achieve consensus!
+	local voteSuccess, voteErr = RunManager.voteMapNode(player1, mapTargetNode)
+	assertTest(voteSuccess == true and voteErr == nil, "[Test A] Player 1 vote submitted successfully")
+	assertTest(runState.Phase == "ActiveRoom", "[Test A] Disconnected players excluded from totalVoters; Player 1 alone achieved majority consensus!")
+	assertTest(runState.CurrentNodeId == mapTargetNode, "[Test A] Traveled to voted node successfully")
+	assertTest(runState.PartyMembers[10003] ~= nil and runState.PartyMembers[10004] ~= nil, "[Test A] Disconnected members retained in PartyMembers")
+
+	-- Reconnect Players 3 and 4 (Test D verification)
+	local reP3 = RunManager.addPlayer(player3)
+	local reP4 = RunManager.addPlayer(player4)
+	assertTest(reP3 == p3StateRef and reP4 == p4StateRef, "[Test D] Reconnected Players 3 & 4 reused exact PlayerState instances")
+	assertTest(reP3.IsConnected == true and reP4.IsConnected == true, "[Test D] Players 3 & 4 marked connected")
+
+	-- Part 15.3: Test C — Defeat detection ignores disconnected members
+	local combat3Ref = CombatService.getActiveCombat()
+	assertTest(combat3Ref ~= nil, "Combat #3 actively initiated in ActiveRoom")
+
+	-- Disconnect Players 2, 3, 4: only Player 1 is connected
+	RunManager.removePlayer(player2)
+	RunManager.removePlayer(player3)
+	RunManager.removePlayer(player4)
+	assertTest(p1State.IsConnected == true and not p1State.IsDowned, "[Test C] Player 1 is connected and alive")
+	assertTest(p2State.IsConnected == false and p3StateRef.IsConnected == false and p4StateRef.IsConnected == false, "[Test C] Players 2, 3, 4 disconnected")
+
+	-- Test C.1: Player 1 connected + alive => NO defeat occurs
+	CombatService.forceTurnTimeout()
+	task.wait(0.6)
+	assertTest(combat3Ref.Phase == "PlayerPhase", "[Test C] Combat continues while connected Player 1 is alive (disconnected players do not cause defeat)")
+
+	-- Test C.2: Down Player 1: all connected players are now downed
+	p1State.Resources.HP = 0
+	p1State.IsDowned = true
+
+	-- Trigger turn timeout so resolution check runs areAllPlayersDowned()
+	CombatService.forceTurnTimeout()
+	task.wait(2.0)
+	assertTest(runState.Phase == "RunDefeat", "[Test C] Defeat correctly triggered when all CONNECTED players downed (disconnected players did not keep combat alive)!")
+
 	print("\n============================================================")
-	print(string.format("  ALL %d PHASE 1.1 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
+	print(string.format("  ALL %d PHASE 1.2 INTEGRATION TESTS PASSED CLEANLY! (100%% SUCCESS)", totalCount))
 	print("============================================================\n")
 	return true
 end

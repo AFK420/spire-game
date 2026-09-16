@@ -57,6 +57,8 @@ required_files = [
     "src/client/init.client.luau",
 ]
 
+all_luau_files = list((ROOT / "src").rglob("*.luau"))
+
 print("\n--- [Check 1] Required Architecture Files ---")
 for f in required_files:
     p = ROOT / f
@@ -117,7 +119,12 @@ test(revive_hp == 27, "Titan revive HP (25% of 110) = 27")
 # 6. Deck Persistence & Reset Bug Prevention
 print("\n--- [Check 6] Deck Persistence & Separation of Concerns ---")
 combat_service_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
-test("ClassService.applyClassToPlayer(playerState)" not in combat_service_src, "CombatService.startCombat does NOT wipe deck via applyClassToPlayer")
+apply_class_found = False
+for lf in all_luau_files:
+    if "applyClassToPlayer" in lf.read_text(encoding="utf-8"):
+        apply_class_found = True
+        break
+test(not apply_class_found, "Zero references to obsolete applyClassToPlayer anywhere under src/")
 test("CardService.resetCombatPiles(playerState)" in combat_service_src, "CombatService.startCombat calls CardService.resetCombatPiles")
 
 class_service_src = (ROOT / "src/server/services/ClassService.luau").read_text(encoding="utf-8")
@@ -225,6 +232,27 @@ for term in phase2_terms:
             term_found = True
             break
     test(not term_found, f"Phase 2 concept '{term}' NOT present in src/ (Phase 2 NOT started)")
+
+# 19. Phase 1.2 Disconnect Safety: Map Voting Consensus
+print("\n--- [Check 19] Disconnect Safety: Map Voting ---")
+test("member.IsConnected ~= false" in run_manager_src, "RunManager.voteMapNode requires member.IsConnected ~= false for totalVoters")
+test("pState.IsConnected == false" in run_manager_src, "RunManager.voteMapNode rejects disconnected voters")
+
+# 20. Phase 1.2 Disconnect Safety: Enemy Target Selection
+print("\n--- [Check 20] Disconnect Safety: Enemy Target Selection ---")
+test("not pState.IsDowned and pState.IsConnected ~= false" in combat_service_src, "CombatService excludes disconnected players from enemy attack targets")
+
+# 21. Phase 1.2 Disconnect Safety: Defeat Detection
+print("\n--- [Check 21] Disconnect Safety: Defeat Detection ---")
+test("activePlayers > 0 and (downedPlayers == activePlayers)" in combat_service_src, "CombatService.areAllPlayersDowned checks active connected players only")
+test("pState.IsConnected ~= false" in combat_service_src, "CombatService.areAllPlayersDowned filters on pState.IsConnected ~= false")
+
+# 22. Phase 1.2 Disconnect Safety: Action Validation
+print("\n--- [Check 22] Disconnect Safety: Action Validation ---")
+test("Disconnected players cannot play cards." in combat_service_src, "CombatService.playCard rejects disconnected players")
+test("Disconnected players cannot vote ready." in combat_service_src, "CombatService.voteReady rejects disconnected players")
+test("Disconnected players cannot rescue others." in combat_service_src, "CombatService.rescueTeammate rejects disconnected rescuer")
+test("Cannot rescue a disconnected teammate." in combat_service_src, "CombatService.rescueTeammate rejects disconnected target")
 
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")

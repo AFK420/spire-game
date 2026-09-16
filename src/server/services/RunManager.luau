@@ -301,6 +301,9 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 
 	local pState = currentRun.PartyMembers[player.UserId]
 	if not pState then return false, "Player not in party." end
+	if pState.IsConnected == false then
+		return false, "Player is disconnected."
+	end
 
 	local isAvailable = false
 	for _, id in currentRun.AvailableNodeIds do
@@ -316,21 +319,25 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 
 	pState.VotedNodeId = targetNodeId
 
-	-- Consensus check
+	-- Consensus check among connected party members
 	local votes: { [string]: number } = {}
 	local totalVoters = 0
 	for _, member in currentRun.PartyMembers do
-		totalVoters += 1
-		if member.VotedNodeId then
-			votes[member.VotedNodeId] = (votes[member.VotedNodeId] or 0) + 1
+		if member.IsConnected ~= false then
+			totalVoters += 1
+			if member.VotedNodeId then
+				votes[member.VotedNodeId] = (votes[member.VotedNodeId] or 0) + 1
+			end
 		end
 	end
 
 	local winningNodeId: string? = nil
-	for nodeId, count in votes do
-		if count >= math.ceil(totalVoters / 2) then
-			winningNodeId = nodeId
-			break
+	if totalVoters > 0 then
+		for nodeId, count in votes do
+			if count >= math.ceil(totalVoters / 2) then
+				winningNodeId = nodeId
+				break
+			end
 		end
 	end
 

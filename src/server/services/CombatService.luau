@@ -249,15 +249,17 @@ local function areAllEnemiesDead(): boolean
 end
 
 local function areAllPlayersDowned(): boolean
-	local total = 0
-	local downed = 0
+	local activePlayers = 0
+	local downedPlayers = 0
 	for _, pState in partyRef do
-		total += 1
-		if pState.IsDowned then
-			downed += 1
+		if pState.IsConnected ~= false then
+			activePlayers += 1
+			if pState.IsDowned then
+				downedPlayers += 1
+			end
 		end
 	end
-	return total > 0 and (downed == total)
+	return activePlayers > 0 and (downedPlayers == activePlayers)
 end
 
 local function areAllLivingPlayersReady(): boolean
@@ -307,7 +309,7 @@ local function resolveTurn()
 
 	-- 1. End of Turn Class Gimmicks & Relic Triggers
 	for userId, playerState in partyRef do
-		if not playerState.IsDowned then
+		if not playerState.IsDowned and playerState.IsConnected ~= false then
 			local dummyTarget: StateTypes.EnemyState? = nil
 			for _, enemy in activeCombat.Enemies do
 				if enemy.HP > 0 then dummyTarget = enemy break end
@@ -338,10 +340,10 @@ local function resolveTurn()
 		for enemyId, enemy in activeCombat.Enemies do
 			if enemy.HP > 0 then
 				if enemy.Poison > 0 then
-					local pDmg = enemy.Poison
+					local pDmg, _ = applyDamageToEnemy(enemy, enemy.Poison)
 					enemy.HP = math.max(0, enemy.HP - pDmg)
 					enemy.Poison = math.max(0, enemy.Poison - 1)
-					logEvent("PoisonTick", enemyId, enemyId, pDmg, string.format("-%d Poison DMG", pDmg))
+					logEvent("DamageDealt", "Poison", enemy.Name, pDmg, string.format("-%d HP (Poison)", pDmg))
 
 					if enemy.HP <= 0 then
 						logEvent("EnemyDefeated", "Poison", enemyId, nil, string.format("%s collapsed from poison!", enemy.Name))
@@ -354,7 +356,7 @@ local function resolveTurn()
 					ArenaVisualizer.playEnemyAttackAnimation(enemyId)
 					local livingPlayers: { StateTypes.PlayerState } = {}
 					for _, pState in partyRef do
-						if not pState.IsDowned then
+						if not pState.IsDowned and pState.IsConnected ~= false then
 							table.insert(livingPlayers, pState)
 						end
 					end
@@ -382,7 +384,7 @@ local function resolveTurn()
 
 				elseif enemy.Intent.Type == "Debuff" then
 					for _, pState in partyRef do
-						if not pState.IsDowned then
+						if not pState.IsDowned and pState.IsConnected ~= false then
 							logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, "Debuffed with Poison")
 						end
 					end
@@ -411,7 +413,7 @@ local function resolveTurn()
 		for _, playerState in partyRef do
 			playerState.IsReady = false
 
-			if not playerState.IsDowned then
+			if not playerState.IsDowned and playerState.IsConnected ~= false then
 				playerState.Resources.Energy = playerState.Resources.MaxEnergy
 				local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
 				playerState.Resources.Energy += startRelic.BonusEnergy
@@ -575,6 +577,10 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		return false, "Player not in party."
 	end
 
+	if playerState.IsConnected == false then
+		return false, "Disconnected players cannot play cards."
+	end
+
 	if playerState.IsDowned then
 		return false, "Downed players cannot play cards."
 	end
@@ -736,6 +742,10 @@ function CombatService.voteReady(player: any): (boolean, string?)
 		return false, "Player not in party."
 	end
 
+	if playerState.IsConnected == false then
+		return false, "Disconnected players cannot vote ready."
+	end
+
 	if playerState.IsDowned then
 		return false, "Downed players cannot vote ready."
 	end
@@ -766,8 +776,16 @@ function CombatService.rescueTeammate(rescuer: any, targetUserId: number): (bool
 		return false, "Player not found."
 	end
 
+	if rescuerState.IsConnected == false then
+		return false, "Disconnected players cannot rescue others."
+	end
+
 	if rescuerState.IsDowned then
 		return false, "Downed players cannot rescue others."
+	end
+
+	if targetState.IsConnected == false then
+		return false, "Cannot rescue a disconnected teammate."
 	end
 
 	if not targetState.IsDowned then
