@@ -985,6 +985,27 @@ test("[ClassSelectResult] NetworkService.sendClassSelectionResult is implemented
 test("[ClassSelectResult] Success payload contains ClassId and SubclassId" in testrunner_src, "Suite 60 tests success payload contract")
 test("[ClassSelectResult] Rejection payload contains descriptive Error string" in testrunner_src, "Suite 60 tests rejection payload contract")
 
+# 53. Server Startup Ordering & Background Test Isolation
+print("\n--- [Check 53] Server Startup Ordering & Background Test Isolation ---")
+server_init_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+run_manager_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+
+select_class_idx = server_init_src.find("NetworkService.SelectClassEvent.OnServerEvent:Connect")
+start_run_idx = server_init_src.find("NetworkService.StartRunEvent.OnServerEvent:Connect")
+state_sync_idx = server_init_src.find("NetworkService.RequestStateSyncEvent.OnServerEvent:Connect")
+test_runner_idx = server_init_src.find("TestRunner.runAllTests()")
+
+test(select_class_idx != -1, "init.server.luau connects SelectClassEvent")
+test(start_run_idx != -1, "init.server.luau connects StartRunEvent")
+test(state_sync_idx != -1, "init.server.luau connects RequestStateSyncEvent")
+test(test_runner_idx != -1, "init.server.luau executes TestRunner.runAllTests")
+test(select_class_idx < test_runner_idx, "SelectClassEvent connected before TestRunner starts")
+test(start_run_idx < test_runner_idx, "StartRunEvent connected before TestRunner starts")
+test(state_sync_idx < test_runner_idx, "RequestStateSyncEvent connected before TestRunner starts")
+test("task.spawn(function()\n\tprint(\"[TestRunner]" in server_init_src or "task.spawn(function()" in server_init_src, "TestRunner runs in task.spawn background thread")
+test("if isIsolatedTesting and isRealPlayer then" in run_manager_src, "RunManager routes real players to liveRun during isolation")
+test("local isReal = (typeof(initiator) == \"Instance\" and initiator:IsA(\"Player\"))" in run_manager_src, "RunManager.startRun checks real player initiator during isolation")
+
 print("\n============================================================")
 print(f"VERIFICATION SUMMARY: {passed} PASSED, {failed} FAILED")
 print("============================================================\n")

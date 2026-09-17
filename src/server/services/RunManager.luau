@@ -258,17 +258,17 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
 
 	-- Player rejoining existing run: reattach instance without corrupting state
-	if currentRun.PartyMembers[userId] then
+	if isIsolatedTesting and isRealPlayer then
+		if liveRun.PartyMembers[userId] then
+			local existing = liveRun.PartyMembers[userId]
+			existing.PlayerInstance = player
+			existing.DisplayName = displayName
+			existing.IsConnected = true
+			RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
+			return existing
+		end
+	elseif currentRun.PartyMembers[userId] then
 		local existing = currentRun.PartyMembers[userId]
-		existing.PlayerInstance = isRealPlayer and player or nil
-		existing.DisplayName = displayName
-		existing.IsConnected = true
-		RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
-		return existing
-	end
-
-	if isIsolatedTesting and liveRun.PartyMembers[userId] then
-		local existing = liveRun.PartyMembers[userId]
 		existing.PlayerInstance = isRealPlayer and player or nil
 		existing.DisplayName = displayName
 		existing.IsConnected = true
@@ -314,10 +314,11 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	SkillService.unlockSkill(pState, "BattleRally")
 	SkillService.unlockSkill(pState, "Whirlwind")
 
-	currentRun.PartyMembers[userId] = pState
 	if isIsolatedTesting and isRealPlayer then
 		local realMembers = liveRun.PartyMembers
 		realMembers[userId] = pState
+	else
+		currentRun.PartyMembers[userId] = pState
 	end
 	ClassService.initializePlayerForRun(pState)
 
@@ -327,7 +328,9 @@ end
 
 function RunManager.removePlayer(player: any)
 	local userId = player.UserId
-	local member = currentRun.PartyMembers[userId]
+	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
+	local targetRun = if (isIsolatedTesting and isRealPlayer) then liveRun else currentRun
+	local member = targetRun.PartyMembers[userId]
 	if not member then return end
 
 	member.PlayerInstance = nil
@@ -337,8 +340,8 @@ function RunManager.removePlayer(player: any)
 	PersistenceService.saveProfile(player)
 	NetworkService.cleanPlayer(userId)
 
-	if currentRun.Phase == "Lobby" then
-		currentRun.PartyMembers[userId] = nil
+	if targetRun.Phase == "Lobby" then
+		targetRun.PartyMembers[userId] = nil
 	end
 
 	RunManager.broadcastRunSnapshots(string.format("%s left the party.", member.DisplayName))
@@ -374,37 +377,43 @@ end
 -- State Machine Transitions
 --------------------------------------------------------------------------------
 
-function RunManager.startRun(): boolean
-	if currentRun.Phase ~= "Lobby" then
+function RunManager.startRun(initiator: any?): boolean
+	local isReal = (typeof(initiator) == "Instance" and initiator:IsA("Player"))
+	local runToStart = if (isIsolatedTesting and (isReal or #Players:GetPlayers() > 0)) then liveRun else currentRun
+	if runToStart.Phase ~= "Lobby" then
 		warn("[RunManager] Cannot start run outside Lobby.")
 		return false
 	end
 
-	internalDungeonRun = DungeonService.generateRun()
+	local dungeon = DungeonService.generateRun()
+	if runToStart == liveRun then
+		liveDungeonRun = dungeon
+	end
+	internalDungeonRun = dungeon
 
-	local seed = internalDungeonRun.Seed
+	local seed = dungeon.Seed
 	local runId = string.format("run_%d_%s", seed, HttpService:GenerateGUID(false):sub(1, 6))
 
-	currentRun.RunId = runId
-	currentRun.Seed = seed
-	currentRun.Phase = "MapSelect"
-	currentRun.ActIndex = 1
-	currentRun.CurrentTier = 0
-	currentRun.CurrentNodeId = nil
-	currentRun.ClearedNodeIds = {}
-	currentRun.ActiveRoom = nil
-	currentRun.ActiveCombat = nil
-	currentRun.PendingRewards = nil
+	runToStart.RunId = runId
+	runToStart.Seed = seed
+	runToStart.Phase = "MapSelect"
+	runToStart.ActIndex = 1
+	runToStart.CurrentTier = 0
+	runToStart.CurrentNodeId = nil
+	runToStart.ClearedNodeIds = {}
+	runToStart.ActiveRoom = nil
+	runToStart.ActiveCombat = nil
+	runToStart.PendingRewards = nil
 
 	-- Refresh available starting nodes
-	local availableNodes = DungeonService.getAvailableNodes(internalDungeonRun)
-	table.clear(currentRun.AvailableNodeIds)
+	local availableNodes = DungeonService.getAvailableNodes(dungeon)
+	table.clear(runToStart.AvailableNodeIds)
 	for _, n in availableNodes do
-		table.insert(currentRun.AvailableNodeIds, n.Id)
+		table.insert(runToStart.AvailableNodeIds, n.Id)
 	end
 
 	-- Prepare all players
-	for _, pState in currentRun.PartyMembers do
+	for _, pState in runToStart.PartyMembers do
 		pState.VotedNodeId = nil
 		pState.Resources.HP = pState.Resources.MaxHP
 		ClassService.resetCombatResources(pState)
@@ -421,18 +430,21 @@ function RunManager.startRun(): boolean
 end
 
 function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?)
-	if currentRun.Phase ~= "MapSelect" or not internalDungeonRun then
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
+	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
+	if runToUse.Phase ~= "MapSelect" or not dRun then
 		return false, "Not currently on MapSelect phase."
 	end
 
-	local pState = currentRun.PartyMembers[player.UserId]
+	local pState = runToUse.PartyMembers[player.UserId]
 	if not pState then return false, "Player not in party." end
 	if pState.IsConnected == false then
 		return false, "Player is disconnected."
 	end
 
 	local isAvailable = false
-	for _, id in currentRun.AvailableNodeIds do
+	for _, id in runToUse.AvailableNodeIds do
 		if id == targetNodeId then
 			isAvailable = true
 			break
@@ -448,7 +460,7 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	-- Consensus check among connected party members
 	local votes: { [string]: number } = {}
 	local totalVoters = 0
-	for _, member in currentRun.PartyMembers do
+	for _, member in runToUse.PartyMembers do
 		if member.IsConnected ~= false then
 			totalVoters += 1
 			if member.VotedNodeId then
@@ -664,16 +676,20 @@ end
 
 function RunManager.getPlayerState(playerOrUserId: any): StateTypes.PlayerState?
 	local uid: number? = nil
+	local isReal = false
 	if typeof(playerOrUserId) == "number" then
 		uid = playerOrUserId
 	elseif typeof(playerOrUserId) == "Instance" and playerOrUserId:IsA("Player") then
 		uid = playerOrUserId.UserId
+		isReal = true
 	elseif typeof(playerOrUserId) == "table" and typeof(playerOrUserId.UserId) == "number" then
 		uid = playerOrUserId.UserId
 	end
 	if uid then
-		if isIsolatedTesting and liveRun.PartyMembers[uid] and not (isolatedTestRun and isolatedTestRun.PartyMembers[uid]) then
-			return liveRun.PartyMembers[uid]
+		if isIsolatedTesting and (isReal or liveRun.PartyMembers[uid]) then
+			if liveRun.PartyMembers[uid] then
+				return liveRun.PartyMembers[uid]
+			end
 		end
 		return currentRun.PartyMembers[uid]
 	end

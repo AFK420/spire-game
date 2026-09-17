@@ -76,18 +76,6 @@ RunManager.init()
 
 print("[Server] All core services deterministically initialized.")
 
--- 2. Execute Phase 1 automated verification test suite
-local success, err = pcall(function()
-	TestRunner.runAllTests()
-end)
--- Defensive invariant: Isolation must NEVER remain active on live server
-if RunManager.isTestIsolationActive() then
-	RunManager.endTestIsolation()
-end
-if not success then
-	warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
-end
-
 --------------------------------------------------------------------------------
 -- Remote Event Network Dispatchers
 --------------------------------------------------------------------------------
@@ -96,7 +84,7 @@ end
 NetworkService.StartRunEvent.OnServerEvent:Connect(function(player: Player)
 	if not NetworkService.checkRateLimit(player, "General") then return end
 	print(string.format("[Server] Player %s triggered StartRun.", player.Name))
-	RunManager.startRun()
+	RunManager.startRun(player)
 end)
 
 -- 2. Select Class & Subclass
@@ -449,4 +437,20 @@ NetworkService.RequestCardCollectionEvent.OnServerEvent:Connect(function(player:
 end)
 
 print("[Server] Game network listeners successfully registered.")
+print("[Server] Server is ready for live gameplay.")
 print("============================================================")
+
+-- 3. Execute Phase 1 automated verification test suite in background task
+task.spawn(function()
+	print("[TestRunner] Spawning background automated test suites in isolated mode...")
+	local success, err = pcall(function()
+		TestRunner.runAllTests()
+	end)
+	-- Defensive invariant: Isolation must NEVER remain active on live server
+	if RunManager.isTestIsolationActive() then
+		RunManager.endTestIsolation()
+	end
+	if not success then
+		warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
+	end
+end)
