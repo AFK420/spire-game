@@ -5064,7 +5064,8 @@ function TestRunner.runAllTests(): boolean
 	RunManager.beginTestIsolation()
 	assertTest(RunManager.isTestIsolationActive() == true, "[IsolationSuite61] Isolation active for Case A")
 	local caseATestPlayer = { UserId = 89001, Name = "MockTesterA", DisplayName = "TesterA" }
-	RunManager.addPlayer(caseATestPlayer :: any)
+	local pAState = RunManager.addPlayer(caseATestPlayer :: any)
+	if pAState then pAState.ClassLocked = true end
 
 	local caseAStartResult = RunManager.startRun(nil)
 	assertTest(caseAStartResult == true, "[CaseA] startRun(nil) succeeds on isolatedTestRun")
@@ -5084,7 +5085,8 @@ function TestRunner.runAllTests(): boolean
 
 	-- Add mock test player (routes to isolatedTestRun)
 	local caseBTestPlayer = { UserId = 89002, Name = "MockTesterB", DisplayName = "TesterB" }
-	RunManager.addPlayer(caseBTestPlayer :: any)
+	local pBState = RunManager.addPlayer(caseBTestPlayer :: any)
+	if pBState then pBState.ClassLocked = true end
 	assertTest(RunManager.getRunState().PartyMembers[89002] ~= nil, "[CaseB] Mock player in isolatedTestRun")
 	assertTest(liveRunRef.PartyMembers[89002] == nil, "[CaseB] Mock player NOT in liveRun")
 
@@ -5108,7 +5110,8 @@ function TestRunner.runAllTests(): boolean
 	assertTest(liveRunRef.PartyMembers[89020] ~= nil and liveRunRef.PartyMembers[89030] ~= nil, "[CaseC] Multiple real players registered in liveRun")
 
 	local caseCMockPlayer = { UserId = 89003, Name = "MockTesterC", DisplayName = "TesterC" }
-	RunManager.addPlayer(caseCMockPlayer :: any)
+	local pCState = RunManager.addPlayer(caseCMockPlayer :: any)
+	if pCState then pCState.ClassLocked = true end
 
 	-- Test calling startRun(mockPlayer) mutates ONLY isolatedTestRun
 	local caseCStartResult = RunManager.startRun(caseCMockPlayer :: any)
@@ -5123,7 +5126,8 @@ function TestRunner.runAllTests(): boolean
 	-- Test Case D: When isIsolatedTesting is active AND a real Player calls startRun(realPlayer)
 	RunManager.beginTestIsolation()
 	local simRealPlayerD = { UserId = 89040, Name = "RealPlayerD", DisplayName = "RealD", _isSimulatedRealPlayer = true }
-	RunManager.addPlayer(simRealPlayerD :: any)
+	local realDState = RunManager.addPlayer(simRealPlayerD :: any)
+	if realDState then realDState.ClassLocked = true end
 
 	local caseDMockPlayer = { UserId = 89004, Name = "MockTesterD", DisplayName = "TesterD" }
 	RunManager.addPlayer(caseDMockPlayer :: any)
@@ -5144,7 +5148,8 @@ function TestRunner.runAllTests(): boolean
 	-- Test Case E: When isIsolatedTesting is active AND a mock player calls startRun(mockPlayer)
 	RunManager.beginTestIsolation()
 	local caseEMockPlayer = { UserId = 89005, Name = "MockTesterE", DisplayName = "TesterE" }
-	RunManager.addPlayer(caseEMockPlayer :: any)
+	local pEState = RunManager.addPlayer(caseEMockPlayer :: any)
+	if pEState then pEState.ClassLocked = true end
 	assertTest(liveRunRef.Phase == "Lobby", "[CaseE] liveRun in Lobby")
 	assertTest(RunManager.getRunState().Phase == "Lobby", "[CaseE] isolatedTestRun in Lobby")
 

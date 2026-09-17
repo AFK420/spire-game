@@ -86,6 +86,11 @@ function ClassService.selectClass(player: any, playerState: StateTypes.PlayerSta
 		return false, "Cannot change class outside Lobby phase."
 	end
 
+	if playerState.ClassLocked then
+		warn(string.format("[ClassService] Player %s has already locked in class.", playerState.DisplayName))
+		return false, "Class is already locked in."
+	end
+
 	local heroClass = ClassData.getClass(classId)
 	if not heroClass then
 		warn("[ClassService] Unknown class: " .. tostring(classId))

@@ -39,6 +39,7 @@ local DungeonService = require(servicesFolder:WaitForChild("DungeonService") :: 
 local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
 local PersistenceService = require(servicesFolder:WaitForChild("PersistenceService") :: ModuleScript)
 local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
+local CardCollectionService = require(servicesFolder:WaitForChild("CardCollectionService") :: ModuleScript)
 
 local CombatService: any = nil
 local StatusService: any = nil
@@ -326,6 +327,21 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 		return existing
 	end
 
+	local targetRun = if (isIsolatedTesting and isRealPlayer) then liveRun else currentRun
+	local partyCount = 0
+	for _ in targetRun.PartyMembers do
+		partyCount += 1
+	end
+	if partyCount >= GameConfig.Coop.MaxPartySize then
+		warn(string.format("[RunManager] Cannot add player %s: party is full (%d/%d).", displayName, partyCount, GameConfig.Coop.MaxPartySize))
+		return nil
+	end
+
+	if targetRun.Phase ~= "Lobby" then
+		warn(string.format("[RunManager] Cannot add player %s to active party: run is in phase %s.", displayName, targetRun.Phase))
+		return nil
+	end
+
 	local pState: StateTypes.PlayerState = {
 		UserId = userId,
 		PlayerInstance = typeof(player) == "Instance" and player or nil,
@@ -447,6 +463,35 @@ function RunManager.startRun(initiator: any?): boolean
 		return false
 	end
 
+	-- 1. Validate connected party members >= 1
+	local connectedMembers = 0
+	for _, pState in runToStart.PartyMembers do
+		if pState.IsConnected ~= false then
+			connectedMembers += 1
+		end
+	end
+	if connectedMembers < 1 then
+		warn("[RunManager] Cannot start run: no connected party members.")
+		return false
+	end
+
+	-- 2. Validate initiator belongs to the party (if initiator specified)
+	if initiator ~= nil then
+		local initUserId = (typeof(initiator) == "Instance" and initiator.UserId) or (typeof(initiator) == "table" and initiator.UserId) or initiator
+		if typeof(initUserId) == "number" and not runToStart.PartyMembers[initUserId] then
+			warn(string.format("[RunManager] Cannot start run: initiator %s is not in the party.", tostring(initUserId)))
+			return false
+		end
+	end
+
+	-- 3. Validate all connected party members have locked their class
+	for _, pState in runToStart.PartyMembers do
+		if pState.IsConnected ~= false and not pState.ClassLocked then
+			warn(string.format("[RunManager] Cannot start run: player %s has not locked their class.", pState.DisplayName))
+			return false
+		end
+	end
+
 	local dungeon = DungeonService.generateRun()
 	if isIsolatedTesting then
 		if isReal then
@@ -532,10 +577,12 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	-- Consensus check among connected party members
 	local votes: { [string]: number } = {}
 	local totalVoters = 0
+	local totalCastVotes = 0
 	for _, member in runToUse.PartyMembers do
 		if member.IsConnected ~= false then
 			totalVoters += 1
 			if member.VotedNodeId then
+				totalCastVotes += 1
 				votes[member.VotedNodeId] = (votes[member.VotedNodeId] or 0) + 1
 			end
 		end
@@ -543,10 +590,29 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 
 	local winningNodeId: string? = nil
 	if totalVoters > 0 then
+		local requiredMajority = math.floor(totalVoters / 2) + 1
 		for nodeId, count in votes do
-			if count >= math.ceil(totalVoters / 2) then
+			if count >= requiredMajority then
 				winningNodeId = nodeId
 				break
+			end
+		end
+
+		-- Deterministic tie-breaker ONLY after all connected players have voted
+		if not winningNodeId and totalCastVotes >= totalVoters then
+			local highestCount = 0
+			local candidates: { string } = {}
+			for nodeId, count in votes do
+				if count > highestCount then
+					highestCount = count
+					candidates = { nodeId }
+				elseif count == highestCount then
+					table.insert(candidates, nodeId)
+				end
+			end
+			table.sort(candidates)
+			if #candidates > 0 then
+				winningNodeId = candidates[1]
 			end
 		end
 	end
@@ -719,6 +785,10 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 		table.insert(member.Deck, newCardInst)
 	end
 
+	-- Grant to permanent card collection
+	local playerRef = member.PlayerInstance or player or { UserId = userId }
+	CardCollectionService.grantCard(playerRef, cardDefId, 1)
+
 	runToUse.PendingRewards.ClaimedCards[userId] = true
 	if not isIsolatedTesting or isReal then
 		RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", member.DisplayName, cardDefId), isReal)
@@ -827,9 +897,11 @@ function RunManager.resetToLobby()
 		member.IsReady = false
 		member.IsDowned = false
 		member.VotedNodeId = nil
-		member.Resources.HP = member.Resources.MaxHP
-		member.Resources.Energy = member.Resources.MaxEnergy
-		member.Resources.Shield = 0
+		member.Gold = GameConfig.Dungeon.StarterGold
+		member.RelicIds = { "Anchor" }
+		ClassService.applyBaseClassStats(member)
+		ClassService.initializeStartingDeck(member)
+		ClassService.resetCombatResources(member)
 	end
 
 	if CombatService then
