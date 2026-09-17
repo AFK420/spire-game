@@ -175,7 +175,7 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	head.Size = Vector3.new(2, 2, 2)
 	head.CFrame = torso.CFrame * CFrame.new(0, 3.2, 0)
 	head.Anchored = true
-	head.Material = Enum.Material.Obsidian
+	head.Material = Enum.Material.Basalt
 	head.Color = Color3.fromRGB(20, 20, 25)
 	head.Parent = model
 
@@ -294,36 +294,41 @@ function ArenaVisualizer.syncEnemies(enemies: { [string]: StateTypes.EnemyState 
 		end
 
 		local targetPos = ENEMY_STAND_POS + offset
-		local model = spawnedEnemyModels[enemy.InstanceId]
-		if not model or not model.Parent then
-			model = buildEnemyModel(enemy, targetPos)
-			spawnedEnemyModels[enemy.InstanceId] = model
-		end
+		local ok, err = pcall(function()
+			local model = spawnedEnemyModels[enemy.InstanceId]
+			if not model or not model.Parent then
+				model = buildEnemyModel(enemy, targetPos)
+				spawnedEnemyModels[enemy.InstanceId] = model
+			end
 
-		-- Update billboard
-		local head = model:FindFirstChild("Head")
-		if head then
-			local billboard = head:FindFirstChild("OverheadDisplay") :: BillboardGui?
-			if billboard then
-				local container = billboard:FindFirstChild("Container") :: Frame?
-				if container then
-					local hpBg = container:FindFirstChild("HPBackground") :: Frame?
-					if hpBg then
-						local hpFill = hpBg:FindFirstChild("HPFill") :: Frame?
-						local hpText = hpBg:FindFirstChild("HPText") :: TextLabel?
-						if hpFill and hpText then
-							local ratio = math.clamp(enemy.HP / math.max(1, enemy.MaxHP), 0, 1)
-							hpFill.Size = UDim2.new(ratio, 0, 1, 0)
-							hpText.Text = string.format("%d / %d HP", enemy.HP, enemy.MaxHP)
+			-- Update billboard
+			local head = model:FindFirstChild("Head")
+			if head then
+				local billboard = head:FindFirstChild("OverheadDisplay") :: BillboardGui?
+				if billboard then
+					local container = billboard:FindFirstChild("Container") :: Frame?
+					if container then
+						local hpBg = container:FindFirstChild("HPBackground") :: Frame?
+						if hpBg then
+							local hpFill = hpBg:FindFirstChild("HPFill") :: Frame?
+							local hpText = hpBg:FindFirstChild("HPText") :: TextLabel?
+							if hpFill and hpText then
+								local ratio = math.clamp(enemy.HP / math.max(1, enemy.MaxHP), 0, 1)
+								hpFill.Size = UDim2.new(ratio, 0, 1, 0)
+								hpText.Text = string.format("%d / %d HP", enemy.HP, enemy.MaxHP)
+							end
 						end
-					end
 
-					local statusBar = container:FindFirstChild("StatusBar") :: TextLabel?
-					if statusBar then
-						statusBar.Text = string.format("🛡️ %d   🧪 %d   |   %s (%d)", enemy.Shield, enemy.Poison, enemy.Intent.Type, enemy.Intent.Value)
+						local statusBar = container:FindFirstChild("StatusBar") :: TextLabel?
+						if statusBar then
+							statusBar.Text = string.format("🛡️ %d   🧪 %d   |   %s (%d)", enemy.Shield, enemy.Poison, enemy.Intent.Type, enemy.Intent.Value)
+						end
 					end
 				end
 			end
+		end)
+		if not ok then
+			warn(string.format("[ArenaVisualizer] syncEnemies error for %s: %s", enemy.InstanceId, tostring(err)))
 		end
 	end
 end

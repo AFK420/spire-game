@@ -231,7 +231,9 @@ function CombatService.broadcastSnapshots(message: string?)
 	if not activeCombat then return end
 
 	if not isCombatIsolation then
-		ArenaVisualizer.syncEnemies(activeCombat.Enemies)
+		pcall(function()
+			ArenaVisualizer.syncEnemies(activeCombat.Enemies)
+		end)
 	end
 
 	for userId, playerState in partyRef do
@@ -757,7 +759,9 @@ function CombatService.startCombat(
 	end)
 
 	if not isCombatIsolation then
-		ArenaVisualizer.teleportPlayersToPedestal()
+		pcall(function()
+			ArenaVisualizer.teleportPlayersToPedestal()
+		end)
 	end
 
 	CombatService.broadcastSnapshots("Battle initiated! Choose your actions.")

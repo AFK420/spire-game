@@ -909,7 +909,9 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 	-- Stage 5: Teleport players in live game
 	local av = getArenaVisualizer()
 	if av and av.teleportPlayersToPedestal then
-		av.teleportPlayersToPedestal()
+		pcall(function()
+			av.teleportPlayersToPedestal()
+		end)
 	end
 
 	print(string.format("[MAPFLOW][SERVER][5] state committed: Phase=ActiveRoom, Rev=%d, Node=%s",
