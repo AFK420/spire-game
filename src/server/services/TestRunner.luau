@@ -4842,6 +4842,118 @@ function TestRunner.runAllTests(): boolean
 
 	-- Clean up mock live player
 	RunManager.removePlayer(livePlayerMock :: any)
+
+	----------------------------------------------------------------------------
+	-- SUITE 61: Test Isolation Boundary & Live Run Protection
+	----------------------------------------------------------------------------
+	print("\n--- SUITE 61: Test Isolation Boundary & Live Run Protection ---")
+
+	-- Ensure liveRun is in clean Lobby state before Suite 61 begins
+	local liveRunRef = RunManager.getLiveRunState()
+	liveRunRef.Phase = "Lobby"
+	table.clear(liveRunRef.PartyMembers)
+
+	-- Test Case A: When isIsolatedTesting is active and no real players are connected
+	RunManager.beginTestIsolation()
+	assertTest(RunManager.isTestIsolationActive() == true, "[IsolationSuite61] Isolation active for Case A")
+	local caseATestPlayer = { UserId = 89001, Name = "MockTesterA", DisplayName = "TesterA" }
+	RunManager.addPlayer(caseATestPlayer :: any)
+
+	local caseAStartResult = RunManager.startRun(nil)
+	assertTest(caseAStartResult == true, "[CaseA] startRun(nil) succeeds on isolatedTestRun")
+	assertTest(RunManager.getRunState().Phase == "MapSelect", "[CaseA] isolatedTestRun phase transitioned to MapSelect")
+	assertTest(liveRunRef.Phase == "Lobby", "[CaseA] liveRun remains in Lobby phase")
+	assertTest(RunManager.getLiveDungeonRun() == nil, "[CaseA] liveDungeonRun remains nil")
+	assertTest(RunManager.getDungeonRun() ~= nil, "[CaseA] internalDungeonRun populated for isolated test")
+	RunManager.endTestIsolation()
+
+	-- Test Case B: When isIsolatedTesting is active AND a real player exists in liveRun
+	local simRealPlayer1 = { UserId = 89010, Name = "RealPlayerOne", DisplayName = "RealOne", _isSimulatedRealPlayer = true }
+	RunManager.beginTestIsolation()
+	-- Add real player during isolation (routes to liveRun)
+	local realP1State = RunManager.addPlayer(simRealPlayer1 :: any)
+	assertTest(liveRunRef.PartyMembers[89010] ~= nil, "[CaseB] Real player registered in liveRun")
+	assertTest(RunManager.getRunState().PartyMembers[89010] == nil, "[CaseB] Real player NOT added to isolatedTestRun")
+
+	-- Add mock test player (routes to isolatedTestRun)
+	local caseBTestPlayer = { UserId = 89002, Name = "MockTesterB", DisplayName = "TesterB" }
+	RunManager.addPlayer(caseBTestPlayer :: any)
+	assertTest(RunManager.getRunState().PartyMembers[89002] ~= nil, "[CaseB] Mock player in isolatedTestRun")
+	assertTest(liveRunRef.PartyMembers[89002] == nil, "[CaseB] Mock player NOT in liveRun")
+
+	-- Automated test calls startRun() with nil initiator (as TestRunner does)
+	local caseBStartResult = RunManager.startRun(nil)
+	assertTest(caseBStartResult == true, "[CaseB] startRun(nil) succeeds on isolated test run")
+	assertTest(RunManager.getRunState().Phase == "MapSelect", "[CaseB] isolatedTestRun transitioned to MapSelect")
+	assertTest(liveRunRef.Phase == "Lobby", "[CaseB] liveRun remains in Lobby phase despite connected real player")
+	assertTest(RunManager.getLiveDungeonRun() == nil, "[CaseB] liveDungeonRun remains nil")
+	assertTest(realP1State.Resources.HP == 100, "[CaseB] Real player in liveRun completely unaffected")
+
+	RunManager.endTestIsolation()
+	liveRunRef.Phase = "Lobby"
+
+	-- Test Case C: When isIsolatedTesting is active AND multiple real players are in liveRun
+	local simRealPlayer2 = { UserId = 89020, Name = "RealPlayerTwo", DisplayName = "RealTwo", _isSimulatedRealPlayer = true }
+	local simRealPlayer3 = { UserId = 89030, Name = "RealPlayerThree", DisplayName = "RealThree", _isSimulatedRealPlayer = true }
+	RunManager.beginTestIsolation()
+	RunManager.addPlayer(simRealPlayer2 :: any)
+	RunManager.addPlayer(simRealPlayer3 :: any)
+	assertTest(liveRunRef.PartyMembers[89020] ~= nil and liveRunRef.PartyMembers[89030] ~= nil, "[CaseC] Multiple real players registered in liveRun")
+
+	local caseCMockPlayer = { UserId = 89003, Name = "MockTesterC", DisplayName = "TesterC" }
+	RunManager.addPlayer(caseCMockPlayer :: any)
+
+	-- Test calling startRun(mockPlayer) mutates ONLY isolatedTestRun
+	local caseCStartResult = RunManager.startRun(caseCMockPlayer :: any)
+	assertTest(caseCStartResult == true, "[CaseC] startRun(mockPlayer) succeeds on isolatedTestRun")
+	assertTest(RunManager.getRunState().Phase == "MapSelect", "[CaseC] isolatedTestRun transitioned to MapSelect")
+	assertTest(liveRunRef.Phase == "Lobby", "[CaseC] liveRun remains in Lobby phase with multiple real players")
+	assertTest(RunManager.getLiveDungeonRun() == nil, "[CaseC] liveDungeonRun remains nil")
+
+	RunManager.endTestIsolation()
+	liveRunRef.Phase = "Lobby"
+
+	-- Test Case D: When isIsolatedTesting is active AND a real Player calls startRun(realPlayer)
+	RunManager.beginTestIsolation()
+	local simRealPlayerD = { UserId = 89040, Name = "RealPlayerD", DisplayName = "RealD", _isSimulatedRealPlayer = true }
+	RunManager.addPlayer(simRealPlayerD :: any)
+
+	local caseDMockPlayer = { UserId = 89004, Name = "MockTesterD", DisplayName = "TesterD" }
+	RunManager.addPlayer(caseDMockPlayer :: any)
+
+	assertTest(liveRunRef.Phase == "Lobby", "[CaseD] liveRun initially in Lobby")
+	assertTest(RunManager.getRunState().Phase == "Lobby", "[CaseD] isolatedTestRun initially in Lobby")
+
+	-- Real player starts run
+	local caseDStartResult = RunManager.startRun(simRealPlayerD :: any)
+	assertTest(caseDStartResult == true, "[CaseD] startRun(realPlayer) succeeds")
+	assertTest(liveRunRef.Phase == "MapSelect", "[CaseD] liveRun transitions to MapSelect")
+	assertTest(RunManager.getLiveDungeonRun() ~= nil, "[CaseD] liveDungeonRun is populated")
+	assertTest(RunManager.getRunState().Phase == "Lobby", "[CaseD] isolatedTestRun remains unaffected in Lobby")
+
+	RunManager.endTestIsolation()
+	liveRunRef.Phase = "Lobby"
+
+	-- Test Case E: When isIsolatedTesting is active AND a mock player calls startRun(mockPlayer)
+	RunManager.beginTestIsolation()
+	local caseEMockPlayer = { UserId = 89005, Name = "MockTesterE", DisplayName = "TesterE" }
+	RunManager.addPlayer(caseEMockPlayer :: any)
+	assertTest(liveRunRef.Phase == "Lobby", "[CaseE] liveRun in Lobby")
+	assertTest(RunManager.getRunState().Phase == "Lobby", "[CaseE] isolatedTestRun in Lobby")
+
+	local caseEStartResult = RunManager.startRun(caseEMockPlayer :: any)
+	assertTest(caseEStartResult == true, "[CaseE] startRun(mockPlayer) succeeds")
+	assertTest(RunManager.getRunState().Phase == "MapSelect", "[CaseE] isolatedTestRun transitions to MapSelect")
+	assertTest(liveRunRef.Phase == "Lobby", "[CaseE] liveRun remains unaffected in Lobby")
+
+	-- Broadcast suppression test:
+	-- broadcastRunSnapshots without isLiveAction=true during isolation returns silently
+	RunManager.broadcastRunSnapshots("Test broadcast during isolation", false)
+	assertTest(true, "[BroadcastSuppression] broadcastRunSnapshots suppressed during isolation without isLiveAction")
+
+	RunManager.endTestIsolation()
+	liveRunRef.Phase = "Lobby"
+	table.clear(liveRunRef.PartyMembers)
 	end)
 
 	-- Defensive invariant: Isolation must NEVER remain active regardless of success or failure

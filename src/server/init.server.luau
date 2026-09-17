@@ -107,7 +107,7 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 		return
 	end
 
-	local pState = RunManager.getPlayerState(player.UserId)
+	local pState = RunManager.getPlayerState(player)
 	if not pState then
 		print(string.format("[Server] PlayerState missing for %s (UserId %d); adding to expedition party.", player.Name, player.UserId))
 		pState = RunManager.addPlayer(player)
@@ -121,7 +121,7 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 			ClassId = cId,
 			SubclassId = scId,
 		})
-		RunManager.broadcastRunSnapshots(string.format("%s selected %s (%s)", player.DisplayName, cId, scId))
+		RunManager.broadcastRunSnapshots(string.format("%s selected %s (%s)", player.DisplayName, cId, scId), true)
 	else
 		warn(string.format("[Server] Class selection rejected for %s: %s", player.DisplayName, tostring(err)))
 		NetworkService.sendClassSelectionResult(player, {
@@ -192,7 +192,7 @@ end)
 NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Player)
 	if not NetworkService.checkRateLimit(player, "General") then return end
 
-	if not RunManager.getPlayerState(player.UserId) then
+	if not RunManager.getPlayerState(player) then
 		RunManager.addPlayer(player)
 	end
 
@@ -210,12 +210,12 @@ NetworkService.EquipEquipmentEvent.OnServerEvent:Connect(function(player: Player
 	if not NetworkService.checkRateLimit(player, "General") then return end
 	if typeof(equipmentInstanceId) ~= "string" or #equipmentInstanceId == 0 then return end
 
-	local pState = RunManager.getPlayerState(player.UserId)
+	local pState = RunManager.getPlayerState(player)
 	if not pState then return end
 
 	local success, err = EquipmentService.equipItem(pState, equipmentInstanceId)
 	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s equipped gear.", player.DisplayName))
+		RunManager.broadcastRunSnapshots(string.format("%s equipped gear.", player.DisplayName), true)
 	elseif err then
 		warn(string.format("[Server] EquipEquipment failed for %s: %s", player.Name, err))
 	end
@@ -226,12 +226,12 @@ NetworkService.UnequipEquipmentEvent.OnServerEvent:Connect(function(player: Play
 	if not NetworkService.checkRateLimit(player, "General") then return end
 	if typeof(slot) ~= "string" or not VALID_EQUIPMENT_SLOTS[slot] then return end
 
-	local pState = RunManager.getPlayerState(player.UserId)
+	local pState = RunManager.getPlayerState(player)
 	if not pState then return end
 
 	local success, err = EquipmentService.unequipItem(pState, slot :: any)
 	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s unequipped %s.", player.DisplayName, tostring(slot)))
+		RunManager.broadcastRunSnapshots(string.format("%s unequipped %s.", player.DisplayName, tostring(slot)), true)
 	elseif err then
 		warn(string.format("[Server] UnequipEquipment failed for %s: %s", player.Name, err))
 	end
@@ -243,7 +243,7 @@ NetworkService.EquipSkillEvent.OnServerEvent:Connect(function(player: Player, sk
 	if typeof(skillIdentifier) ~= "string" or #skillIdentifier == 0 then return end
 	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
 
-	local pState = RunManager.getPlayerState(player.UserId)
+	local pState = RunManager.getPlayerState(player)
 	if not pState then return end
 
 	-- Authoritative Ownership Check: look up player's already-owned skill instance
@@ -255,7 +255,7 @@ NetworkService.EquipSkillEvent.OnServerEvent:Connect(function(player: Player, sk
 
 	local success, err = SkillService.equipSkill(pState, ownedSkill, slot :: any)
 	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s equipped skill %s.", player.DisplayName, ownedSkill.DefinitionId))
+		RunManager.broadcastRunSnapshots(string.format("%s equipped skill %s.", player.DisplayName, ownedSkill.DefinitionId), true)
 	elseif err then
 		warn(string.format("[Server] EquipSkill failed for %s: %s", player.Name, err))
 	end
@@ -266,12 +266,12 @@ NetworkService.UnequipSkillEvent.OnServerEvent:Connect(function(player: Player, 
 	if not NetworkService.checkRateLimit(player, "General") then return end
 	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
 
-	local pState = RunManager.getPlayerState(player.UserId)
+	local pState = RunManager.getPlayerState(player)
 	if not pState then return end
 
 	local success, err = SkillService.unequipSkill(pState, slot :: any)
 	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s unequipped skill %s.", player.DisplayName, tostring(slot)))
+		RunManager.broadcastRunSnapshots(string.format("%s unequipped skill %s.", player.DisplayName, tostring(slot)), true)
 	elseif err then
 		warn(string.format("[Server] UnequipSkill failed for %s: %s", player.Name, err))
 	end
@@ -288,12 +288,12 @@ NetworkService.UnlockPassiveEvent.OnServerEvent:Connect(function(player: Player,
 		return
 	end
 
-	local pState = RunManager.getPlayerState(player.UserId)
+	local pState = RunManager.getPlayerState(player)
 	if not pState then return end
 
 	local success, err = PassiveService.unlockNode(pState, nodeId)
 	if success then
-		RunManager.broadcastRunSnapshots(string.format("%s unlocked passive node %s.", player.DisplayName, nodeId))
+		RunManager.broadcastRunSnapshots(string.format("%s unlocked passive node %s.", player.DisplayName, nodeId), true)
 	elseif err then
 		warn(string.format("[Server] UnlockPassive failed for %s: %s", player.Name, err))
 	end

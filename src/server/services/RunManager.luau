@@ -124,13 +124,15 @@ end
 
 function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 	local userId = (typeof(player) == "table" and player.UserId) or (typeof(player) == "Instance" and player.UserId) or player
-	local runToRead = currentRun
-	if isIsolatedTesting and (typeof(player) == "Instance" and player:IsA("Player")) and liveRun.PartyMembers[userId] then
-		runToRead = liveRun
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
 	end
+	local runToRead = if (isIsolatedTesting and isReal and liveRun.PartyMembers[userId]) then liveRun else currentRun
+	local dRun = if (isIsolatedTesting and isReal and liveRun.PartyMembers[userId]) then liveDungeonRun else internalDungeonRun
 	local actName = "Act 1: The Forsaken Ascent"
-	if internalDungeonRun and internalDungeonRun.Acts[internalDungeonRun.CurrentActIndex] then
-		actName = internalDungeonRun.Acts[internalDungeonRun.CurrentActIndex].Name
+	if dRun and dRun.Acts[dRun.CurrentActIndex] then
+		actName = dRun.Acts[dRun.CurrentActIndex].Name
 	end
 
 	local partyViews: { [string]: StateTypes.PlayerView } = {}
@@ -190,9 +192,9 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 	end
 
 	local rewardView = nil
-	if currentRun.PendingRewards then
+	if runToRead.PendingRewards then
 		local offeredViews: { StateTypes.CardView } = {}
-		local offered = currentRun.PendingRewards.OfferedCardsByPlayer[userId]
+		local offered = runToRead.PendingRewards.OfferedCardsByPlayer[userId]
 		if offered then
 			for _, cardDef in offered do
 				table.insert(offeredViews, {
@@ -208,10 +210,10 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		end
 
 		rewardView = {
-			GoldAmount = currentRun.PendingRewards.GoldAmount,
-			AetherShardsAmount = currentRun.PendingRewards.AetherShardsAmount,
+			GoldAmount = runToRead.PendingRewards.GoldAmount,
+			AetherShardsAmount = runToRead.PendingRewards.AetherShardsAmount,
 			OfferedCards = offeredViews,
-			HasClaimed = currentRun.PendingRewards.ClaimedCards[userId] or false,
+			HasClaimed = runToRead.PendingRewards.ClaimedCards[userId] or false,
 		}
 	end
 
@@ -230,7 +232,8 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 	}
 end
 
-function RunManager.broadcastRunSnapshots(message: string?)
+function RunManager.broadcastRunSnapshots(message: string?, isLiveAction: boolean?)
+	if isIsolatedTesting and not isLiveAction then return end
 	local players = Players:GetPlayers()
 	if #players == 0 then return end
 	for _, player in players do
@@ -242,6 +245,9 @@ end
 
 function RunManager.sendRunSnapshot(player: any, message: string?)
 	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isRealPlayer = true
+	end
 	if isIsolatedTesting and not isRealPlayer then return end
 	local snapshot = RunManager.getRunSnapshotForPlayer(player)
 	snapshot.Message = message
@@ -256,29 +262,34 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	local userId = player.UserId
 	local displayName = player.DisplayName or player.Name or ("Player_" .. tostring(userId))
 	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isRealPlayer = true
+	end
 
 	-- Player rejoining existing run: reattach instance without corrupting state
 	if isIsolatedTesting and isRealPlayer then
 		if liveRun.PartyMembers[userId] then
 			local existing = liveRun.PartyMembers[userId]
-			existing.PlayerInstance = player
+			existing.PlayerInstance = typeof(player) == "Instance" and player or nil
 			existing.DisplayName = displayName
 			existing.IsConnected = true
-			RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
+			RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName), true)
 			return existing
 		end
 	elseif currentRun.PartyMembers[userId] then
 		local existing = currentRun.PartyMembers[userId]
-		existing.PlayerInstance = isRealPlayer and player or nil
+		existing.PlayerInstance = isRealPlayer and (typeof(player) == "Instance" and player or nil) or nil
 		existing.DisplayName = displayName
 		existing.IsConnected = true
-		RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName))
+		if not isIsolatedTesting or isRealPlayer then
+			RunManager.broadcastRunSnapshots(string.format("%s reconnected.", displayName), isRealPlayer)
+		end
 		return existing
 	end
 
 	local pState: StateTypes.PlayerState = {
 		UserId = userId,
-		PlayerInstance = isRealPlayer and player or nil,
+		PlayerInstance = typeof(player) == "Instance" and player or nil,
 		DisplayName = displayName,
 		ClassId = "Warlord",
 		SubclassId = "Berserker",
@@ -322,13 +333,18 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState
 	end
 	ClassService.initializePlayerForRun(pState)
 
-	RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName))
+	if not isIsolatedTesting or isRealPlayer then
+		RunManager.broadcastRunSnapshots(string.format("%s joined the expedition.", displayName), isRealPlayer)
+	end
 	return pState
 end
 
 function RunManager.removePlayer(player: any)
 	local userId = player.UserId
 	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isRealPlayer = true
+	end
 	local targetRun = if (isIsolatedTesting and isRealPlayer) then liveRun else currentRun
 	local member = targetRun.PartyMembers[userId]
 	if not member then return end
@@ -337,14 +353,18 @@ function RunManager.removePlayer(player: any)
 	member.IsConnected = false
 
 	-- Save profile and clean rate-limit buckets
-	PersistenceService.saveProfile(player)
+	if typeof(player) == "Instance" then
+		PersistenceService.saveProfile(player)
+	end
 	NetworkService.cleanPlayer(userId)
 
 	if targetRun.Phase == "Lobby" then
 		targetRun.PartyMembers[userId] = nil
 	end
 
-	RunManager.broadcastRunSnapshots(string.format("%s left the party.", member.DisplayName))
+	if not isIsolatedTesting or isRealPlayer then
+		RunManager.broadcastRunSnapshots(string.format("%s left the party.", member.DisplayName), isRealPlayer)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -379,17 +399,25 @@ end
 
 function RunManager.startRun(initiator: any?): boolean
 	local isReal = (typeof(initiator) == "Instance" and initiator:IsA("Player"))
-	local runToStart = if (isIsolatedTesting and (isReal or #Players:GetPlayers() > 0)) then liveRun else currentRun
+	if typeof(initiator) == "table" and initiator._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+	local runToStart = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	if runToStart.Phase ~= "Lobby" then
 		warn("[RunManager] Cannot start run outside Lobby.")
 		return false
 	end
 
 	local dungeon = DungeonService.generateRun()
-	if runToStart == liveRun then
-		liveDungeonRun = dungeon
+	if isIsolatedTesting then
+		if isReal then
+			liveDungeonRun = dungeon
+		else
+			internalDungeonRun = dungeon
+		end
+	else
+		internalDungeonRun = dungeon
 	end
-	internalDungeonRun = dungeon
 
 	local seed = dungeon.Seed
 	local runId = string.format("run_%d_%s", seed, HttpService:GenerateGUID(false):sub(1, 6))
@@ -424,13 +452,18 @@ function RunManager.startRun(initiator: any?): boolean
 		PersistenceService.recordRunStarted(playerRef)
 	end
 
-	RunManager.broadcastRunSnapshots("Expedition started! Choose your path on the Map.")
-	NetworkService.broadcastAnnouncement("EXPEDITION BEGINS", "Choose your path through the Dungeon!", Color3.fromRGB(60, 200, 255))
+	if not isIsolatedTesting or isReal then
+		RunManager.broadcastRunSnapshots("Expedition started! Choose your path on the Map.", true)
+		NetworkService.broadcastAnnouncement("EXPEDITION BEGINS", "Choose your path through the Dungeon!", Color3.fromRGB(60, 200, 255))
+	end
 	return true
 end
 
 function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?)
 	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
 	if runToUse.Phase ~= "MapSelect" or not dRun then
@@ -480,32 +513,36 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 
 	if winningNodeId then
-		return RunManager.travelToNode(winningNodeId)
+		return RunManager.travelToNode(winningNodeId, isReal)
 	else
-		RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId))
+		if not isIsolatedTesting or isReal then
+			RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId), isReal)
+		end
 		return true, nil
 	end
 end
 
-function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
-	if not internalDungeonRun then return false, "No active run." end
+function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): (boolean, string?)
+	local dRun = if (isIsolatedTesting and isLiveAction) then liveDungeonRun else internalDungeonRun
+	local runToMutate = if (isIsolatedTesting and isLiveAction) then liveRun else currentRun
+	if not dRun then return false, "No active run." end
 
-	local success, err = DungeonService.selectNode(internalDungeonRun, targetNodeId)
+	local success, err = DungeonService.selectNode(dRun, targetNodeId)
 	if not success then return false, err end
 
-	local node = DungeonService.getNode(internalDungeonRun, targetNodeId)
+	local node = DungeonService.getNode(dRun, targetNodeId)
 	if not node then return false, "Node not found." end
 
-	currentRun.CurrentNodeId = targetNodeId
-	currentRun.CurrentTier = node.Tier
-	currentRun.ActIndex = node.Act
-	table.insert(currentRun.ClearedNodeIds, targetNodeId)
+	runToMutate.CurrentNodeId = targetNodeId
+	runToMutate.CurrentTier = node.Tier
+	runToMutate.ActIndex = node.Act
+	table.insert(runToMutate.ClearedNodeIds, targetNodeId)
 
-	for _, member in currentRun.PartyMembers do
+	for _, member in runToMutate.PartyMembers do
 		member.VotedNodeId = nil
 	end
 
-	currentRun.ActiveRoom = {
+	runToMutate.ActiveRoom = {
 		NodeId = node.Id,
 		Type = node.Type,
 		Tier = node.Tier,
@@ -515,35 +552,41 @@ function RunManager.travelToNode(targetNodeId: string): (boolean, string?)
 		ShopVisited = false,
 	}
 
-	currentRun.Phase = "ActiveRoom"
+	runToMutate.Phase = "ActiveRoom"
 
 	if node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss" then
 		if not CombatService then
 			CombatService = require(servicesFolder:WaitForChild("CombatService") :: ModuleScript)
 		end
 
-		currentRun.ActiveCombat = CombatService.startCombat(
-			currentRun.ActiveRoom.RoomEncounterId or "enc_def",
+		runToMutate.ActiveCombat = CombatService.startCombat(
+			runToMutate.ActiveRoom.RoomEncounterId or "enc_def",
 			node.Type,
 			node.Tier,
-			currentRun.PartyMembers,
+			runToMutate.PartyMembers,
 			function(outcome: "Victory" | "Defeat")
 				RunManager.onCombatCompleted(outcome, node)
 			end
 		)
 
 	elseif node.Type == "Campfire Rest" then
-		for _, member in currentRun.PartyMembers do
+		for _, member in runToMutate.PartyMembers do
 			local heal = math.floor(member.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
 			member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + heal)
 		end
-		RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered).")
+		if not isIsolatedTesting or isLiveAction then
+			RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered).", isLiveAction)
+		end
 
 	elseif node.Type == "Merchant Shop" then
-		RunManager.broadcastRunSnapshots("💰 Visited the Merchant Shop. Supplies replenished.")
+		if not isIsolatedTesting or isLiveAction then
+			RunManager.broadcastRunSnapshots("💰 Visited the Merchant Shop. Supplies replenished.", isLiveAction)
+		end
 	end
 
-	RunManager.broadcastRunSnapshots(string.format("Entered Room: %s (Tier %d)", node.Type, node.Tier))
+	if not isIsolatedTesting or isLiveAction then
+		RunManager.broadcastRunSnapshots(string.format("Entered Room: %s (Tier %d)", node.Type, node.Tier), isLiveAction)
+	end
 	return true, nil
 end
 
@@ -600,19 +643,24 @@ function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
 end
 
 function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, string?)
-	if currentRun.Phase ~= "Rewards" or not currentRun.PendingRewards then
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
+	if runToUse.Phase ~= "Rewards" or not runToUse.PendingRewards then
 		return false, "Not in Rewards phase."
 	end
 
 	local userId = player.UserId
-	local member = currentRun.PartyMembers[userId]
+	local member = runToUse.PartyMembers[userId]
 	if not member then return false, "Player not in party." end
 
-	if currentRun.PendingRewards.ClaimedCards[userId] then
+	if runToUse.PendingRewards.ClaimedCards[userId] then
 		return false, "Reward already claimed."
 	end
 
-	local offered = currentRun.PendingRewards.OfferedCardsByPlayer[userId]
+	local offered = runToUse.PendingRewards.OfferedCardsByPlayer[userId]
 	if not offered then return false, "No offered cards." end
 
 	local valid = false
@@ -632,30 +680,40 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 		table.insert(member.Deck, newCardInst)
 	end
 
-	currentRun.PendingRewards.ClaimedCards[userId] = true
-	RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", member.DisplayName, cardDefId))
+	runToUse.PendingRewards.ClaimedCards[userId] = true
+	if not isIsolatedTesting or isReal then
+		RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", member.DisplayName, cardDefId), isReal)
+	end
 	return true, nil
 end
 
 function RunManager.continueFromRewards(player: any): boolean
-	if currentRun.Phase ~= "Rewards" and currentRun.Phase ~= "ActiveRoom" then
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
+	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
+	if runToUse.Phase ~= "Rewards" and runToUse.Phase ~= "ActiveRoom" then
 		return false
 	end
 
-	if not internalDungeonRun then return false end
+	if not dRun then return false end
 
-	local available = DungeonService.getAvailableNodes(internalDungeonRun)
-	table.clear(currentRun.AvailableNodeIds)
+	local available = DungeonService.getAvailableNodes(dRun)
+	table.clear(runToUse.AvailableNodeIds)
 	for _, node in available do
-		table.insert(currentRun.AvailableNodeIds, node.Id)
+		table.insert(runToUse.AvailableNodeIds, node.Id)
 	end
 
-	currentRun.Phase = "MapSelect"
-	currentRun.ActiveRoom = nil
-	currentRun.ActiveCombat = nil
-	currentRun.PendingRewards = nil
+	runToUse.Phase = "MapSelect"
+	runToUse.ActiveRoom = nil
+	runToUse.ActiveCombat = nil
+	runToUse.PendingRewards = nil
 
-	RunManager.broadcastRunSnapshots("Select the next room on the Map.")
+	if not isIsolatedTesting or isReal then
+		RunManager.broadcastRunSnapshots("Select the next room on the Map.", isReal)
+	end
 	return true
 end
 
@@ -671,6 +729,9 @@ function RunManager.getRunById(runId: string): StateTypes.RunState?
 	if currentRun.RunId == runId then
 		return currentRun
 	end
+	if isIsolatedTesting and liveRun.RunId == runId then
+		return liveRun
+	end
 	return nil
 end
 
@@ -684,11 +745,16 @@ function RunManager.getPlayerState(playerOrUserId: any): StateTypes.PlayerState?
 		isReal = true
 	elseif typeof(playerOrUserId) == "table" and typeof(playerOrUserId.UserId) == "number" then
 		uid = playerOrUserId.UserId
+		if playerOrUserId._isSimulatedRealPlayer == true then
+			isReal = true
+		end
 	end
 	if uid then
-		if isIsolatedTesting and (isReal or liveRun.PartyMembers[uid]) then
-			if liveRun.PartyMembers[uid] then
+		if isIsolatedTesting then
+			if isReal then
 				return liveRun.PartyMembers[uid]
+			else
+				return currentRun.PartyMembers[uid]
 			end
 		end
 		return currentRun.PartyMembers[uid]
@@ -698,6 +764,10 @@ end
 
 function RunManager.getDungeonRun(): DungeonMap.DungeonRun?
 	return internalDungeonRun
+end
+
+function RunManager.getLiveDungeonRun(): DungeonMap.DungeonRun?
+	return liveDungeonRun
 end
 
 -- Resets existing party to clean Lobby state for a new expedition run
@@ -727,7 +797,9 @@ function RunManager.resetToLobby()
 		CombatService.cleanupCombat()
 	end
 
-	RunManager.broadcastRunSnapshots("Returned to Lobby.")
+	if not isIsolatedTesting then
+		RunManager.broadcastRunSnapshots("Returned to Lobby.")
+	end
 end
 
 -- Resets the single run container to clean Lobby state (used for testing and new runs)
