@@ -330,6 +330,11 @@ local function logEvent(eventType: string, sourceId: string, targetId: string, v
 		Timestamp = os.clock(),
 	}
 
+	if ActionTransaction.isTransactionActive() then
+		ActionTransaction.bufferEvent(event)
+		return
+	end
+
 	table.insert(activeCombat.CombatLog, event)
 	if #activeCombat.CombatLog > GameConfig.Combat.MaxTurnHistoryLog then
 		table.remove(activeCombat.CombatLog, 1)
@@ -962,6 +967,9 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		ActionTransaction.rollbackCombatTransaction(txSnapshot, playerState, activeCombat, partyRef)
 		return false, failureMsg
 	end
+
+	-- Execution succeeded: commit transaction
+	ActionTransaction.commitCombatTransaction(txSnapshot, activeCombat)
 
 	-- Check Victory
 	if areAllEnemiesDead() then

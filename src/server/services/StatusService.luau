@@ -498,7 +498,7 @@ function StatusService.snapshotStatuses(): { [string]: { [string]: StateTypes.St
 				InstanceId = inst.InstanceId,
 				DefinitionId = inst.DefinitionId,
 				Stacks = inst.Stacks,
-				RemainingDuration = inst.RemainingDuration,
+				Duration = inst.Duration or -1,
 				SourceId = inst.SourceId,
 				TargetId = inst.TargetId,
 			}
@@ -516,7 +516,7 @@ function StatusService.restoreStatuses(snapshot: { [string]: { [string]: StateTy
 				InstanceId = inst.InstanceId,
 				DefinitionId = inst.DefinitionId,
 				Stacks = inst.Stacks,
-				RemainingDuration = inst.RemainingDuration,
+				Duration = inst.Duration or -1,
 				SourceId = inst.SourceId,
 				TargetId = inst.TargetId,
 			}

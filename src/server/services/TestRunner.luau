@@ -520,6 +520,313 @@ local function runSuite65()
 	end
 end
 
+local function runSuite66()
+	print("\n--- [Suite 66] Status Duration, Fail-Closed Init, Event Buffering, Run-Scoped Reset, Skill Rehydration ---")
+
+	do -- 66.1: Poison with Duration = -1 survives transaction snapshot/restore
+		StatusService.resetCombat()
+		StatusService.applyStatus("test_entity_66_1", "Poison", 4, -1, "source_1")
+		local snap = StatusService.snapshotStatuses()
+		assertTest(snap["test_entity_66_1"] ~= nil, "[Suite 66.1a] Snapshot contains test_entity_66_1")
+		assertTest(snap["test_entity_66_1"]["Poison"] ~= nil, "[Suite 66.1b] Snapshot contains Poison")
+		assertTest(snap["test_entity_66_1"]["Poison"].Duration == -1, "[Suite 66.1c] Existing Poison with Duration = -1 survives snapshot")
+		assertTest(snap["test_entity_66_1"]["Poison"].Stacks == 4, "[Suite 66.1d] Snapshot preserves Stacks = 4")
+		assertTest(snap["test_entity_66_1"]["Poison"].InstanceId ~= nil, "[Suite 66.1e] Snapshot preserves InstanceId")
+		assertTest(snap["test_entity_66_1"]["Poison"].SourceId == "source_1", "[Suite 66.1f] Snapshot preserves SourceId")
+		assertTest(snap["test_entity_66_1"]["Poison"].TargetId == "test_entity_66_1", "[Suite 66.1g] Snapshot preserves TargetId")
+
+		StatusService.resetCombat()
+		assertTest(StatusService.getStatus("test_entity_66_1", "Poison") == nil, "[Suite 66.1h] Status reset clears entityStatuses")
+		StatusService.restoreStatuses(snap)
+		local restored = StatusService.getStatus("test_entity_66_1", "Poison")
+		assertTest(restored ~= nil, "[Suite 66.1i] Restored status exists")
+		assertTest(restored.Duration == -1, "[Suite 66.1j] Restored Poison has Duration = -1")
+		assertTest(restored.Stacks == 4, "[Suite 66.1k] Restored Poison has Stacks = 4")
+		assertTest(restored.InstanceId == snap["test_entity_66_1"]["Poison"].InstanceId, "[Suite 66.1l] Restored InstanceId matches")
+	end
+
+	do -- 66.2 & 66.3: Ignite with Duration = 3 survives rollback with Duration = 3; tick does not error
+		StatusService.resetCombat()
+		StatusService.applyStatus("test_entity_66_2", "Ignite", 2, 3, "source_1")
+		local snap = StatusService.snapshotStatuses()
+		assertTest(snap["test_entity_66_2"]["Ignite"].Duration == 3, "[Suite 66.2a] Snapshot captures Ignite Duration = 3")
+
+		StatusService.applyStatus("test_entity_66_2", "Ignite", 5, 1, "source_1")
+		StatusService.applyStatus("test_entity_66_2", "Poison", 10, -1, "source_1")
+		assertTest(StatusService.getStatus("test_entity_66_2", "Ignite").Stacks == 7, "[Suite 66.2b] Mutated stacks before rollback")
+
+		StatusService.restoreStatuses(snap)
+		local restoredIgnite = StatusService.getStatus("test_entity_66_2", "Ignite")
+		assertTest(restoredIgnite ~= nil, "[Suite 66.2c] Ignite survives rollback")
+		assertTest(restoredIgnite.Duration == 3, "[Suite 66.2d] Ignite with Duration = 3 survives rollback with Duration = 3")
+		assertTest(restoredIgnite.Stacks == 2, "[Suite 66.2e] Stacks restored exactly to 2")
+		assertTest(StatusService.getStatus("test_entity_66_2", "Poison") == nil, "[Suite 66.2f] Status applied during action reverted on rollback")
+
+		local tickOk, _ = pcall(function()
+			return StatusService.tickTurnStart("test_entity_66_2", nil)
+		end)
+		assertTest(tickOk == true, "[Suite 66.3] Status tick after rollback does not error")
+	end
+
+	do -- 66.4 - 66.6: LoadFailed real player fail-closed initialization
+		local failPlayer = {
+			UserId = 66040,
+			Name = "FailPlayer66",
+			DisplayName = "FailPlayer66",
+			_isSimulatedRealPlayer = true,
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(failPlayer.UserId)
+		PersistenceService.simulateLoadFailureForTesting(failPlayer.UserId)
+		assertTest(PersistenceService.isProfileLoaded(failPlayer) == false, "[Suite 66.4a] isProfileLoaded returns false on LoadFailed")
+
+		local added = RunManager.addPlayer(failPlayer :: any)
+		assertTest(added == nil, "[Suite 66.4b] addPlayer returns nil when real player profile load failed")
+		assertTest(RunManager.getPlayerState(failPlayer) == nil, "[Suite 66.4c] No PlayerState created for LoadFailed real player")
+		local currentRun = RunManager.getRunState()
+		assertTest(currentRun.PartyMembers[failPlayer.UserId] == nil, "[Suite 66.4d] LoadFailed player not added to PartyMembers")
+
+		assertTest(PersistenceService.getLoadState(failPlayer) == "LoadFailed", "[Suite 66.5a] LoadState is LoadFailed")
+		local syncSnapshot = RunManager.getRunSnapshotForPlayer(failPlayer :: any)
+		assertTest(syncSnapshot ~= nil, "[Suite 66.5b] RequestStateSync produces safe snapshot for LoadFailed player")
+		assertTest(syncSnapshot.Party[tostring(failPlayer.UserId)] == nil, "[Suite 66.5c] Snapshot party does not contain LoadFailed player")
+
+		local retryOk, retryProf = PersistenceService.retryLoadProfile(failPlayer)
+		assertTest(retryOk == true and retryProf ~= nil, "[Suite 66.6a] retryLoadProfile succeeds")
+		assertTest(PersistenceService.isProfileLoaded(failPlayer) == true, "[Suite 66.6b] isProfileLoaded returns true after successful load")
+		local retryAdded = RunManager.addPlayer(failPlayer :: any)
+		assertTest(retryAdded ~= nil, "[Suite 66.6c] addPlayer succeeds after profile load recovers")
+		assertTest(RunManager.getPlayerState(failPlayer) ~= nil, "[Suite 66.6d] PlayerState exists after recovery")
+		assertTest(#retryAdded.Deck > 0, "[Suite 66.6e] Deck initialized normally after recovery")
+		RunManager.removePlayer(failPlayer :: any)
+	end
+
+	do -- 66.7 - 66.9: Transactional Combat Event Logging & Buffer Rollback
+		CombatService.cleanupCombat()
+		RunManager.resetRunForTesting()
+		local txP = {
+			UserId = 66070,
+			Name = "EvtPlayer",
+			DisplayName = "EvtPlayer",
+		}
+		local pState = RunManager.addPlayer(txP :: any)
+		assert(pState, "pState exists")
+		pState.ClassLocked = true
+		local combat = CombatService.startCombat("enc_evt1", "Combat", 1, { [txP.UserId] = pState }, function() end)
+		assert(combat and combat.Enemies["enemy_1"], "combat enemy exists")
+		local enemy = combat.Enemies["enemy_1"]
+
+		local broadcastedEvents: { StateTypes.CombatEvent } = {}
+		NetworkService.setCombatEventHook(function(evt)
+			table.insert(broadcastedEvents, evt)
+		end)
+
+		local strikeCard: StateTypes.CardInstance = {
+			CardInstanceId = "card_evt_success_66",
+			DefinitionId = "Strike",
+			CardData = {
+				Id = "Strike",
+				Name = "Evt Strike",
+				Description = "Attack",
+				Type = "Attack",
+				Rarity = "Common",
+				Target = "SingleEnemy",
+				Cost = 1,
+				Upgraded = false,
+				Class = "Warlord",
+				Tags = {},
+				Effects = {
+					{ Type = "Damage", Value = 5, Target = "SingleEnemy" },
+				},
+			},
+			OwnerUserId = txP.UserId,
+			Upgraded = false,
+		}
+		table.insert(pState.Hand, strikeCard)
+		pState.Resources.Energy = 3
+
+		local playOk, _ = CombatService.playCard(txP :: any, strikeCard.CardInstanceId, enemy.InstanceId)
+		assertTest(playOk == true, "[Suite 66.7a] Card play succeeded")
+		assertTest(#broadcastedEvents > 0, "[Suite 66.7b] Successful action published combat events to clients")
+		local hasDmgEvt = false
+		for _, e in ipairs(broadcastedEvents) do
+			if e.Type == "DamageDealt" then hasDmgEvt = true break end
+		end
+		assertTest(hasDmgEvt == true, "[Suite 66.7c] Broadcasted events included DamageDealt")
+
+		table.clear(broadcastedEvents)
+		local logCountBefore = #combat.CombatLog
+
+		local failCard: StateTypes.CardInstance = {
+			CardInstanceId = "card_evt_fail_66",
+			DefinitionId = "Strike",
+			CardData = {
+				Id = "Strike",
+				Name = "Fail Strike",
+				Description = "Fails on second effect",
+				Type = "Attack",
+				Rarity = "Common",
+				Target = "SingleEnemy",
+				Cost = 1,
+				Upgraded = false,
+				Class = "Warlord",
+				Tags = {},
+				Effects = {
+					{ Type = "Damage", Value = 5, Target = "SingleEnemy" },
+					{ Type = "BogusEffect" :: any, Value = 10, Target = "SingleEnemy" },
+				},
+			},
+			OwnerUserId = txP.UserId,
+			Upgraded = false,
+		}
+		table.insert(pState.Hand, failCard)
+		local failOk, _ = CombatService.playCard(txP :: any, failCard.CardInstanceId, enemy.InstanceId)
+		assertTest(failOk == false, "[Suite 66.8a] Failing card was rejected")
+		assertTest(#broadcastedEvents == 0, "[Suite 66.8b] Failed action published zero events to clients")
+		assertTest(#combat.CombatLog == logCountBefore, "[Suite 66.8c] Failed action restored exact CombatLog count")
+
+		for i = 1, 30 do
+			local c: StateTypes.CardInstance = {
+				CardInstanceId = "card_cap_66_" .. i,
+				DefinitionId = "Defend",
+				CardData = {
+					Id = "Defend",
+					Name = "Shield Up",
+					Description = "Gain shield",
+					Type = "Skill",
+					Rarity = "Common",
+					Target = "Self",
+					Cost = 0,
+					Upgraded = false,
+					Class = "Warlord",
+					Tags = {},
+					Effects = {
+						{ Type = "Shield", Value = 1, Target = "Self" },
+					},
+				},
+				OwnerUserId = txP.UserId,
+				Upgraded = false,
+			}
+			table.insert(pState.Hand, c)
+			CombatService.playCard(txP :: any, c.CardInstanceId, nil)
+		end
+		assertTest(#combat.CombatLog <= 25, "[Suite 66.9a] CombatLog size capped at 25")
+		assertTest(#combat.CombatLog == 25, "[Suite 66.9b] CombatLog filled to exactly 25 after 30 events")
+
+		NetworkService.setCombatEventHook(nil)
+		CombatService.cleanupCombat()
+	end
+
+	do -- 66.10 & 66.11: resetToLobby clears all 7 run-scoped fields; persistent profile survives
+		RunManager.resetRunForTesting()
+		local progPlayer = {
+			UserId = 66100,
+			Name = "ProgPlayer66",
+			DisplayName = "ProgPlayer66",
+		}
+		local pState = RunManager.addPlayer(progPlayer :: any)
+		assert(pState, "pState exists")
+		pState.ClassLocked = true
+		RunManager.startRun(progPlayer :: any)
+
+		pState.EquippedItems = { MainHand = "item_sword_1" :: any }
+		pState.EquipmentInventory = { { InstanceId = "eq_1" } :: any }
+		pState.EquippedSkills = { Skill1 = { InstanceId = "sk_1", DefinitionId = "HeroicStrike", Slot = "Skill1", CurrentCooldown = 2, OwnerUserId = progPlayer.UserId } :: any }
+		pState.SkillInventory = { { InstanceId = "sk_inv_1", DefinitionId = "BattleRally", Slot = nil, CurrentCooldown = 1, OwnerUserId = progPlayer.UserId } :: any }
+		pState.UnlockedSkills = { HeroicStrike = true, BogusRunSkill = true }
+		pState.UnlockedPassives = { IronSkin = true }
+		pState.PassivePoints = 5
+
+		PersistenceService.addAetherShards(progPlayer :: any, 500)
+		local profBefore = PersistenceService.getProfile(progPlayer :: any)
+		assert(profBefore, "profBefore exists")
+		local shardsBefore = profBefore.AetherShards
+		local decksBeforeCount = 0
+		for _ in profBefore.Decks do decksBeforeCount += 1 end
+
+		RunManager.resetToLobby()
+
+		assertTest(next(pState.EquippedItems) == nil, "[Suite 66.10a] EquippedItems is cleared")
+		assertTest(#pState.EquipmentInventory == 0, "[Suite 66.10b] EquipmentInventory is cleared")
+		assertTest(next(pState.EquippedSkills) == nil, "[Suite 66.10c] EquippedSkills is cleared")
+		assertTest(pState.PassivePoints == 0, "[Suite 66.10d] PassivePoints reset to 0")
+		assertTest(next(pState.UnlockedPassives) == nil, "[Suite 66.10e] UnlockedPassives is cleared")
+		assertTest(pState.UnlockedSkills["BogusRunSkill"] == nil, "[Suite 66.10f] Run-scoped unlocked skill cleared")
+
+		assertTest(pState.UnlockedSkills["HeroicStrike"] == true, "[Suite 66.10g] HeroicStrike re-provisioned")
+		assertTest(pState.UnlockedSkills["AegisBarrier"] == true, "[Suite 66.10h] AegisBarrier re-provisioned")
+		assertTest(pState.UnlockedSkills["BattleRally"] == true, "[Suite 66.10i] BattleRally re-provisioned")
+		assertTest(pState.UnlockedSkills["Whirlwind"] == true, "[Suite 66.10j] Whirlwind re-provisioned")
+		assertTest(#pState.SkillInventory == 4, "[Suite 66.10k] SkillInventory has exactly 4 starting skills")
+
+		local profAfter = PersistenceService.getProfile(progPlayer :: any)
+		assertTest(profAfter ~= nil, "[Suite 66.11a] Persistent profile survived")
+		assertTest(profAfter.AetherShards == shardsBefore, "[Suite 66.11b] Persistent AetherShards survived")
+		local decksAfterCount = 0
+		for _ in profAfter.Decks do decksAfterCount += 1 end
+		assertTest(decksAfterCount == decksBeforeCount, "[Suite 66.11c] Persistent saved decks survived")
+	end
+
+	do -- 66.12 - 66.14: Rehydrate persistent unlocked skills, no duplicates, ignore unknown, can equip & use
+		RunManager.resetRunForTesting()
+		local skPlayer = {
+			UserId = 66120,
+			Name = "SkillRehydratePlayer66",
+			DisplayName = "SkillRehydratePlayer66",
+			_isSimulatedRealPlayer = true,
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(skPlayer.UserId)
+		local prof = PersistenceService.loadProfile(skPlayer)
+		assert(prof, "profile loaded")
+
+		prof.UnlockedSkills["ShieldBash"] = true
+		prof.UnlockedSkills["CorruptedNonExistentSkill999"] = true
+
+		local pState = RunManager.addPlayer(skPlayer :: any)
+		assert(pState, "pState exists")
+
+		assertTest(pState.UnlockedSkills["ShieldBash"] == true, "[Suite 66.12a] Persistent unlocked skill appears in UnlockedSkills")
+		local foundShieldBash = false
+		local shieldBashCount = 0
+		for _, sk in ipairs(pState.SkillInventory) do
+			if sk.DefinitionId == "ShieldBash" then
+				foundShieldBash = true
+				shieldBashCount += 1
+			end
+		end
+		assertTest(foundShieldBash == true, "[Suite 66.12b] Persistent unlocked skill appears in runtime SkillInventory")
+		assertTest(shieldBashCount == 1, "[Suite 66.12c] No duplicate runtime instance created for ShieldBash")
+
+		assertTest(pState.UnlockedSkills["CorruptedNonExistentSkill999"] == nil, "[Suite 66.13a] Corrupted skill ID ignored in UnlockedSkills")
+		local foundCorrupted = false
+		for _, sk in ipairs(pState.SkillInventory) do
+			if sk.DefinitionId == "CorruptedNonExistentSkill999" then
+				foundCorrupted = true
+			end
+		end
+		assertTest(foundCorrupted == false, "[Suite 66.13b] Corrupted skill ID ignored in SkillInventory")
+
+		assertTest(pState.UnlockedSkills["HeroicStrike"] == true, "[Suite 66.13c] Starter skill HeroicStrike present")
+		assertTest(#pState.SkillInventory == 5, "[Suite 66.13d] SkillInventory contains 4 starters + 1 persistent skill = 5")
+
+		local equipOk, _ = SkillService.equipSkill(pState, "ShieldBash", "Skill1")
+		assertTest(equipOk == true, "[Suite 66.14a] Persistent unlocked skill can be equipped")
+		assertTest(pState.EquippedSkills.Skill1 ~= nil and pState.EquippedSkills.Skill1.DefinitionId == "ShieldBash", "[Suite 66.14b] Equipped skill in Skill1 is ShieldBash")
+
+		pState.ClassLocked = true
+		local skCombat = CombatService.startCombat("enc_sk66", "Combat", 1, { [skPlayer.UserId] = pState }, function() end)
+		assert(skCombat and skCombat.Enemies["enemy_1"], "skCombat enemy exists")
+		local targetEnemy = skCombat.Enemies["enemy_1"]
+		pState.Resources.Energy = 5
+		local useOk, _ = SkillService.useSkill(pState, "Skill1", targetEnemy.InstanceId, skCombat, { [skPlayer.UserId] = pState })
+		assertTest(useOk == true, "[Suite 66.14c] Rehydrated persistent skill can be used in combat")
+
+		CombatService.cleanupCombat()
+		RunManager.removePlayer(skPlayer :: any)
+	end
+end
+
 function TestRunner.runAllTests(): boolean
 	passedCount = 0
 	totalCount = 0
@@ -6655,6 +6962,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 65: ACTION TRANSACTIONS, STATUS INTEGRITY, PERSISTENCE SAFETY & MAP
 	----------------------------------------------------------------------------
 	runSuite65()
+
+	----------------------------------------------------------------------------
+	-- SUITE 66: FINAL CORRECTION PASS (STATUS DURATION, FAIL-CLOSED, BUFFERING)
+	----------------------------------------------------------------------------
+	runSuite66()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

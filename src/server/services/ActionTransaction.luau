@@ -10,11 +10,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local ClassService = require(servicesFolder:WaitForChild("ClassService") :: ModuleScript)
 local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
 local RelicService = require(servicesFolder:WaitForChild("RelicService") :: ModuleScript)
+local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
 
 local ActionTransaction = {}
 
@@ -24,8 +26,21 @@ export type ActionSnapshot = {
 	ClassGimmick: any,
 	Statuses: { [string]: { [string]: StateTypes.StatusInstance } },
 	RelicState: any,
-	CombatLogLength: number,
+	CombatLog: { StateTypes.CombatEvent },
+	BufferedEvents: { StateTypes.CombatEvent },
 }
+
+local activeTransaction: ActionSnapshot? = nil
+
+function ActionTransaction.isTransactionActive(): boolean
+	return activeTransaction ~= nil
+end
+
+function ActionTransaction.bufferEvent(event: StateTypes.CombatEvent)
+	if activeTransaction then
+		table.insert(activeTransaction.BufferedEvents, event)
+	end
+end
 
 local function deepCopyTable<T>(t: T): T
 	if typeof(t) ~= "table" then return t end
@@ -77,14 +92,42 @@ function ActionTransaction.beginCombatTransaction(
 		enemiesSnap[eid] = deepCopyTable(enemy)
 	end
 
-	return {
+	local logSnap: { StateTypes.CombatEvent } = {}
+	for _, evt in ipairs(combatState.CombatLog) do
+		table.insert(logSnap, deepCopyTable(evt))
+	end
+
+	local snapshot: ActionSnapshot = {
 		Party = partySnap,
 		Enemies = enemiesSnap,
 		ClassGimmick = ClassService.snapshotGimmickTracker(playerState.UserId),
 		Statuses = StatusService.snapshotStatuses(),
 		RelicState = RelicService.snapshotCombatState(playerState.UserId),
-		CombatLogLength = #combatState.CombatLog,
+		CombatLog = logSnap,
+		BufferedEvents = {},
 	}
+
+	activeTransaction = snapshot
+	return snapshot
+end
+
+-- Commits the transaction: appends buffered events to CombatLog and broadcasts to clients
+function ActionTransaction.commitCombatTransaction(
+	snapshot: ActionSnapshot,
+	combatState: StateTypes.CombatState
+)
+	for _, event in ipairs(snapshot.BufferedEvents) do
+		table.insert(combatState.CombatLog, event)
+		if #combatState.CombatLog > GameConfig.Combat.MaxTurnHistoryLog then
+			table.remove(combatState.CombatLog, 1)
+		end
+		NetworkService.broadcastCombatEvent(event)
+	end
+
+	table.clear(snapshot.BufferedEvents)
+	if activeTransaction == snapshot then
+		activeTransaction = nil
+	end
 end
 
 -- Completely reverts all combat and entity mutations back to the snapshot state
@@ -124,10 +167,16 @@ function ActionTransaction.rollbackCombatTransaction(
 	-- 5. Restore Relic State
 	RelicService.restoreCombatState(playerState.UserId, snapshot.RelicState)
 
-	-- 6. Truncate CombatLog to snapshot length
-	local log = combatState.CombatLog
-	while #log > snapshot.CombatLogLength do
-		table.remove(log)
+	-- 6. Restore exact CombatLog in-place
+	table.clear(combatState.CombatLog)
+	for _, evt in ipairs(snapshot.CombatLog) do
+		table.insert(combatState.CombatLog, deepCopyTable(evt))
+	end
+
+	-- 7. Discard buffered events entirely (zero client broadcasts)
+	table.clear(snapshot.BufferedEvents)
+	if activeTransaction == snapshot then
+		activeTransaction = nil
 	end
 end
 

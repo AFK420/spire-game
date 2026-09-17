@@ -127,11 +127,37 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 		Tags = { "Attack", "Physical", "AoE" },
 		RequiredClassId = "Warlord",
 	},
+
+	["ShieldBash"] = {
+		Id = "ShieldBash",
+		Name = "Shield Bash",
+		Description = "Bash the target with your shield dealing 10 physical damage.",
+		Target = "Enemy",
+		Cost = {
+			Energy = 1,
+		},
+		CooldownTurns = 2,
+		Effects = {
+			{
+				Type = "Damage",
+				Value = 10,
+				DamageType = "Physical",
+				Target = "Enemy",
+			},
+		},
+		Tags = { "Attack", "Physical" },
+		RequiredClassId = nil,
+	},
 }
 
 --------------------------------------------------------------------------------
 -- Public Query API
 --------------------------------------------------------------------------------
+
+-- Registers a skill definition (for testing or extensibility)
+function SkillData.registerSkill(skill: SkillDefinition)
+	SKILL_REGISTRY[skill.Id] = skill
+end
 
 -- Fetches an immutable skill definition by Id
 function SkillData.getSkill(skillId: string): SkillDefinition?

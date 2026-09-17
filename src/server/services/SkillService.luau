@@ -477,6 +477,19 @@ function SkillService.useSkill(
 	-- COMMIT PHASE: All validations passed. Capture atomic snapshot before mutating combat/player state
 	local txSnapshot = ActionTransaction.beginCombatTransaction(playerState, combatState, party)
 
+	local effectiveLogEvent = logEvent or function(eventType: string, sourceId: string, targetId: string, value: number?, text: string?)
+		if ActionTransaction.isTransactionActive() then
+			ActionTransaction.bufferEvent({
+				Type = eventType,
+				SourceId = sourceId,
+				TargetId = targetId,
+				Value = value,
+				ExtraText = text,
+				Timestamp = os.clock(),
+			})
+		end
+	end
+
 	-- 7. Build action context and execute effects
 	local actionCtx: EffectResolver.ActionContext = {
 		SourcePlayer = playerState,
@@ -485,7 +498,7 @@ function SkillService.useSkill(
 		Party = party,
 		CardInstance = nil,
 		Modifiers = modifiers,
-		LogEvent = logEvent,
+		LogEvent = effectiveLogEvent,
 		OnKillCallback = function(defeatedEnemy)
 			local RelicServiceMod = servicesFolder:FindFirstChild("RelicService")
 			if RelicServiceMod and RelicServiceMod:IsA("ModuleScript") then
@@ -544,9 +557,11 @@ function SkillService.useSkill(
 	end
 	skillInst.CurrentCooldown = def.CooldownTurns
 
-	if logEvent then
-		logEvent("SkillUsed", playerState.DisplayName, def.Name, nil, string.format("Used %s", def.Name))
+	if effectiveLogEvent then
+		effectiveLogEvent("SkillUsed", playerState.DisplayName, def.Name, nil, string.format("Used %s", def.Name))
 	end
+
+	ActionTransaction.commitCombatTransaction(txSnapshot, combatState)
 
 	return true, nil
 end

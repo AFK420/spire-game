@@ -31,6 +31,7 @@ local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
+local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
@@ -333,12 +334,42 @@ end
 -- Party Lifecycle & Reconnection Resilience
 --------------------------------------------------------------------------------
 
+local function initializeSkillsForPlayer(pState: StateTypes.PlayerState, playerRef: any)
+	-- 1. Always grant the 4 starter skills
+	local starterSkills = { "HeroicStrike", "AegisBarrier", "BattleRally", "Whirlwind" }
+	for _, skillId in ipairs(starterSkills) do
+		SkillService.unlockSkill(pState, skillId)
+	end
+
+	-- 2. Read persistent profile and rehydrate unlocked skills
+	local profile = PersistenceService.getProfile(playerRef)
+	if profile and typeof(profile.UnlockedSkills) == "table" then
+		for skillId, unlocked in pairs(profile.UnlockedSkills) do
+			if unlocked == true and typeof(skillId) == "string" then
+				local def = SkillData.getSkill(skillId)
+				if def then
+					if not def.RequiredClassId or def.RequiredClassId == pState.ClassId then
+						SkillService.unlockSkill(pState, skillId)
+					end
+				end
+			end
+		end
+	end
+end
+
 function RunManager.addPlayer(player: any): StateTypes.PlayerState?
 	local userId = player.UserId
 	local displayName = player.DisplayName or player.Name or ("Player_" .. tostring(userId))
 	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
 	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
 		isRealPlayer = true
+	end
+
+	-- FAIL-CLOSED PROTECTION:
+	-- For REAL Roblox Players only, require profile to be loaded before creating or initializing PlayerState
+	if isRealPlayer and not PersistenceService.isProfileLoaded(player) then
+		warn(string.format("[RunManager] Authoritative profile not loaded for real player %s (UserId %d). Cannot add to party (fail-closed).", displayName, userId))
+		return nil
 	end
 
 	-- Player rejoining existing run: reattach instance without corrupting state
@@ -410,10 +441,7 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState?
 		PassivePoints = 0,
 	}
 
-	SkillService.unlockSkill(pState, "HeroicStrike")
-	SkillService.unlockSkill(pState, "AegisBarrier")
-	SkillService.unlockSkill(pState, "BattleRally")
-	SkillService.unlockSkill(pState, "Whirlwind")
+	initializeSkillsForPlayer(pState, player)
 
 	if isIsolatedTesting and isRealPlayer then
 		local realMembers = liveRun.PartyMembers
@@ -1007,6 +1035,18 @@ function RunManager.resetToLobby()
 			ClassService.resetCombatResources(member)
 			ClassService.resetClassCombatGimmicks(member.UserId)
 			RelicService.resetCombatState(member.UserId)
+
+			-- Reset all 7 run-scoped progression fields
+			table.clear(member.EquippedItems)
+			table.clear(member.EquipmentInventory)
+			table.clear(member.EquippedSkills)
+			table.clear(member.SkillInventory)
+			table.clear(member.UnlockedSkills)
+			table.clear(member.UnlockedPassives)
+			member.PassivePoints = 0
+
+			-- Re-provision starting skills & persistent unlocked skills
+			initializeSkillsForPlayer(member, member.PlayerInstance or { UserId = member.UserId })
 			SkillService.resetCooldowns(member)
 		end
 	end

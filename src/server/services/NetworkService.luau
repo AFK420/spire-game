@@ -165,8 +165,17 @@ function NetworkService.sendCombatState(player: Player, snapshot: StateTypes.Com
 	end
 end
 
+local combatEventHook: ((event: StateTypes.CombatEvent) -> ())? = nil
+
+function NetworkService.setCombatEventHook(hook: ((event: StateTypes.CombatEvent) -> ())?)
+	combatEventHook = hook
+end
+
 -- Sends a structured combat event (e.g. floating damage or sound) to all clients
 function NetworkService.broadcastCombatEvent(event: StateTypes.CombatEvent)
+	if combatEventHook then
+		pcall(combatEventHook, event)
+	end
 	NetworkService.CombatEventLoggedEvent:FireAllClients(event)
 end
 
