@@ -199,13 +199,15 @@ end
 function ClassService.processGimmickOnCardPlay(
 	playerState: StateTypes.PlayerState,
 	cardInst: StateTypes.CardInstance,
-	targetEnemy: StateTypes.EnemyState?
-): { BonusDamage: number, BonusShield: number, FreeEnergy: boolean, PoisonApplied: number }
+	targetEnemy: StateTypes.EnemyState?,
+	effectiveCostOverride: number?
+): { BonusDamage: number, BonusShield: number, FreeEnergy: boolean, PoisonApplied: number, GuaranteedCritical: boolean }
 	local result = {
 		BonusDamage = 0,
 		BonusShield = 0,
 		FreeEnergy = false,
 		PoisonApplied = 0,
+		GuaranteedCritical = false,
 	}
 
 	local tracker = getGimmickTracker(playerState.UserId)
@@ -234,6 +236,7 @@ function ClassService.processGimmickOnCardPlay(
 		end
 		if playerState.SubclassId == "Assassin" and tracker.ComboCount == 3 and isAttack then
 			result.BonusDamage += 10
+			result.GuaranteedCritical = true
 		end
 		if playerState.SubclassId == "Venomancer" then
 			result.PoisonApplied += 1
@@ -241,8 +244,9 @@ function ClassService.processGimmickOnCardPlay(
 
 	-- 3. Blood Priest Sacrifice (Bypass energy cost with HP)
 	elseif playerState.ClassId == "BloodPriest" then
-		if playerState.Resources.Energy < cardInst.CardData.Cost then
-			local missing = cardInst.CardData.Cost - playerState.Resources.Energy
+		local cost = effectiveCostOverride or cardInst.CardData.Cost
+		if playerState.Resources.Energy < cost then
+			local missing = cost - playerState.Resources.Energy
 			local hpCost = missing * 5
 			if playerState.Resources.HP > hpCost then
 				playerState.Resources.HP -= hpCost

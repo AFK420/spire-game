@@ -36,6 +36,7 @@ export type ActionContext = {
 	LogEvent: ((eventType: string, sourceId: string, targetId: string, value: number?, text: string?) -> ())?,
 	OnKillCallback: ((enemy: StateTypes.EnemyState) -> ())?,
 	DidRevive: boolean?,
+	GuaranteedCritical: boolean?,
 }
 
 export type EffectExecutionResult = {
@@ -131,7 +132,7 @@ handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext, r
 		TargetEnemy = enemy,
 		TargetPlayer = nil,
 		Tags = effect.Tags,
-		Critical = false,
+		Critical = if context.GuaranteedCritical then true else nil,
 		CanHitShield = true,
 		IsPeriodic = false,
 	}

@@ -88,6 +88,10 @@ NetworkService.StartRunEvent.OnServerEvent:Connect(function(player: Player)
 		NetworkService.sendActionResult(player, { Action = "StartRun", Success = false, Message = "Rate limit exceeded. Please wait a moment." })
 		return
 	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "StartRun", Success = false, Message = "Your profile failed to load. Starting runs is blocked." })
+		return
+	end
 	print(string.format("[Server] Player %s triggered StartRun.", player.Name))
 	local success, err = RunManager.startRun(player)
 	if not success then
@@ -226,6 +230,14 @@ NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Play
 
 	if not RunManager.getPlayerState(player) then
 		RunManager.addPlayer(player)
+	end
+
+	if PersistenceService.getLoadState(player) == "LoadFailed" then
+		NetworkService.sendActionResult(player, {
+			Action = "DataStore",
+			Success = false,
+			Message = "Your player profile failed to load. Persistent features and data saving are disabled.",
+		})
 	end
 
 	local runSnapshot = RunManager.getRunSnapshotForPlayer(player)

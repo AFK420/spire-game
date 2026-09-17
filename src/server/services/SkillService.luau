@@ -401,7 +401,11 @@ function SkillService.useSkill(
 	end
 
 	-- 3. Cost validation (Zero mutation yet)
+	local playerStats = StatResolver.resolvePlayerStats(playerState)
 	local energyCost = def.Cost.Energy or 0
+	if playerStats.CostReduction and playerStats.CostReduction > 0 then
+		energyCost = math.max(0, energyCost - playerStats.CostReduction)
+	end
 	if playerState.Resources.Energy < energyCost then
 		return false, "Not enough Energy!"
 	end
@@ -440,7 +444,22 @@ function SkillService.useSkill(
 			if RelicServiceMod and RelicServiceMod:IsA("ModuleScript") then
 				local RelicService = require(RelicServiceMod) :: any
 				if type(RelicService.triggerEvent) == "function" then
-					RelicService.triggerEvent(playerState, combatState, "OnKill", { Enemy = defeatedEnemy })
+					local relicResult = RelicService.triggerEvent(playerState, combatState, "OnKill", { Enemy = defeatedEnemy })
+					if relicResult then
+						if relicResult.BonusEnergy > 0 then
+							playerState.Resources.Energy += relicResult.BonusEnergy
+						end
+						if relicResult.BonusDraw > 0 then
+							CardService.drawCards(playerState, relicResult.BonusDraw)
+						end
+					end
+				end
+			end
+			local ClassServiceMod = servicesFolder:FindFirstChild("ClassService")
+			if ClassServiceMod and ClassServiceMod:IsA("ModuleScript") then
+				local ClassService = require(ClassServiceMod) :: any
+				if type(ClassService.processGimmickOnKill) == "function" then
+					ClassService.processGimmickOnKill(playerState)
 				end
 			end
 		end,

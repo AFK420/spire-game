@@ -83,6 +83,9 @@ function DamagePipeline.executeDamage(
 	if isCritical then
 		local mult = 1.5
 		if context.SourcePlayer then
+			if context.SourcePlayer.SubclassId == "Assassin" then
+				mult = 2.0
+			end
 			local sr = servicesFolder:FindFirstChild("StatResolver")
 			if sr then
 				local StatResolverModule = require(sr :: ModuleScript)

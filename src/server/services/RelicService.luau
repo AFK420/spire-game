@@ -171,8 +171,8 @@ function RelicService.triggerEvent(
 				end
 
 			elseif triggerType == "OnDamageTaken" then
-				if id == "BronzeScales" and context and context.Enemy then
-					context.Enemy.HP = math.max(0, context.Enemy.HP - relic.Value)
+				if id == "BronzeScales" then
+					result.BonusDamage += relic.Value
 				elseif id == "CentennialPuzzle" and not cState.CentennialTriggered then
 					cState.CentennialTriggered = true
 					result.BonusDraw += relic.Value

@@ -522,6 +522,16 @@ function RunManager.startRun(initiator: any?): boolean
 		end
 	end
 
+	-- 4. Validate profile is loaded for real connected players (fail-closed guard)
+	for _, pState in runToStart.PartyMembers do
+		if pState.IsConnected ~= false and pState.PlayerInstance then
+			if not PersistenceService.isProfileLoaded(pState.PlayerInstance) then
+				warn(string.format("[RunManager] Cannot start run: profile for player %s failed to load.", pState.DisplayName))
+				return false
+			end
+		end
+	end
+
 	local dungeon = DungeonService.generateRun()
 	if isIsolatedTesting then
 		if isReal then
@@ -833,7 +843,7 @@ function RunManager.continueFromRewards(player: any): boolean
 	end
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
-	if runToUse.Phase ~= "Rewards" and runToUse.Phase ~= "ActiveRoom" then
+	if runToUse.Phase ~= "Rewards" then
 		return false
 	end
 

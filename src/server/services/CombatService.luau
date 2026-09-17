@@ -229,7 +229,9 @@ end
 function CombatService.broadcastSnapshots(message: string?)
 	if not activeCombat then return end
 
-	ArenaVisualizer.syncEnemies(activeCombat.Enemies)
+	if not isCombatIsolation then
+		ArenaVisualizer.syncEnemies(activeCombat.Enemies)
+	end
 
 	for userId, playerState in partyRef do
 		local player = playerState.PlayerInstance or Players:GetPlayerByUserId(userId)
@@ -396,12 +398,16 @@ local function endCombat(outcome: "Victory" | "Defeat")
 	if onCombatEndCallback then
 		local cb = onCombatEndCallback
 		local rm = getRunManager()
-		if rm and rm.isTestIsolationActive and rm.isTestIsolationActive() then
-			ArenaVisualizer.cleanup()
+		if (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) or isCombatIsolation then
+			if not isCombatIsolation then
+				ArenaVisualizer.cleanup()
+			end
 			cb(outcome)
 		else
 			task.delay(1.5, function()
-				ArenaVisualizer.cleanup()
+				if not isCombatIsolation then
+					ArenaVisualizer.cleanup()
+				end
 				cb(outcome)
 			end)
 		end
@@ -426,6 +432,12 @@ local function resolveTurn()
 				UnspentEnergy = playerState.Resources.Energy,
 				Enemy = dummyTarget,
 			})
+
+			if not relicResult.RetainShield then
+				playerState.Resources.Shield = 0
+			else
+				playerState.Resources.Shield = math.min(15, playerState.Resources.Shield)
+			end
 
 			if relicResult.BonusShield > 0 then
 				playerState.Resources.Shield += relicResult.BonusShield
@@ -452,12 +464,6 @@ local function resolveTurn()
 						break
 					end
 				end
-			end
-
-			if not relicResult.RetainShield then
-				playerState.Resources.Shield = 0
-			else
-				playerState.Resources.Shield = math.min(15, playerState.Resources.Shield)
 			end
 
 			CardService.discardHand(playerState)
@@ -490,7 +496,9 @@ local function resolveTurn()
 					task.wait(0.3)
 				end
 				if enemy.Intent.Type == "Attack" then
-					ArenaVisualizer.playEnemyAttackAnimation(enemyId)
+					if not isCombatIsolation then
+						ArenaVisualizer.playEnemyAttackAnimation(enemyId)
+					end
 					local livingPlayers: { StateTypes.PlayerState } = {}
 					for _, pState in partyRef do
 						if not pState.IsDowned and pState.IsConnected ~= false then
@@ -511,6 +519,10 @@ local function resolveTurn()
 							if dmgRelic.BonusDamage > 0 then
 								local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
 								logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
+							end
+							if dmgRelic.BonusDraw > 0 then
+								CardService.drawCards(target, dmgRelic.BonusDraw)
+								logEvent("CardDrawn", "Relic", target.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
 							end
 						end
 					end
@@ -770,8 +782,22 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	local targetEnemy = resolvedTarget.EnemyTarget
 	local targetPlayer = resolvedTarget.PlayerTarget
 
-	-- Evaluate Class Gimmick
-	local gimmick = ClassService.processGimmickOnCardPlay(playerState, cardInst, targetEnemy)
+	-- Pre-validate effect preconditions before mutating any state or resources
+	for _, eff in cardDef.Effects do
+		if eff.Type == "Damage" then
+			if not targetEnemy or targetEnemy.HP <= 0 then
+				return false, "No living enemy target."
+			end
+		elseif eff.Type == "Heal" then
+			if targetPlayer and targetPlayer.IsDowned then
+				return false, "Cannot heal downed player."
+			end
+		elseif eff.Type == "Revive" then
+			if targetPlayer and not targetPlayer.IsDowned then
+				return false, "Player is not downed."
+			end
+		end
+	end
 
 	-- Energy verification with StatResolver CostReduction
 	local playerStats = StatResolver.resolvePlayerStats(playerState)
@@ -780,9 +806,23 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		effectiveCost = math.max(0, effectiveCost - playerStats.CostReduction)
 	end
 
-	if not gimmick.FreeEnergy and playerState.Resources.Energy < effectiveCost then
-		return false, "Not enough Energy!"
+	-- Pre-check energy and resource affordability before ANY state mutations
+	if playerState.ClassId == "BloodPriest" then
+		if playerState.Resources.Energy < effectiveCost then
+			local missing = effectiveCost - playerState.Resources.Energy
+			local hpCost = missing * 5
+			if playerState.Resources.HP <= hpCost then
+				return false, "Not enough Energy or HP to pay cost!"
+			end
+		end
+	else
+		if playerState.Resources.Energy < effectiveCost then
+			return false, "Not enough Energy!"
+		end
 	end
+
+	-- Evaluate Class Gimmick (all validations passed)
+	local gimmick = ClassService.processGimmickOnCardPlay(playerState, cardInst, targetEnemy, effectiveCost)
 
 	if not gimmick.FreeEnergy then
 		playerState.Resources.Energy -= effectiveCost
@@ -872,6 +912,7 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 			end
 		end,
 		DidRevive = false,
+		GuaranteedCritical = gimmick.GuaranteedCritical,
 	}
 
 	local effectResults = EffectResolver.resolveEffects(cardInst.CardData.Effects, actionCtx)
@@ -1010,7 +1051,9 @@ function CombatService.cleanupCombat()
 		turnTimerConnection:Disconnect()
 		turnTimerConnection = nil
 	end
-	ArenaVisualizer.cleanup()
+	if not isCombatIsolation then
+		ArenaVisualizer.cleanup()
+	end
 	StatusService.resetCombat()
 	activeCombat = nil
 	partyRef = {}

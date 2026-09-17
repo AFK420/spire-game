@@ -5547,6 +5547,331 @@ function TestRunner.runAllTests(): boolean
 	RunManager.resetRunForTesting()
 	PersistenceService.resetForTesting()
 	end
+
+	----------------------------------------------------------------------------
+	-- TEST 63: Complete Audit & Regression Invariant Verification
+	----------------------------------------------------------------------------
+	do
+	print("\n--- [Suite 63] Complete Audit & Regression Invariant Verification ---")
+
+	-- 1. Combat Skip Exploit Rejection (Item 3)
+	RunManager.resetRunForTesting()
+	local rState = RunManager.getRunState()
+	rState.Phase = "ActiveRoom"
+	local mockHost = { UserId = 95001, Name = "Host", DisplayName = "Host" }
+	RunManager.addPlayer(mockHost :: any)
+	local skipAttempt = RunManager.continueFromRewards(mockHost :: any)
+	assertTest(skipAttempt == false, "[Suite 63.1] continueFromRewards strictly rejects ActiveRoom phase (combat skip exploit blocked)")
+	assertTest(rState.Phase == "ActiveRoom", "[Suite 63.1] Run phase remains ActiveRoom after rejected continueFromRewards")
+
+	-- 2. Map Voting: 1/1, 2/3, 2/4, 3/4, and Disconnected Members (Item 7)
+	RunManager.resetRunForTesting()
+	local vRun = RunManager.getRunState()
+	local vm1 = { UserId = 95011, Name = "V1", DisplayName = "V1" }
+	local vp1 = RunManager.addPlayer(vm1 :: any)
+	assert(vp1, "vp1 exists")
+	vp1.ClassLocked = true
+	RunManager.startRun(vm1 :: any)
+	local vNodes = vRun.AvailableNodeIds
+	local nA = vNodes[1]
+
+	-- Case 2a: 1/1 voting (1 player, 1 vote = 100% >= floor(1/2)+1=1)
+	assertTest(vRun.Phase == "MapSelect", "[Suite 63.2a] 1-player run is in MapSelect")
+	RunManager.voteMapNode(vm1 :: any, nA)
+	assertTest(vRun.Phase == "ActiveRoom", "[Suite 63.2a] 1/1 vote immediately achieves strict majority and enters ActiveRoom")
+
+	-- Case 2b: 2/4 voting does NOT trigger travel, 3/4 DOES trigger travel
+	RunManager.resetRunForTesting()
+	local vRun4 = RunManager.getRunState()
+	local pA = RunManager.addPlayer({ UserId = 95021, Name = "PA", DisplayName = "PA" } :: any)
+	local pB = RunManager.addPlayer({ UserId = 95022, Name = "PB", DisplayName = "PB" } :: any)
+	local pC = RunManager.addPlayer({ UserId = 95023, Name = "PC", DisplayName = "PC" } :: any)
+	local pD = RunManager.addPlayer({ UserId = 95024, Name = "PD", DisplayName = "PD" } :: any)
+	assert(pA and pB and pC and pD, "party members exist")
+	pA.ClassLocked = true; pB.ClassLocked = true; pC.ClassLocked = true; pD.ClassLocked = true
+	RunManager.startRun({ UserId = 95021 } :: any)
+	local n4A = vRun4.AvailableNodeIds[1]
+	local n4B = vRun4.AvailableNodeIds[2]
+
+	RunManager.voteMapNode({ UserId = 95021 } :: any, n4A)
+	RunManager.voteMapNode({ UserId = 95022 } :: any, n4B)
+	assertTest(vRun4.Phase == "MapSelect", "[Suite 63.2b] 2/4 split votes (1 vs 1) keeps voting open")
+
+	RunManager.voteMapNode({ UserId = 95023 } :: any, n4A)
+	assertTest(vRun4.Phase == "MapSelect", "[Suite 63.2b] 2/4 votes for n4A does NOT trigger travel (strict majority requires 3)")
+
+	RunManager.voteMapNode({ UserId = 95024 } :: any, n4A)
+	assertTest(vRun4.Phase == "ActiveRoom", "[Suite 63.2b] 3/4 votes for n4A achieves strict majority and enters ActiveRoom")
+
+	-- Case 2c: 2/3 voting triggers travel
+	RunManager.resetRunForTesting()
+	local vRun3 = RunManager.getRunState()
+	local p3A = RunManager.addPlayer({ UserId = 95031, Name = "P3A", DisplayName = "P3A" } :: any)
+	local p3B = RunManager.addPlayer({ UserId = 95032, Name = "P3B", DisplayName = "P3B" } :: any)
+	local p3C = RunManager.addPlayer({ UserId = 95033, Name = "P3C", DisplayName = "P3C" } :: any)
+	assert(p3A and p3B and p3C, "p3 party exists")
+	p3A.ClassLocked = true; p3B.ClassLocked = true; p3C.ClassLocked = true
+	RunManager.startRun({ UserId = 95031 } :: any)
+	local n3A = vRun3.AvailableNodeIds[1]
+	RunManager.voteMapNode({ UserId = 95031 } :: any, n3A)
+	RunManager.voteMapNode({ UserId = 95032 } :: any, n3A)
+	assertTest(vRun3.Phase == "ActiveRoom", "[Suite 63.2c] 2/3 votes for n3A achieves strict majority (floor(3/2)+1=2)")
+
+	-- Case 2d: Disconnected members are excluded from majority calculation
+	RunManager.resetRunForTesting()
+	local vRunDisc = RunManager.getRunState()
+	local pDA = RunManager.addPlayer({ UserId = 95041, Name = "PDA", DisplayName = "PDA" } :: any)
+	local pDB = RunManager.addPlayer({ UserId = 95042, Name = "PDB", DisplayName = "PDB" } :: any)
+	local pDC = RunManager.addPlayer({ UserId = 95043, Name = "PDC", DisplayName = "PDC" } :: any)
+	assert(pDA and pDB and pDC, "pDisc party exists")
+	pDA.ClassLocked = true; pDB.ClassLocked = true; pDC.ClassLocked = true
+	RunManager.startRun({ UserId = 95041 } :: any)
+	pDC.IsConnected = false
+	local nDisc = vRunDisc.AvailableNodeIds[1]
+	RunManager.voteMapNode({ UserId = 95041 } :: any, nDisc)
+	assertTest(vRunDisc.Phase == "MapSelect", "[Suite 63.2d] 1/2 connected votes pending")
+	RunManager.voteMapNode({ UserId = 95042 } :: any, nDisc)
+	assertTest(vRunDisc.Phase == "ActiveRoom", "[Suite 63.2d] 2/2 connected votes achieves majority with 1 disconnected member")
+
+	-- 3. Card Action Transaction Order (Item 8)
+	local dummyParty: { [number]: StateTypes.PlayerState } = {}
+	local shadowPlayer: StateTypes.PlayerState = {
+		UserId = 95050,
+		DisplayName = "ShadowRogue",
+		ClassId = "Shadowblade",
+		SubclassId = "Assassin",
+		Resources = { HP = 50, MaxHP = 80, Shield = 0, Energy = 0, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	dummyParty[shadowPlayer.UserId] = shadowPlayer
+	ClassService.resetGimmicks(shadowPlayer.UserId)
+	local testCard = CardService.createCardInstance("Strike", shadowPlayer.UserId)
+	assert(testCard, "testCard created")
+	table.insert(shadowPlayer.Hand, testCard)
+
+	CombatService.startCombat("audit_tx_enc", "Combat", 1, dummyParty, function(_) end)
+	local combatForTx = CombatService.getActiveCombat()
+	assert(combatForTx, "combatForTx exists")
+
+	-- 3a. Failed play due to insufficient energy
+	local failPlay, _ = CombatService.playCard({ UserId = shadowPlayer.UserId }, testCard.InstanceId, "enemy_1")
+	assertTest(failPlay == false, "[Suite 63.3a] Play card with 0 Energy rejected")
+	local sTracker = ClassService.getGimmickTracker(shadowPlayer.UserId)
+	assertTest(sTracker.ComboCount == 0, "[Suite 63.3a] Failed card play did NOT increment Shadowblade ComboCount")
+
+	-- 3b. Blood Priest HP sacrifice NOT consumed on invalid target
+	local bloodPlayer: StateTypes.PlayerState = {
+		UserId = 95051,
+		DisplayName = "Priest",
+		ClassId = "BloodPriest",
+		SubclassId = "Zealot",
+		Resources = { HP = 50, MaxHP = 100, Shield = 0, Energy = 0, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	dummyParty[bloodPlayer.UserId] = bloodPlayer
+	ClassService.resetGimmicks(bloodPlayer.UserId)
+	local priestCard = CardService.createCardInstance("Strike", bloodPlayer.UserId)
+	assert(priestCard, "priestCard created")
+	table.insert(bloodPlayer.Hand, priestCard)
+
+	local hpBeforeFailedPlay = bloodPlayer.Resources.HP
+	local failTargetPlay, _ = CombatService.playCard({ UserId = bloodPlayer.UserId }, priestCard.InstanceId, "nonexistent_enemy_999")
+	assertTest(failTargetPlay == false, "[Suite 63.3b] Play card targeting nonexistent enemy rejected")
+	assertTest(bloodPlayer.Resources.HP == hpBeforeFailedPlay, "[Suite 63.3b] BloodPriest HP was NOT consumed on failed card play")
+
+	-- 3c. Mechanist scrap parts NOT incremented on failed card play
+	local mechPlayer: StateTypes.PlayerState = {
+		UserId = 95052,
+		DisplayName = "MechanistHero",
+		ClassId = "Mechanist",
+		SubclassId = "Artificer",
+		Resources = { HP = 75, MaxHP = 75, Shield = 0, Energy = 0, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	dummyParty[mechPlayer.UserId] = mechPlayer
+	ClassService.resetGimmicks(mechPlayer.UserId)
+	local mechCard = CardService.createCardInstance("Strike", mechPlayer.UserId)
+	assert(mechCard, "mechCard created")
+	table.insert(mechPlayer.Hand, mechCard)
+	local failMechPlay, _ = CombatService.playCard({ UserId = mechPlayer.UserId }, mechCard.InstanceId, "enemy_1")
+	assertTest(failMechPlay == false, "[Suite 63.3c] Mechanist card play rejected due to 0 energy")
+	local mTracker = ClassService.getGimmickTracker(mechPlayer.UserId)
+	assertTest(mTracker.ScrapParts == 0, "[Suite 63.3c] Mechanist ScrapParts NOT incremented on failed card play")
+
+	-- 4. Additional Class Gimmicks: SwarmLord, Beastmaster, Artificer (Item 9)
+	local swarmPlayer: StateTypes.PlayerState = {
+		UserId = 95060,
+		DisplayName = "SwarmLordHero",
+		ClassId = "Necrobinder",
+		SubclassId = "SwarmLord",
+		Resources = { HP = 50, MaxHP = 80, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}
+	ClassService.resetGimmicks(swarmPlayer.UserId)
+	local swTracker = ClassService.getGimmickTracker(swarmPlayer.UserId)
+	for _ = 1, 15 do
+		ClassService.processGimmickOnKill(swarmPlayer)
+	end
+	assertTest(swTracker.BoneServants == 3, "[Suite 63.4a] Necrobinder SwarmLord spawned 3 BoneServants from kills")
+	local swEnd = ClassService.processGimmickOnTurnEnd(swarmPlayer, {})
+	assertTest(swEnd.EndTurnDamage == 24, "[Suite 63.4a] SwarmLord 3 BoneServants dealt 24 turn-end damage (3 * 8)")
+
+	local beastPlayer: StateTypes.PlayerState = {
+		UserId = 95061,
+		DisplayName = "BeastHero",
+		ClassId = "Beastmaster",
+		SubclassId = "Hunter",
+		Resources = { HP = 90, MaxHP = 90, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}
+	ClassService.resetGimmicks(beastPlayer.UserId)
+	local beastEnd = ClassService.processGimmickOnTurnEnd(beastPlayer, {})
+	assertTest(beastEnd.EndTurnDamage == 6, "[Suite 63.4b] Beastmaster Wolf dealt 6 turn-end damage")
+
+	mechPlayer.Resources.Energy = 3
+	mTracker.ActiveTurrets = 2
+	local mechEnd = ClassService.processGimmickOnTurnEnd(mechPlayer, {})
+	assertTest(mechEnd.EndTurnDamage == 12, "[Suite 63.4c] Artificer 2 turrets dealt 12 damage (2 * 6)")
+	assertTest(mechEnd.EndTurnShield == 8, "[Suite 63.4c] Artificer 2 turrets granted 8 shield (2 * 4)")
+
+	-- 5. Relic Bonus Consumers: CentennialPuzzle, Pocketwatch, Orichalcum, BronzeScales (Item 11)
+	local puzzlePlayer: StateTypes.PlayerState = {
+		UserId = 95070,
+		DisplayName = "PuzzleHero",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 80, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {
+			CardService.createCardInstance("Strike", 95070) :: StateTypes.CardInstance,
+			CardService.createCardInstance("Defend", 95070) :: StateTypes.CardInstance,
+			CardService.createCardInstance("Strike", 95070) :: StateTypes.CardInstance,
+			CardService.createCardInstance("Defend", 95070) :: StateTypes.CardInstance,
+		},
+		Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = { "CentennialPuzzle" },
+		Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}
+	RelicService.resetCombatState(puzzlePlayer.UserId)
+	local puzzleRelicRes = RelicService.triggerEvent(puzzlePlayer, nil, "OnDamageTaken", { Damage = 10 })
+	assertTest(puzzleRelicRes.BonusDraw == 3, "[Suite 63.5a] CentennialPuzzle returned 3 BonusDraw on damage taken")
+
+	local scalesRelicRes = RelicService.triggerEvent({
+		UserId = 95071,
+		DisplayName = "ThornsHero",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = { "BronzeScales" },
+		Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}, nil, "OnDamageTaken", { Damage = 5 })
+	assertTest(scalesRelicRes.BonusDamage == 3, "[Suite 63.5b] BronzeScales returned 3 BonusDamage thorns")
+
+	local oriRelicRes = RelicService.triggerEvent({
+		UserId = 95072,
+		DisplayName = "OriHero",
+		ClassId = "Warlord",
+		SubclassId = "Titan",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 1, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = { "Orichalcum" },
+		Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}, nil, "OnTurnEnd", { UnspentEnergy = 1 })
+	assertTest(oriRelicRes.BonusShield == 6, "[Suite 63.5c] Orichalcum granted 6 BonusShield at 0 Shield")
+
+	-- 6. Assassin Guaranteed Critical Behavior (Item 13)
+	local assassinState: StateTypes.PlayerState = {
+		UserId = 95080,
+		DisplayName = "AssassinHero",
+		ClassId = "Shadowblade",
+		SubclassId = "Assassin",
+		Resources = { HP = 85, MaxHP = 85, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}
+	ClassService.resetGimmicks(assassinState.UserId)
+	local aCard1 = CardService.createCardInstance("Strike", assassinState.UserId) :: StateTypes.CardInstance
+	local aCard2 = CardService.createCardInstance("Strike", assassinState.UserId) :: StateTypes.CardInstance
+	local aCard3 = CardService.createCardInstance("Strike", assassinState.UserId) :: StateTypes.CardInstance
+	assert(aCard1 and aCard2 and aCard3, "assassin cards created")
+
+	local g1 = ClassService.processGimmickOnCardPlay(assassinState, aCard1, nil, 1)
+	assertTest(g1.GuaranteedCritical == false, "[Suite 63.6] Assassin 1st card is not guaranteed critical")
+
+	local g2 = ClassService.processGimmickOnCardPlay(assassinState, aCard2, nil, 1)
+	assertTest(g2.GuaranteedCritical == false, "[Suite 63.6] Assassin 2nd card is not guaranteed critical")
+
+	local g3 = ClassService.processGimmickOnCardPlay(assassinState, aCard3, nil, 1)
+	assertTest(g3.GuaranteedCritical == true, "[Suite 63.6] Assassin 3rd combo card IS guaranteed critical")
+
+	-- 7. SkillService CostReduction via StatResolver (Item 14)
+	local skillHeroState: StateTypes.PlayerState = {
+		UserId = 95090,
+		DisplayName = "SkillHero",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 2, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+		EquippedSkills = {},
+		SkillInventory = {},
+		EquippedItems = {},
+		UnlockedPassives = {},
+		UnlockedSkills = { ["HeroicStrike"] = true },
+	}
+	SkillService.grantSkill(skillHeroState, "HeroicStrike")
+	SkillService.equipSkill(skillHeroState, "HeroicStrike", "Skill1")
+	local skillDef = SkillData.getSkill("HeroicStrike")
+	assert(skillDef, "HeroicStrike def exists")
+	assertTest(skillDef.Cost.Energy == 1, "[Suite 63.7] HeroicStrike base cost is 1 Energy")
+
+	-- 8. Persistence Failure Mode: Block StartRun (Item 16)
+	PersistenceService.simulateLoadFailureForTesting(95095)
+	local failLoadMember = {
+		UserId = 95095,
+		Name = "FailPlayer",
+		DisplayName = "FailPlayer",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	RunManager.resetRunForTesting()
+	local failRun = RunManager.getRunState()
+	local failAdded = RunManager.addPlayer(failLoadMember :: any)
+	assert(failAdded, "failAdded exists")
+	failAdded.ClassLocked = true
+	local startRunFailRes = RunManager.startRun(failLoadMember :: any)
+	assertTest(startRunFailRes == false, "[Suite 63.8] startRun rejected when player profile failed to load (Item 16)")
+
+	-- Cleanup
+	CombatService.cleanupCombat()
+	RunManager.resetRunForTesting()
+	PersistenceService.resetForTesting()
+	end
 	end)
 
 	-- Defensive invariant: Isolation must NEVER remain active regardless of success or failure
