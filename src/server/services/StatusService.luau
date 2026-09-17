@@ -214,6 +214,9 @@ function StatusService.removeStatus(targetId: string, defId: string, targetEntit
 		targetEntityRef.Poison = 0
 	end
 
+	return true
+end
+
 -- Reconciles legacy/direct writes to targetEntity.Poison into StatusService's authoritative state
 -- ONLY when StatusService has no existing record of that entity's Poison.
 function StatusService.syncEntityFromProjection(targetId: string, targetEntity: any)

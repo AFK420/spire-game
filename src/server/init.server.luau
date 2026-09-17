@@ -9,6 +9,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local services = script:WaitForChild("services")
 local NetworkService = require(services:WaitForChild("NetworkService") :: ModuleScript)
@@ -33,6 +34,7 @@ local DeckService = require(services:WaitForChild("DeckService") :: ModuleScript
 local TestRunner = require(services:WaitForChild("TestRunner") :: ModuleScript)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
 local PassiveData = require(Shared:WaitForChild("PassiveData") :: ModuleScript)
 
@@ -440,17 +442,21 @@ print("[Server] Game network listeners successfully registered.")
 print("[Server] Server is ready for live gameplay.")
 print("============================================================")
 
--- 3. Execute Phase 1 automated verification test suite in background task
-task.spawn(function()
-	print("[TestRunner] Spawning background automated test suites in isolated mode...")
-	local success, err = pcall(function()
-		TestRunner.runAllTests()
+-- 3. Execute Phase 1 automated verification test suite in background task (Studio only)
+if RunService:IsStudio() and GameConfig.Testing and GameConfig.Testing.AutoRunTestsInStudio == true then
+	task.spawn(function()
+		print("[TestRunner] Spawning background automated test suites in isolated mode...")
+		local success, err = pcall(function()
+			TestRunner.runAllTests()
+		end)
+		-- Defensive invariant: Isolation must NEVER remain active on live server
+		if RunManager.isTestIsolationActive() then
+			RunManager.endTestIsolation()
+		end
+		if not success then
+			warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
+		end
 	end)
-	-- Defensive invariant: Isolation must NEVER remain active on live server
-	if RunManager.isTestIsolationActive() then
-		RunManager.endTestIsolation()
-	end
-	if not success then
-		warn("[TestRunner] Test suite execution encountered error: " .. tostring(err))
-	end
-end)
+else
+	print("[TestRunner] Background test runner skipped (only runs in Studio when GameConfig.Testing.AutoRunTestsInStudio is enabled).")
+end

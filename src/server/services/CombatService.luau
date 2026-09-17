@@ -421,7 +421,6 @@ local function resolveTurn()
 					logEvent("EnemyDefeated", killer, enemyId, nil, string.format("%s collapsed from %s!", enemy.Name, killer:lower()))
 					continue
 				end
-			end
 
 				local rm = getRunManager()
 				if not (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) then

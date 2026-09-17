@@ -120,4 +120,12 @@ GameConfig.StarterCollection = {
 	} :: { [string]: number },
 }
 
+--------------------------------------------------------------------------------
+-- Automated Testing Configuration
+--------------------------------------------------------------------------------
+
+GameConfig.Testing = {
+	AutoRunTestsInStudio = true,
+}
+
 return GameConfig

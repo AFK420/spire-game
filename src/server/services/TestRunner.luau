@@ -331,7 +331,10 @@ function TestRunner.runAllTests(): boolean
 
 	----------------------------------------------------------------------------
 	-- TEST 8: Relic Trigger Correctness (Zero Duplication Bug)
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 8] Relic Trigger Mechanics (No Double-Triggers) ---")
 	local testAttackCard = CardService.createCardInstance("Strike", 10001) :: StateTypes.CardInstance
 	RelicService.resetCombatState(10001)
@@ -372,9 +375,13 @@ function TestRunner.runAllTests(): boolean
 	-- Restore player 1 relics
 	p1State.RelicIds = { "Anchor" }
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 9: Safe Card Play & Double-Play Prevention (Real API Path)
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 9] Real Card Play & Double-Play Prevention ---")
 	local cardToPlay = getAnyCardInHand(p1State)
 	while cardToPlay.CardData.Target ~= "Enemy" do
@@ -397,9 +404,13 @@ function TestRunner.runAllTests(): boolean
 	local doublePlaySuccess, doublePlayErr = CombatService.playCard(player1, playedCardId, firstEnemy.InstanceId)
 	assertTest(doublePlaySuccess == false and doublePlayErr == "Card not found in hand.", "Double-play through real API safely rejected with 'Card not found in hand.'")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 10: Downed State & Teammate Rescue Mechanics
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 10] Downed State & Teammate Rescue Mechanics ---")
 	p4State.Resources.HP = 0
 	p4State.IsDowned = true
@@ -418,9 +429,13 @@ function TestRunner.runAllTests(): boolean
 	local expectedReviveHp = math.floor(p4State.Resources.MaxHP * GameConfig.Coop.ReviveHpPercent)
 	assertTest(p4State.Resources.HP == expectedReviveHp, string.format("Target revived with 25%% HP (%d HP)", expectedReviveHp))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 11: Turn Ready Voting & Automatic Timeout
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 11] Ready Voting & Monotonic Turn Timeout ---")
 	CombatService.voteReady(player1)
 	assertTest(p1State.IsReady == true, "Player 1 voted ready")
@@ -433,9 +448,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(combat.TurnNumber == 2, "Turn number advanced to 2 after turn timeout resolution")
 	assertTest(combat.Phase == "PlayerPhase", "Returned to PlayerPhase for Turn 2")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 12: Enemy Defeat, Victory Callback & Rewards Transition
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 12] Enemy Defeat & Room Clear Transition ---")
 	for _, e in combat.Enemies do
 		e.HP = 1
@@ -472,9 +491,13 @@ function TestRunner.runAllTests(): boolean
 	local doubleClaimSuccess, doubleClaimErr = RunManager.claimRewardCard(player1, draftOptions[2].Id)
 	assertTest(doubleClaimSuccess == false and doubleClaimErr == "Reward already claimed.", "Second claim attempt safely rejected")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 13: CRITICAL INVARIANT — Card Persistence Across Multiple Combats
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 13] Critical Invariant: Card Persistence Across Combats ---")
 	-- Record all card instance IDs currently owned by player 1
 	local recordedCardIds: { [string]: boolean } = {}
@@ -545,9 +568,13 @@ function TestRunner.runAllTests(): boolean
 	end
 	assertTest(claimedCardInstanceFound == true, string.format("Specific claimed reward CardInstanceId [%s] preserved identically into Combat #2", claimedCardInstanceId))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 14: Player Leaving and Rejoining Mid-Run State Resilience
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 14] Player Disconnect / Reconnect State Resilience ---")
 	local p2HpBefore = p2State.Resources.HP
 	local p2DeckCountBefore = #p2State.Deck
@@ -568,9 +595,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(reconnectedP2.Gold == p2GoldBefore, "Player Gold completely preserved")
 	assertTest(partyCount == 4, "Party integrity preserved with zero corruption")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 15: Disconnect-Safety & Multiplayer Invariants (Phase 1.2 Regressions)
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 15] Disconnect Safety: Targeting, Map Voting & Defeat Detection ---")
 
 	-- Part 15.1: Test B — Disconnected player cannot be selected as enemy attack target
@@ -681,9 +712,13 @@ function TestRunner.runAllTests(): boolean
 	task.wait()
 	assertTest(runState.Phase == "RunDefeat", "[Test C] Defeat correctly triggered when all CONNECTED players downed (disconnected players did not keep combat alive)!")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 16: Poison Damage Resolution Invariant & Death Regressions
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 16] Poison Damage Resolution & Shield Bypass Regressions ---")
 
 	-- Reset to clean test state
@@ -751,9 +786,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(testEnemy.HP == 0, string.format("[Poison Test C] Lethal poison reduced HP to 0 (Actual: %d)", testEnemy.HP))
 	assertTest(runState.Phase == "Rewards", "[Poison Test C] Lethal poison triggered enemy death and transitioned combat to Rewards")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 17: TargetResolver Action Target Validation
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 17] TargetResolver Target Validation Foundation ---")
 	local trCombat = CombatService.getActiveCombat() or poisonCombat
 	local trParty = runState.PartyMembers
@@ -816,9 +855,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(allyDiscRes.Success == false and allyDiscRes.Error == "Cannot target a disconnected ally.", "[TargetResolver] Rejects disconnected ally target")
 	trParty[777777] = nil
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 18: ModifierResolver Deterministic Math Pipeline
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 18] ModifierResolver Deterministic Math Pipeline ---")
 
 	-- 1. Base value with 0 modifiers
@@ -855,9 +898,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(modValFull == 10, "[ModifierResolver] LowHP condition does NOT apply at full HP (10)")
 	assertTest(modValLow == 20, "[ModifierResolver] LowHP condition applies when HP < 50% (10 + 10 = 20)")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 19: DamagePipeline Mitigation & Shield Absorption
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 19] DamagePipeline Mitigation & Shield Absorption ---")
 
 	local dummyEnemy: StateTypes.EnemyState = {
@@ -951,9 +998,13 @@ function TestRunner.runAllTests(): boolean
 	})
 	assertTest(dummyEnemy.HP == 0 and dmgRes5.IsDefeatedOrDowned == true, "[DamagePipeline] Lethal damage reduces HP to 0 and flags IsDefeatedOrDowned")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 20: StatusService Lifecycle (Apply, Stack, Tick, Remove, Sync)
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 20] StatusService Definition vs Instance Lifecycle ---")
 
 	StatusService.resetCombat()
@@ -1007,9 +1058,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(defShock ~= nil and defShock.TickTiming == "OnAction", "[StatusService] Shock definition registered")
 	assertTest(defBleed ~= nil and defBleed.IsDebuff == true, "[StatusService] Bleed definition registered")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 21: EffectResolver Generic Dispatch
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 21] EffectResolver Generic Dispatch ---")
 
 	local effEnemy: StateTypes.EnemyState = {
@@ -1097,9 +1152,13 @@ function TestRunner.runAllTests(): boolean
 	local statusResList = EffectResolver.resolveEffects({ statusEff }, dmgCtx)
 	assertTest(#statusResList == 1 and effEnemy.Poison == 4, "[EffectResolver] ApplyStatus applied 4 stacks of Poison")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 22: First Aid Generic Conditional Semantics
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 22] First Aid Generic Conditional Semantics ---")
 
 	local firstAidDef = CardData.getCard("FirstAid")
@@ -1153,9 +1212,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(allyHero.IsDowned == false, "[First Aid - Downed Ally] Ally successfully revived from downed state")
 	assertTest(allyHero.Resources.HP == 30, string.format("[First Aid - Downed Ally] HP revived to exactly 30 without double-healing (Actual: %d)", allyHero.Resources.HP))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 23: Exhaust Pile Uniqueness & Pile Invariants
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 23] Exhaust Pile Uniqueness & Pile Invariants ---")
 
 	local exPlayer: StateTypes.PlayerState = {
@@ -1234,9 +1297,13 @@ function TestRunner.runAllTests(): boolean
 		assertTest(totalCardsAfter == 4, string.format("[Exhaust] Pile count invariant preserved: %d == 4", totalCardsAfter))
 	end
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 24: Effect-Level Target Overrides
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 24] Effect-Level Target Overrides ---")
 
 	local hybridEnemy: StateTypes.EnemyState = {
@@ -1320,9 +1387,13 @@ function TestRunner.runAllTests(): boolean
 	-- Enemy did NOT gain any shield from effect 2
 	assertTest(hybridEnemy.Shield == 0, "[TargetOverride] Enemy did NOT receive the Shield effect")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 25: ModifyResource Safety & Clamping
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 25] ModifyResource Safety & Clamping ---")
 
 	local resPlayer: StateTypes.PlayerState = {
@@ -1404,9 +1475,13 @@ function TestRunner.runAllTests(): boolean
 	local invResList = EffectResolver.resolveEffects({ invalidResEff }, resCtx)
 	assertTest(#invResList == 1 and invResList[1].Success == false, "[ModifyResource] Rejected invalid resource type cleanly")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 26: Event Triggering & Recursion Protection
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 26] Event Triggering & Recursion Protection ---")
 
 	local loggedEvents: { string } = {}
@@ -1446,9 +1521,13 @@ function TestRunner.runAllTests(): boolean
 	triggerRecursiveCall(1)
 	assertTest(recurseCount <= 6, string.format("[Recursion] Recursion limited safely (ran %d levels, max allowed is 5)", recurseCount))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 27: Status Authority & Tick Behavior Registry
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 27] Status Authority & Tick Behavior Registry ---")
 	StatusService.resetCombat()
 
@@ -1499,9 +1578,13 @@ function TestRunner.runAllTests(): boolean
 	end
 	assertTest(igniteDmg == 8, string.format("[StatusAuthority] Ignite FireDoT dealt 8 damage (Actual: %d)", igniteDmg))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 28: Damage Pipeline Edge Cases & Mitigations
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 28] Damage Pipeline Edge Cases & Mitigations ---")
 
 	local edgeEnemy: StateTypes.EnemyState = {
@@ -1604,9 +1687,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(edgeEnemy.Shield == 0, "[DamagePipeline] Shield reduced to 0")
 	assertTest(edgeEnemy.HP == 28, "[DamagePipeline] HP reduced to 28 (35 - 7)")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 29: Modifier Pipeline Determinism & Immutability
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 29] Modifier Pipeline Determinism & Immutability ---")
 
 	-- 1. Additive before Multiplicative regardless of registration order
@@ -1640,9 +1727,13 @@ function TestRunner.runAllTests(): boolean
 	local clampedVal, _ = ModifierResolver.resolve(20, "Damage", { modNegative })
 	assertTest(clampedVal == 0, "[ModifierResolver] Negative result clamped to 0")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 30: ModifyResource Multi-Targeting & Boundary Safety
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 30] ModifyResource Multi-Targeting & Boundary Safety ---")
 
 	local resP1: StateTypes.PlayerState = {
@@ -1756,9 +1847,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(#resRes3 == 1 and resRes3[1].Success == false, "[ModifyResource] Fails cleanly when targeted to invalid player")
 	assertTest(resP1.Resources.Energy == 2 and resP2.Resources.Energy == 3, "[ModifyResource] No resources mutated on invalid target failure")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 31: TriggerEvent Truthful Execution & Error Isolation
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 31] TriggerEvent Truthful Execution & Error Isolation ---")
 
 	-- 1. Normal event execution returns Success = true
@@ -1803,9 +1898,13 @@ function TestRunner.runAllTests(): boolean
 	local normalAfterError = EffectResolver.resolveEffects({ effNormalEvent }, ctxEventNormal)
 	assertTest(#normalAfterError == 1 and normalAfterError[1].Success == true, "[TriggerEvent] Recursion depth safely restored and operational")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 32: Real Target Resolution Context & Multi-Entity Integrity
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 32] Real Target Resolution Context & Multi-Entity Integrity ---")
 
 	-- 1. Resolving Enemy without CombatState fails cleanly
@@ -1887,9 +1986,13 @@ function TestRunner.runAllTests(): boolean
 	local resDisconnectedAlly = TargetResolver.resolveTarget(resP1, "Ally", p3.UserId, multiCombatState, party4)
 	assertTest(resDisconnectedAlly.Success == false and string.find(resDisconnectedAlly.Error or "", "disconnected") ~= nil, "[TargetResolver] Disconnected ally target rejected cleanly")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 33: CreateCard Schema Strictness & Pile Placement
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 33] CreateCard Schema Strictness & Pile Placement ---")
 
 	-- 1. Fails cleanly when CardDefId is missing or empty
@@ -1918,9 +2021,13 @@ function TestRunner.runAllTests(): boolean
 	for _ in resP1.Hand do handCountAfter += 1 end
 	assertTest(handCountAfter == handCountBefore + 1, "[CreateCard] Card inserted into Hand dictionary")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 34: Card Pile Invariant Verification & Lifecycle Safety
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 34] Card Pile Invariant Verification & Lifecycle Safety ---")
 
 	local invPlayer: StateTypes.PlayerState = {
@@ -2002,9 +2109,13 @@ function TestRunner.runAllTests(): boolean
 	local okReset, _ = CardService.validatePileInvariants(invPlayer)
 	assertTest(okReset == true and #invPlayer.Deck == 5, "[PileInvariants] State valid after resetCombatPiles (all 5 cards returned to deck)")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 35: Status Authority Boundary & Projection Output Contracts
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 35] Status Authority Boundary & Projection Output Contracts ---")
 
 	StatusService.resetCombat()
@@ -2041,9 +2152,13 @@ function TestRunner.runAllTests(): boolean
 	local legacyInst = StatusService.getStatus(legacyEnemy.InstanceId, "Poison")
 	assertTest(legacyInst ~= nil and legacyInst.Stacks == 6, "[StatusAuthority] Backward compat sync populated 6 stacks when no record existed")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 36: Cross-System Multi-Action Integration Chains
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 36] Cross-System Multi-Action Integration Chains ---")
 
 	StatusService.resetCombat()
@@ -2166,9 +2281,13 @@ function TestRunner.runAllTests(): boolean
 	local okFinalInv, _ = CardService.validatePileInvariants(chainPlayer)
 	assertTest(okFinalInv == true, "[CrossSystem] Pile invariants preserved after CreateCard + Draw")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 37: Static Card Effect Target Compatibility
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 37] Static Card Effect Target Compatibility ---")
 
 	-- 1. All registered cards in CardData pass static validation
@@ -2292,9 +2411,13 @@ function TestRunner.runAllTests(): boolean
 	local okBRC, errBRC = CardData.validateCard(badResCard)
 	assertTest(okBRC == false and string.find(errBRC or "", "ModifyResource") ~= nil, "[CardValidator] ModifyResource targeting Enemy rejected")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 38: End-to-End Mixed-Target Card Execution
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 38] End-to-End Mixed-Target Card Execution ---")
 
 	local e2eCaster: StateTypes.PlayerState = {
@@ -2566,9 +2689,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(bonusShieldResults[1].Success == true, "[E2E BonusShield] Shield effect executed successfully")
 	assertTest(e2eCaster.Resources.Shield == 12, string.format("[E2E BonusShield] Bonus Shield correctly added once without duplication: base 8 + 4 = 12 (Actual: %d)", e2eCaster.Resources.Shield))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 39: Final Schema Strictness & Resource Boundary Safety
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 39] Final Schema Strictness & Resource Boundary Safety ---")
 
 	local schemaPlayer: StateTypes.PlayerState = {
@@ -2776,9 +2903,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(schemaAlly.Resources.Energy == 3, "[ModifyResource] Ally Energy increased from 1 to 3")
 	assertTest(schemaPlayer.Resources.Energy == 2, "[ModifyResource] Caster Energy remained 2")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 40: Phase 3 Equipment Foundation
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 40] Phase 3 Equipment Foundation ---")
 	local equipUser = 6001
 	local equipPlayer: StateTypes.PlayerState = {
@@ -2849,9 +2980,13 @@ function TestRunner.runAllTests(): boolean
 	local collectedMods = EquipmentService.collectModifiers(equipPlayer)
 	assertTest(#collectedMods >= 3, "[Equipment] collectModifiers gathered modifiers across equipped weapon and armor")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 41: Phase 3 Centralized Stat Resolution
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 41] Phase 3 Centralized Stat Resolution ---")
 
 	-- 1. Base stats from class definition
@@ -2894,9 +3029,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(equipPlayer.Resources.MaxHP == syncedStats.MaxHP, "[StatResolver] syncPlayerDerivedStats updated Resources.MaxHP")
 	assertTest(equipPlayer.Resources.HP <= equipPlayer.Resources.MaxHP, "[StatResolver] Resources.HP clamped within MaxHP bounds")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 42: Phase 3 Passive Tree & Graph Validation
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 42] Phase 3 Passive Tree & Graph Validation ---")
 
 	-- 1. Validate canonical Warlord DAG
@@ -3049,9 +3188,13 @@ function TestRunner.runAllTests(): boolean
 	local passMods = PassiveService.collectModifiers(passPlayer)
 	assertTest(#passMods == 2, "[PassiveService] collectModifiers returned modifiers from both unlocked nodes")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 43: Phase 3 Active Skills Runtime
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 43] Phase 3 Active Skills Runtime ---")
 	local skillUser = 6003
 	local skillPlayer: StateTypes.PlayerState = {
@@ -3150,9 +3293,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okNoEnergy == false and string.find(errNoEnergy or "", "Energy") ~= nil, "[SkillService] useSkill rejected on insufficient energy")
 	assertTest(combatDummy.Enemies["dummy_enemy"].HP == 38, "[SkillService] Enemy HP untouched when skill rejected for energy")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 44: Complete Vertical Slice End-to-End Test
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 44] Complete Vertical Slice End-to-End Test ---")
 
 	local sliceUser = 7001
@@ -3261,9 +3408,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okSliceUse2 == true, "[VerticalSlice] Second skill execution succeeded after cooldown refresh")
 	assertTest(bossEnemy.HP == 60, string.format("[VerticalSlice] Boss HP further reduced from 80 -> %d (total 40 damage dealt across 2 skill uses)", bossEnemy.HP))
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 45: Phase 3.1 Equipment Authority Hardening
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 45] Phase 3.1 Equipment Authority Hardening ---")
 	local authUser = 8001
 	local authPlayer: StateTypes.PlayerState = {
@@ -3289,7 +3440,7 @@ function TestRunner.runAllTests(): boolean
 	local forgedSword = EquipmentService.createInstance("IronBroadsword", authUser)
 	assert(forgedSword, "forgedSword created")
 	table.insert(authPlayer.EquipmentInventory, forgedSword)
-	(forgedSword :: any).Slot = "Armor"
+	;(forgedSword :: any).Slot = "Armor"
 	local okForged, errForged = EquipmentService.equipItem(authPlayer, forgedSword)
 	assertTest(okForged == false and string.find(errForged or "", "Forged slot") ~= nil, "[EquipmentAuthority] Forged slot rejected with explicit error")
 	assertTest(authPlayer.EquippedItems ~= nil and authPlayer.EquippedItems["Armor"] == nil, "[EquipmentAuthority] Forged item not equipped in Armor slot")
@@ -3349,9 +3500,13 @@ function TestRunner.runAllTests(): boolean
 	end
 	assertTest(isSorted == true, "[EquipmentAuthority] Collected modifiers sorted deterministically by Priority")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 46: Phase 3.1 Active Skill Ownership & Cooldown Hardening
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 46] Phase 3.1 Active Skill Ownership & Cooldown Hardening ---")
 	local skillAuthUser = 8002
 	local skillAuthPlayer: StateTypes.PlayerState = {
@@ -3394,7 +3549,7 @@ function TestRunner.runAllTests(): boolean
 	-- 4. Invalid Slot Rejection at runtime
 	local badSlotSkill = SkillService.createInstance("HeroicStrike", skillAuthUser, "InvalidSlot" :: any)
 	assertTest(badSlotSkill == nil, "[SkillHardening] createInstance rejects invalid slot")
-	(whirlSkill :: any).Slot = "Skill99"
+	;(whirlSkill :: any).Slot = "Skill99"
 	local okBadSlot, errBadSlot = SkillService.equipSkill(skillAuthPlayer, whirlSkill)
 	assertTest(okBadSlot == false and string.find(errBadSlot or "", "Invalid skill slot") ~= nil, "[SkillHardening] equipSkill rejects invalid runtime slot")
 	whirlSkill.Slot = "Skill2"
@@ -3434,9 +3589,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okReEquip == true, "[SkillHardening] Re-equipping same slot updates state")
 	assertTest(whirlSkill.CurrentCooldown == 2, "[SkillHardening] Cooldown strictly preserved and isolated on runtime instance")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 47: Phase 3.1 Passive Tree Hardening & Negative Modifier Stacking
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 47] Phase 3.1 Passive Tree Hardening & Negative Modifier Stacking ---")
 
 	-- 1. Malformed Node Rejection: Empty string ID
@@ -3535,9 +3694,13 @@ function TestRunner.runAllTests(): boolean
 	end
 	assertTest(passSorted == true, "[PassiveHardening] PassiveService.collectModifiers sorted deterministically by Priority")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 48: Phase 3.1 Active Skill Transactional Execution
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 48] Phase 3.1 Active Skill Transactional Execution ---")
 	local txUser = 8005
 	local txPlayer: StateTypes.PlayerState = {
@@ -3642,9 +3805,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(txSkill.CurrentCooldown == 1, "[SkillTx] Cooldown set to 1 on success")
 	assertTest(txCombat.Enemies["alive_target"].HP == 48, "[SkillTx] Enemy took exact skill damage (60 -> 48)")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 49: Phase 3.1 Network Contracts & Remote Event Authority
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 49] Phase 3.1 Network Contracts & Remote Event Authority ---")
 
 	-- 1. All 6 RemoteEvents registered in NetworkService
@@ -3663,9 +3830,13 @@ function TestRunner.runAllTests(): boolean
 	-- 3. Inferred sender authority contract: Server identifies sender strictly from player argument
 	assertTest(typeof(NetworkService.EquipEquipmentEvent.Name) == "string", "[NetworkAuthority] RemoteEvent has valid Roblox Instance name")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 50: Phase 3.1 Extended Vertical Slice End-to-End Test
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 50] Phase 3.1 Extended Vertical Slice End-to-End ---")
 
 	local extUser = 9001
@@ -3778,9 +3949,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(postUnequipStats.BonusDamage == 3, "[ExtSlice] BonusDamage dropped from 8 to 3 (Weapon removed, Passive remains)")
 	assertTest(extPlayer.Resources.MaxHP == 145, "[ExtSlice] MaxHP dropped from 155 to 145 (10 Weapon HP removed)")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 51: Phase 3.2 Network Ownership Boundary & Contract Validation
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 51] Phase 3.2 Network Ownership Boundary & Contract Validation ---")
 
 	-- 1. Remote Event Registration: UnlockSkillEvent registered
@@ -3932,10 +4107,10 @@ function TestRunner.runAllTests(): boolean
 	-- 4d. Equipment forged slot -> rejected
 	local p1LegitSword = EquipmentService.grantEquipment(netPlayer1, "IronBroadsword")
 	assert(p1LegitSword, "p1LegitSword granted")
-	(p1LegitSword :: any).Slot = "Armor"
+	;(p1LegitSword :: any).Slot = "Armor"
 	local okForgedSlot, errForgedSlot = EquipmentService.equipItem(netPlayer1, p1LegitSword)
 	assertTest(okForgedSlot == false and string.find(errForgedSlot or "", "Forged slot") ~= nil, "[NetBoundary] Equipment forged slot mismatch rejected")
-	(p1LegitSword :: any).Slot = "Weapon"
+	;(p1LegitSword :: any).Slot = "Weapon"
 
 	-- 4e. Legitimate inventory instance -> succeeds
 	local okLegitEquip, _ = EquipmentService.equipItem(netPlayer1, p1LegitSword)
@@ -3970,9 +4145,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(pView.UnlockedPassives ~= nil and pView.UnlockedPassives["Warlord_IronSkin"] == true, "[NetSnapshot] Run snapshot serializes unlocked passives set")
 	assertTest(pView.PassivePoints == 0, "[NetSnapshot] Run snapshot serializes accurate remaining passive points")
 
+	end
 	----------------------------------------------------------------------------
 	-- TEST 52: Phase 3.3 Strict Instance Validation & Fabricated Object Rejection
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 52] Phase 3.3 Strict Instance Validation & Fabricated Object Rejection ---")
 	local p33User = 9301
 	local p33Player: StateTypes.PlayerState = {
@@ -4061,7 +4240,7 @@ function TestRunner.runAllTests(): boolean
 	assertTest((realSkillInst :: any).Slot == "Skill1", "[SkillAuthoritative] Authoritative instance Slot is Skill1")
 
 	-- 6. Real equipped instance -> re-equip remains deterministic & preserves cooldown
-	(realSkillInst :: any).CurrentCooldown = 2
+	;(realSkillInst :: any).CurrentCooldown = 2
 	local okReEquipReal, _ = SkillService.equipSkill(p33Player, realSkillInst, "Skill1")
 	assertTest(okReEquipReal == true, "[SkillAuthoritative] Re-equipping real equipped instance succeeds idempotently")
 	assertTest((realSkillInst :: any).CurrentCooldown == 2, "[SkillAuthoritative] Authoritative CurrentCooldown preserved at 2")
@@ -4124,9 +4303,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okReEquipGear == true, "[EquipmentAuthoritative] Re-equipping real gear succeeds idempotently")
 	assertTest(p33Player.EquippedItems["Weapon"] == realSword, "[EquipmentAuthoritative] EquippedItems['Weapon'] remains unchanged")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 53] Phase 4 Profile Architecture & Migration
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 53] Phase 4 Profile Architecture & Migration ---")
 	-- 1. New profile default values
 	local newP = PersistenceService.reconcileForTesting(nil, 80001)
@@ -4191,9 +4374,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(recoveredP.DeckSlotEntitlement.AdditionalDeckSlots == 0, "[ProfileRecovery] Negative AdditionalDeckSlots clamped to 0")
 	assertTest(recoveredP.ActiveDeckId ~= nil and recoveredP.Decks[recoveredP.ActiveDeckId :: string] ~= nil, "[ProfileRecovery] Seeded fallback starter deck for corrupt deck field")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 54] Phase 4 Card Collection Service
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 54] Phase 4 Card Collection Service ---")
 	local colPlayer = { UserId = 81001, Name = "ColTester" }
 	PersistenceService.resetForTesting(81001)
@@ -4237,9 +4424,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(colView.TotalUniqueCards >= 7, "[CardCollectionView] TotalUniqueCards is accurate")
 	assertTest(colView.TotalCardCopies >= 15, "[CardCollectionView] TotalCardCopies sum is accurate")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 55] Phase 4 Deck Model, Slot Entitlement & Deck Service
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 55] Phase 4 Deck Model, Slot Entitlement & Deck Service ---")
 	local deckPlayer = { UserId = 82001, Name = "DeckTester" }
 	PersistenceService.resetForTesting(82001)
@@ -4307,9 +4498,13 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okDel == true, "[DeckService] Deleting duplicate deck succeeds")
 	assertTest(DeckService.getDeck(deckPlayer, dupDeck.DeckId) == nil, "[DeckService] Deleted deck no longer returned by getDeck")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 56] Phase 4 Deck Validation & Active Deck Selection
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 56] Phase 4 Deck Validation & Active Deck Selection ---")
 	local valPlayer = { UserId = 83001, Name = "ValTester" }
 	PersistenceService.resetForTesting(83001)
@@ -4384,9 +4579,13 @@ function TestRunner.runAllTests(): boolean
 	local fallbackD = DeckService.getActiveDeck(valPlayer)
 	assertTest(fallbackD ~= nil and fallbackD.DeckId ~= customDeck.DeckId, "[ActiveDeckFallback] getActiveDeck falls back safely to starter deck")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 57] Phase 4 Run Integration & Complete Phase 4 Vertical Slice
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 57] Phase 4 Run Integration & Complete Phase 4 Vertical Slice ---")
 	local runPlayer = { UserId = 84001, Name = "RunTester", DisplayName = "Slayer84" }
 	PersistenceService.resetForTesting(84001)
@@ -4507,9 +4706,13 @@ function TestRunner.runAllTests(): boolean
 	end
 	assertTest(#pStateRun.Deck + handCountMidRun + #pStateRun.DiscardPile + #pStateRun.ExhaustPile == 8, "[RunIsolation] Active run deck cardinality preserved despite persistent deck edit")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 58] Phase 4 Network Security & Remote Contract Hardening
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 58] Phase 4 Network Security & Remote Contract Hardening ---")
 	-- 1. Verify all Phase 4 RemoteEvents exist in NetworkService
 	assertTest(NetworkService.CreateDeckEvent ~= nil, "[NetSecurity] CreateDeckEvent registered")
@@ -4549,9 +4752,13 @@ function TestRunner.runAllTests(): boolean
 	local limitOk = NetworkService.checkRateLimit(mockPlrInstance, "General")
 	assertTest(limitOk == true, "[NetSecurity] General rate limiter permits standard requests")
 
+	end
 	----------------------------------------------------------------------------
 	-- [Suite 59] Phase 4.1 Persistence Safety, Migration Hardening & Security Audit
+	do
+	end
 	----------------------------------------------------------------------------
+	do
 	print("\n--- [Suite 59] Phase 4.1 Persistence Safety, Migration Hardening & Security Audit ---")
 
 	-- 1. Load failure fail-closed behavior:
@@ -4954,6 +5161,7 @@ function TestRunner.runAllTests(): boolean
 	RunManager.endTestIsolation()
 	liveRunRef.Phase = "Lobby"
 	table.clear(liveRunRef.PartyMembers)
+	end
 	end)
 
 	-- Defensive invariant: Isolation must NEVER remain active regardless of success or failure
