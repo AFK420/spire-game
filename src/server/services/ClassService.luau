@@ -52,6 +52,10 @@ local function getGimmickTracker(userId: number): GimmickTracker
 	return playerGimmicks[userId]
 end
 
+function ClassService.getGimmickTracker(userId: number): GimmickTracker
+	return getGimmickTracker(userId)
+end
+
 function ClassService.resetGimmicks(userId: number)
 	playerGimmicks[userId] = {
 		ComboCount = 0,

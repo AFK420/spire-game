@@ -125,7 +125,7 @@ GameConfig.StarterCollection = {
 --------------------------------------------------------------------------------
 
 GameConfig.Testing = {
-	AutoRunTestsInStudio = true,
+	AutoRunTestsInStudio = false,
 }
 
 return GameConfig

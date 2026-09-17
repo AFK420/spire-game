@@ -33,6 +33,7 @@ local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
+local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 
 local services = script.Parent
 local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
@@ -5166,6 +5167,385 @@ function TestRunner.runAllTests(): boolean
 	RunManager.endTestIsolation()
 	liveRunRef.Phase = "Lobby"
 	table.clear(liveRunRef.PartyMembers)
+	end
+
+	----------------------------------------------------------------------------
+	-- TEST 62: System-Wide Audit & Regression Invariants
+	----------------------------------------------------------------------------
+	do
+	print("\n--- [Suite 62] System-Wide Audit & Regression Invariants ---")
+
+	-- 1. StatusService removeStatus structural integrity
+	local targetId = "audit_entity_01"
+	local auditEntity: any = {
+		EntityId = targetId,
+		StatusCollection = {},
+		Shield = 0,
+		MaxHP = 100,
+		Resources = { HP = 100, MaxHP = 100 },
+	}
+	StatusService.applyStatus(targetId, "Poison", 5, -1, "test_source", auditEntity)
+	assertTest(StatusService.getStatus(targetId, "Poison") ~= nil, "[Suite 62.1] StatusService applies Poison status")
+	local removeOk = StatusService.removeStatus(targetId, "Poison", auditEntity)
+	assertTest(removeOk == true, "[Suite 62.1] StatusService removeStatus returns true")
+	assertTest(StatusService.getStatus(targetId, "Poison") == nil, "[Suite 62.1] Poison status cleared after removeStatus")
+
+	-- 2. Test/Live CombatService & StatusService Isolation
+	CombatService.beginTestIsolation()
+	assertTest(CombatService.isTestIsolationActive() == true, "[Suite 62.2] CombatService test isolation is active")
+	CombatService.endTestIsolation()
+	assertTest(CombatService.isTestIsolationActive() == false, "[Suite 62.2] CombatService test isolation ends cleanly")
+
+	StatusService.beginTestIsolation()
+	assertTest(StatusService.isTestIsolationActive() == true, "[Suite 62.2] StatusService test isolation is active")
+	StatusService.endTestIsolation()
+	assertTest(StatusService.isTestIsolationActive() == false, "[Suite 62.2] StatusService test isolation ends cleanly")
+
+	-- 3. ClassLock authority & Re-selection Rejection
+	local auditP1State: StateTypes.PlayerState = {
+		UserId = 94001,
+		DisplayName = "AuditHero1",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		ClassLocked = true,
+	}
+	local selectOk, selectErr = ClassService.selectClass({ UserId = 94001 }, auditP1State, "Shadowblade", "Assassin")
+	assertTest(selectOk == false and string.find(selectErr or "", "already locked") ~= nil, "[Suite 62.3] Class selection rejected when ClassLocked is true")
+	assertTest(auditP1State.ClassId == "Warlord", "[Suite 62.3] ClassId unaffected on locked re-selection")
+
+	-- 4. StartRun authority (Unlocked player rejection, Stranger rejection, Empty party rejection)
+	RunManager.resetRunForTesting()
+	local auditRun = RunManager.getRunState()
+	local mockMember1 = { UserId = 94010, Name = "Member1", DisplayName = "Mem1" }
+	local addedP1 = RunManager.addPlayer(mockMember1 :: any)
+	assert(addedP1, "addedP1 exists")
+	addedP1.ClassLocked = false -- Intentionally leave unlocked
+
+	-- 4a. StartRun fails when player is not locked
+	local startFailUnlock, startErrUnlock = RunManager.startRun(mockMember1 :: any)
+	assertTest(startFailUnlock == false and string.find(startErrUnlock or "", "lock in") ~= nil, "[Suite 62.4a] StartRun rejects unlocked party members")
+
+	-- 4b. StartRun fails when initiator is not in party
+	addedP1.ClassLocked = true
+	local stranger = { UserId = 94099, Name = "Stranger", DisplayName = "Stranger" }
+	local startFailStranger, startErrStranger = RunManager.startRun(stranger :: any)
+	assertTest(startFailStranger == false and string.find(startErrStranger or "", "not a member") ~= nil, "[Suite 62.4b] StartRun rejects non-party initiator")
+
+	-- 4c. StartRun fails when party is empty
+	table.clear(auditRun.PartyMembers)
+	local startFailEmpty, startErrEmpty = RunManager.startRun(nil)
+	assertTest(startFailEmpty == false and string.find(startErrEmpty or "", "empty") ~= nil, "[Suite 62.4c] StartRun rejects empty party")
+
+	-- 5. Party Cap & Mid-run Join Rejection
+	RunManager.resetRunForTesting()
+	local m1 = { UserId = 94021, Name = "Cap1", DisplayName = "Cap1" }
+	local m2 = { UserId = 94022, Name = "Cap2", DisplayName = "Cap2" }
+	local m3 = { UserId = 94023, Name = "Cap3", DisplayName = "Cap3" }
+	local m4 = { UserId = 94024, Name = "Cap4", DisplayName = "Cap4" }
+	local m5 = { UserId = 94025, Name = "Cap5", DisplayName = "Cap5" }
+	local p1 = RunManager.addPlayer(m1 :: any)
+	local p2 = RunManager.addPlayer(m2 :: any)
+	local p3 = RunManager.addPlayer(m3 :: any)
+	local p4 = RunManager.addPlayer(m4 :: any)
+	local p5 = RunManager.addPlayer(m5 :: any)
+	assertTest(p1 ~= nil and p2 ~= nil and p3 ~= nil and p4 ~= nil, "[Suite 62.5] Added 4 party members up to cap")
+	assertTest(p5 == nil, "[Suite 62.5] 5th player join rejected by party cap")
+
+	-- Mid-run join rejection
+	p1.ClassLocked = true
+	p2.ClassLocked = true
+	p3.ClassLocked = true
+	p4.ClassLocked = true
+	local okStartCap = RunManager.startRun(m1 :: any)
+	assertTest(okStartCap == true, "[Suite 62.5] 4-player run started successfully")
+	assertTest(RunManager.getRunState().Phase == "MapSelect", "[Suite 62.5] Run is in MapSelect phase")
+	local midJoiner = { UserId = 94026, Name = "MidJoiner", DisplayName = "MidJoiner" }
+	local midP = RunManager.addPlayer(midJoiner :: any)
+	assertTest(midP == nil, "[Suite 62.5] New player join rejected when run phase is not Lobby")
+
+	-- 6. Map Voting Strict Majority & Tie Handling
+	local currentRunForVote = RunManager.getRunState()
+	local availableNodes = currentRunForVote.AvailableNodeIds
+	assertTest(#availableNodes >= 2, "[Suite 62.6] At least 2 available nodes for voting")
+	local nodeA = availableNodes[1]
+	local nodeB = availableNodes[2]
+
+	-- In 4-player party, strict majority is floor(4/2) + 1 = 3 votes.
+	-- Vote 1: Node A (1/4 -> pending)
+	RunManager.voteMapNode(m1 :: any, nodeA)
+	assertTest(currentRunForVote.Phase == "MapSelect", "[Suite 62.6] 1/4 votes does not trigger travel")
+
+	-- Vote 2: Node B (1-1 tie, 2/4 votes cast -> pending)
+	RunManager.voteMapNode(m2 :: any, nodeB)
+	assertTest(currentRunForVote.Phase == "MapSelect", "[Suite 62.6] 2/4 split votes (1 vs 1) keeps voting open")
+
+	-- Vote 3: Node A (2 votes for A, 1 for B; 2 is NOT strict majority of 4 -> pending)
+	RunManager.voteMapNode(m3 :: any, nodeA)
+	assertTest(currentRunForVote.Phase == "MapSelect", "[Suite 62.6] 2/4 votes for Node A does NOT trigger travel (strict majority requires 3)")
+
+	-- Vote 4: Node A (3 votes for A, 1 for B; 3 >= 3 -> STRICT MAJORITY REACHED!)
+	RunManager.voteMapNode(m4 :: any, nodeA)
+	assertTest(currentRunForVote.Phase == "ActiveRoom", "[Suite 62.6] 3/4 votes achieves strict majority and travels to ActiveRoom")
+	assertTest(currentRunForVote.CurrentNodeId == nodeA, "[Suite 62.6] Traveled to voted Node A")
+
+	-- 7. Real Map Node Projection in RunSnapshot
+	local snapP1 = RunManager.getRunSnapshotForPlayer(m1 :: any)
+	assertTest(snapP1.MapNodes ~= nil and #snapP1.MapNodes > 0, "[Suite 62.7] RunSnapshot contains populated MapNodes")
+	local sampleNode = snapP1.MapNodes[1]
+	assertTest(sampleNode.Id ~= nil and sampleNode.Tier >= 1 and sampleNode.Lane >= 1, "[Suite 62.7] MapNode has Id, Tier, Lane")
+	assertTest(sampleNode.Type ~= nil and sampleNode.ConnectedNodeIds ~= nil, "[Suite 62.7] MapNode has Type and ConnectedNodeIds")
+
+	-- 8. Combat Engine: Dead enemy does not act, Buff intent increments AttackPower, Debuff intent applies Poison
+	local combatParty: { [number]: StateTypes.PlayerState } = {
+		[m1.UserId] = p1,
+	}
+	p1.Resources.HP = 100
+	p1.Resources.MaxHP = 100
+	p1.Resources.Shield = 0
+	p1.IsDowned = false
+	p1.IsConnected = true
+
+	local combatState = CombatService.startCombat("audit_enc", "Combat", 1, combatParty, function(_) end)
+	assertTest(combatState ~= nil and combatState.Enemies["enemy_1"] ~= nil, "[Suite 62.8] Combat started with enemy_1")
+	local testEnemy = combatState.Enemies["enemy_1"]
+
+	-- 8a. Buff intent increments AttackPower
+	local atkBefore = testEnemy.AttackPower
+	testEnemy.Intent = { Type = "Buff", Value = 7, Description = "Sharpen Blades" }
+	CombatService.forceTurnTimeout()
+	assertTest(testEnemy.AttackPower == atkBefore + 7, "[Suite 62.8a] Enemy Buff intent increased AttackPower by 7")
+
+	-- 8b. Debuff intent applies Poison to player
+	testEnemy.Intent = { Type = "Debuff", Value = 5, Description = "Poison Vapor" }
+	CombatService.forceTurnTimeout()
+	local pStatus = StatusService.getStatus("player_" .. tostring(m1.UserId), "Poison")
+	assertTest(pStatus ~= nil and pStatus.Stacks == 5, "[Suite 62.8b] Enemy Debuff intent applied 5 Poison stacks to player")
+
+	-- 8c. Player status ticks: Next turn start deals poison damage to player
+	local hpBeforeTick = p1.Resources.HP
+	testEnemy.Intent = { Type = "Defend", Value = 5, Description = "Defend" }
+	CombatService.forceTurnTimeout()
+	assertTest(p1.Resources.HP < hpBeforeTick, "[Suite 62.8c] Poison status ticked and damaged player at turn start")
+
+	-- 8d. Dead enemies do not act
+	testEnemy.HP = 0
+	testEnemy.Intent = { Type = "Attack", Value = 50, Description = "Death Blow" }
+	local hpBeforeDeadPhase = p1.Resources.HP
+	CombatService.forceTurnTimeout()
+	assertTest(p1.Resources.HP == hpBeforeDeadPhase, "[Suite 62.8d] Dead enemy did not attack player")
+
+	-- 9. Class Turn-End Gimmicks Execute
+	local mageState: StateTypes.PlayerState = {
+		UserId = 94050,
+		DisplayName = "MageHero",
+		ClassId = "AetherMage",
+		SubclassId = "Cryomancer",
+		Resources = { HP = 80, MaxHP = 80, Shield = 0, Energy = 2, MaxEnergy = 4 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	local dummyEnemies = {}
+	local gimmickEndResult = ClassService.processGimmickOnTurnEnd(mageState, dummyEnemies)
+	assertTest(gimmickEndResult.EndTurnShield == 8, "[Suite 62.9] AetherMage Cryomancer turn-end converted 2 unspent energy to 8 Shield")
+
+	-- 10. Class Kill Gimmicks Execute & Relic OnKill trigger
+	local necroState: StateTypes.PlayerState = {
+		UserId = 94055,
+		DisplayName = "ReaperHero",
+		ClassId = "Necrobinder",
+		SubclassId = "Reaper",
+		Resources = { HP = 20, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = { "GremlinHorn" },
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	ClassService.processGimmickOnKill(necroState)
+	assertTest(necroState.Resources.HP == 26, "[Suite 62.10] Necrobinder Reaper kill gimmick restored 6 HP")
+	local tracker = ClassService.getGimmickTracker(necroState.UserId)
+	assertTest(tracker.SoulTokens == 2, "[Suite 62.10] Necrobinder Reaper gained 2 SoulTokens on kill")
+
+	-- GremlinHorn OnKill trigger
+	local relicKillBonus = RelicService.triggerEvent(necroState, nil, "OnKill", nil)
+	assertTest(relicKillBonus.BonusEnergy ~= nil and relicKillBonus.BonusEnergy > 0, "[Suite 62.10] GremlinHorn triggered BonusEnergy on kill")
+	assertTest(relicKillBonus.BonusDraw ~= nil and relicKillBonus.BonusDraw > 0, "[Suite 62.10] GremlinHorn triggered BonusDraw on kill")
+
+	-- 11. Critical Hits Pipeline
+	local critPlayer: StateTypes.PlayerState = {
+		UserId = 94060,
+		DisplayName = "CritHero",
+		ClassId = "Shadowblade",
+		SubclassId = "Assassin",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+		PassivePoints = 0,
+		UnlockedPassives = {},
+	}
+	local targetEnemyForCrit: StateTypes.EnemyState = {
+		InstanceId = "crit_target",
+		DefinitionId = "dummy",
+		Name = "Training Dummy",
+		HP = 200,
+		MaxHP = 200,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 0,
+		Intent = { Type = "Defend", Value = 0, Description = "Defend" },
+	}
+	local critDmgContext: StateTypes.DamageContext = {
+		RawDamage = 20,
+		DamageType = "Physical",
+		SourceId = tostring(critPlayer.UserId),
+		SourceName = critPlayer.DisplayName,
+		SourcePlayer = critPlayer,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = targetEnemyForCrit,
+		Critical = true,
+	}
+	local critResult = DamagePipeline.executeDamage(critDmgContext)
+	assertTest(critResult.IsCritical == true, "[Suite 62.11] DamagePipeline correctly flagged IsCritical")
+	assertTest(critResult.DamageDealt > 20, "[Suite 62.11] Critical hit multiplied damage above raw damage")
+
+	-- 12. Card Cost Reduction via StatResolver
+	local costHero: StateTypes.PlayerState = {
+		UserId = 94070,
+		DisplayName = "CostHero",
+		ClassId = "AetherMage",
+		SubclassId = "Elementalist",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	local cardInstance = CardService.createCardInstance("Fireball", costHero.UserId)
+	assert(cardInstance, "cardInstance created")
+	table.insert(costHero.Hand, cardInstance)
+	local resolvedStats = StatResolver.resolvePlayerStats(costHero)
+	local effectiveCost = math.max(0, cardInstance.Cost - (resolvedStats.CostReduction or 0))
+	assertTest(effectiveCost >= 0 and effectiveCost <= cardInstance.Cost, "[Suite 62.12] Effective card cost calculated with CostReduction")
+
+	-- 13. Failed Card Action Rejection
+	local failCardInstance = CardService.createCardInstance("Strike", costHero.UserId)
+	assert(failCardInstance, "failCard created")
+	table.insert(costHero.Hand, failCardInstance)
+	local playBogusResult, _ = CombatService.playCard({ UserId = costHero.UserId }, failCardInstance.InstanceId, "non_existent_enemy_999")
+	assertTest(playBogusResult == false, "[Suite 62.13] Card play targeting nonexistent enemy rejected")
+
+	-- 14. Claim Reward Card Grants Permanent Collection Copy
+	RunManager.resetRunForTesting()
+	local draftRun = RunManager.getRunState()
+	local dPlayer = { UserId = 94080, Name = "Drafter", DisplayName = "Drafter" }
+	local dState = RunManager.addPlayer(dPlayer :: any)
+	assert(dState, "dState exists")
+	dState.ClassLocked = true
+	draftRun.Phase = "Rewards"
+	draftRun.PendingRewards = {
+		GoldAmount = 25,
+		AetherShardsAmount = 10,
+		OfferedCardsByPlayer = {
+			[94080] = { CardData.getCard("Strike") :: CardData.Card },
+		},
+		ClaimedCards = {},
+	}
+	local countBeforeDraft = CardCollectionService.getCardCount(dPlayer, "Strike")
+	local draftOk, draftErr = RunManager.claimRewardCard(dPlayer :: any, "Strike")
+	assertTest(draftOk == true, "[Suite 62.14] Draft reward claimed successfully")
+	local countAfterDraft = CardCollectionService.getCardCount(dPlayer, "Strike")
+	assertTest(countAfterDraft == countBeforeDraft + 1, "[Suite 62.14] Claimed draft card added to permanent CardCollection")
+	assertTest(#dState.Deck >= 1, "[Suite 62.14] Claimed draft card added to runtime Deck")
+
+	-- 15. ResetToLobby Clean Run Invariants
+	RunManager.resetToLobby()
+	assertTest(draftRun.Phase == "Lobby", "[Suite 62.15] resetToLobby sets Phase to Lobby")
+	assertTest(dState.ClassLocked == false, "[Suite 62.15] ClassLocked reset to false")
+	assertTest(dState.Gold == GameConfig.Dungeon.StarterGold, "[Suite 62.15] Gold reset to StarterGold")
+	assertTest(draftRun.PendingRewards == nil, "[Suite 62.15] PendingRewards cleared")
+	assertTest(draftRun.ClearedNodeIds ~= nil and #draftRun.ClearedNodeIds == 0, "[Suite 62.15] ClearedNodeIds cleared")
+
+	-- 16. DataStore Fail-Closed Guard
+	PersistenceService.simulateLoadFailureForTesting(94090)
+	assertTest(PersistenceService.isProfileLoaded(94090) == false, "[Suite 62.16] isProfileLoaded returns false on load failure")
+	local saveOkFail, saveErrFail = PersistenceService.saveProfile({ UserId = 94090 })
+	assertTest(saveOkFail == false and string.find(saveErrFail or "", "Cannot save") ~= nil, "[Suite 62.16] saveProfile fail-closed guard blocks saving failed profiles")
+
+	-- 17. Persistence Revision & Conflict Safety
+	local baseProfile = PersistenceService.reconcileForTesting({
+		ProfileRevision = 3,
+		LastSavedTimestamp = 1000,
+		UnlockedClasses = { "Warlord", "UnknownBogusClass" },
+		UnlockedSkills = { ["HeroicStrike"] = true, ["BogusSkill"] = true },
+	}, 94091)
+	assertTest(baseProfile.ProfileRevision == 3, "[Suite 62.17] reconcile preserved valid ProfileRevision")
+	local hasBogusClass = false
+	for _, c in baseProfile.UnlockedClasses do
+		if c == "UnknownBogusClass" then hasBogusClass = true break end
+	end
+	assertTest(hasBogusClass == false, "[Suite 62.17] reconcile stripped unknown class")
+	assertTest(baseProfile.UnlockedSkills["BogusSkill"] == nil, "[Suite 62.17] reconcile stripped unknown skill")
+	assertTest(baseProfile.UnlockedSkills["HeroicStrike"] == true, "[Suite 62.17] reconcile retained valid skill")
+
+	-- Conflict resolution: remote revision is newer
+	local remoteNewer = { ProfileRevision = 5, LastSavedTimestamp = 1200 }
+	local localOlder = table.clone(baseProfile)
+	localOlder.ProfileRevision = 3
+	localOlder.LastSavedTimestamp = 1100
+	local acceptedData, applied = PersistenceService.resolveUpdateConflict(remoteNewer, localOlder)
+	assertTest(applied == false, "[Suite 62.17] resolveUpdateConflict rejected stale local revision")
+	assertTest(acceptedData.ProfileRevision == 5, "[Suite 62.17] Kept newer remote revision")
+
+	-- Acceptance increments revision
+	local remoteOlder = { ProfileRevision = 2, LastSavedTimestamp = 900 }
+	local localNewer = table.clone(baseProfile)
+	localNewer.ProfileRevision = 3
+	local acceptedData2, applied2 = PersistenceService.resolveUpdateConflict(remoteOlder, localNewer)
+	assertTest(applied2 == true, "[Suite 62.17] resolveUpdateConflict accepted newer local revision")
+	assertTest(localNewer.ProfileRevision == 4, "[Suite 62.17] Monotonically incremented ProfileRevision to 4")
+
+	-- 18. Remote Events & Network Contract Invariants
+	assertTest(NetworkService.ActionResultEvent ~= nil, "[Suite 62.18] NetworkService.ActionResultEvent exists")
+	assertTest(NetworkService.ReturnToLobbyEvent ~= nil, "[Suite 62.18] NetworkService.ReturnToLobbyEvent exists")
+	assertTest(typeof(NetworkService.sendActionResult) == "function", "[Suite 62.18] NetworkService.sendActionResult helper exists")
+
+	-- Clean up test states
+	CombatService.cleanupCombat()
+	RunManager.resetRunForTesting()
+	PersistenceService.resetForTesting()
 	end
 	end)
 
