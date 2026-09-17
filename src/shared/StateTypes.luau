@@ -470,6 +470,7 @@ export type PlayerProfile = {
 	UnlockedSkills: { [string]: boolean },     -- Account-wide unlocked skill IDs
 	EquipmentCollection: { [string]: any },    -- Future equipment collection schema placeholder
 	GachaBanners: { [string]: any },           -- Future banner/pity schema placeholder
+	ProfileRevision: number?,                  -- Monotonically increasing revision number for optimistic concurrency
 }
 
 --------------------------------------------------------------------------------

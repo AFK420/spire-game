@@ -26,6 +26,7 @@ local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
+local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
 
 local PersistenceService = {}
 
@@ -103,6 +104,7 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 		UnlockedSkills = {},
 		EquipmentCollection = {},
 		GachaBanners = {},
+		ProfileRevision = 1,
 	}
 
 	-- New account (no saved data)
@@ -119,6 +121,11 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 		return profile
 	end
 
+	-- 0. Concurrency Revision
+	if typeof(data.ProfileRevision) == "number" and data.ProfileRevision == math.floor(data.ProfileRevision) and data.ProfileRevision >= 1 then
+		profile.ProfileRevision = data.ProfileRevision
+	end
+
 	-- 1. Currencies and Statistics (strict non-negativity and integer checks)
 	if typeof(data.AetherShards) == "number" and data.AetherShards == math.floor(data.AetherShards) then
 		profile.AetherShards = math.max(0, data.AetherShards)
@@ -133,14 +140,16 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 		profile.TotalRuns = math.max(0, data.TotalRuns)
 	end
 
-	-- 2. Unlocked Classes (All 10 core classes guaranteed)
+	-- 2. Unlocked Classes (All 10 core classes guaranteed, unknown/corrupted classes stripped)
 	local seenClass: { [string]: boolean } = {}
 	local validClasses: { string } = {}
 	if typeof(data.UnlockedClasses) == "table" then
 		for _, c in data.UnlockedClasses do
 			if typeof(c) == "string" and #c > 0 and not seenClass[c] then
-				seenClass[c] = true
-				table.insert(validClasses, c)
+				if ClassData.getClass(c) then
+					seenClass[c] = true
+					table.insert(validClasses, c)
+				end
 			end
 		end
 	end
@@ -253,11 +262,13 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 		end
 	end
 
-	-- 7. Unlocked Skills
+	-- 7. Unlocked Skills (definitions must exist in SkillData)
 	if typeof(data.UnlockedSkills) == "table" then
 		for sId, unlocked in data.UnlockedSkills do
 			if typeof(sId) == "string" and unlocked == true then
-				profile.UnlockedSkills[sId] = true
+				if SkillData.getSkill(sId) then
+					profile.UnlockedSkills[sId] = true
+				end
 			end
 		end
 	end
@@ -340,11 +351,24 @@ end
 
 -- Concurrency safety: check for conflicting newer session data
 function PersistenceService.resolveUpdateConflict(currentData: any, incomingProfile: StateTypes.PlayerProfile): (any, boolean)
-	if typeof(currentData) == "table" and typeof(currentData.LastSavedTimestamp) == "number" then
-		if currentData.LastSavedTimestamp > incomingProfile.LastSavedTimestamp then
-			return currentData, false -- Conflict: keep newer remote data
+	if typeof(currentData) == "table" then
+		-- Check revision conflict
+		if typeof(currentData.ProfileRevision) == "number" and typeof(incomingProfile.ProfileRevision) == "number" then
+			if currentData.ProfileRevision > incomingProfile.ProfileRevision then
+				return currentData, false -- Conflict: remote revision is newer
+			end
+		end
+
+		-- Check timestamp conflict
+		if typeof(currentData.LastSavedTimestamp) == "number" and typeof(incomingProfile.LastSavedTimestamp) == "number" then
+			if currentData.LastSavedTimestamp > incomingProfile.LastSavedTimestamp then
+				return currentData, false -- Conflict: keep newer remote data
+			end
 		end
 	end
+
+	-- Incoming is accepted: monotonically increment revision
+	incomingProfile.ProfileRevision = (incomingProfile.ProfileRevision or 0) + 1
 	return incomingProfile, true -- incoming is accepted
 end
 
