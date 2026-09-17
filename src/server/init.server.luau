@@ -84,9 +84,17 @@ print("[Server] All core services deterministically initialized.")
 
 -- 1. Start Run (From Lobby)
 NetworkService.StartRunEvent.OnServerEvent:Connect(function(player: Player)
-	if not NetworkService.checkRateLimit(player, "General") then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "StartRun", Success = false, Message = "Rate limit exceeded. Please wait a moment." })
+		return
+	end
 	print(string.format("[Server] Player %s triggered StartRun.", player.Name))
-	RunManager.startRun(player)
+	local success, err = RunManager.startRun(player)
+	if not success then
+		NetworkService.sendActionResult(player, { Action = "StartRun", Success = false, Message = tostring(err or "Failed to start run.") })
+	else
+		NetworkService.sendActionResult(player, { Action = "StartRun", Success = true })
+	end
 end)
 
 -- 2. Select Class & Subclass
@@ -136,23 +144,45 @@ end)
 
 -- 3. Vote / Travel to Map Node
 NetworkService.VoteMapNodeEvent.OnServerEvent:Connect(function(player: Player, targetNodeId: any)
-	if not NetworkService.checkRateLimit(player, "Map") then return end
-	if typeof(targetNodeId) ~= "string" then return end
+	if not NetworkService.checkRateLimit(player, "Map") then
+		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = false, Message = "Rate limit exceeded. Please wait a moment." })
+		return
+	end
+	if typeof(targetNodeId) ~= "string" then
+		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = false, Message = "Invalid target node parameter." })
+		return
+	end
 
 	local success, err = RunManager.voteMapNode(player, targetNodeId)
-	if not success and err then
-		warn(string.format("[Server] VoteMapNode failed for %s: %s", player.Name, err))
+	if not success then
+		if err then
+			warn(string.format("[Server] VoteMapNode failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = false, Message = tostring(err or "Failed to vote for map node.") })
+	else
+		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = true })
 	end
 end)
 
 -- 4. Play Card by CardInstanceId
 NetworkService.PlayCardEvent.OnServerEvent:Connect(function(player: Player, cardInstanceId: any, targetParam: any)
-	if not NetworkService.checkRateLimit(player, "Combat") then return end
-	if typeof(cardInstanceId) ~= "string" then return end
+	if not NetworkService.checkRateLimit(player, "Combat") then
+		NetworkService.sendActionResult(player, { Action = "PlayCard", Success = false, Message = "Rate limit exceeded. Please wait a moment." })
+		return
+	end
+	if typeof(cardInstanceId) ~= "string" then
+		NetworkService.sendActionResult(player, { Action = "PlayCard", Success = false, Message = "Invalid card instance parameter." })
+		return
+	end
 
 	local success, err = CombatService.playCard(player, cardInstanceId, targetParam)
-	if not success and err then
-		warn(string.format("[Server] PlayCard rejected for %s: %s", player.Name, err))
+	if not success then
+		if err then
+			warn(string.format("[Server] PlayCard rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "PlayCard", Success = false, Message = tostring(err or "Cannot play card.") })
+	else
+		NetworkService.sendActionResult(player, { Action = "PlayCard", Success = true })
 	end
 end)
 
@@ -209,95 +239,165 @@ end)
 
 -- 10. Equip Equipment
 NetworkService.EquipEquipmentEvent.OnServerEvent:Connect(function(player: Player, equipmentInstanceId: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(equipmentInstanceId) ~= "string" or #equipmentInstanceId == 0 then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "EquipEquipment", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(equipmentInstanceId) ~= "string" or #equipmentInstanceId == 0 then
+		NetworkService.sendActionResult(player, { Action = "EquipEquipment", Success = false, Message = "Invalid equipment ID." })
+		return
+	end
 
 	local pState = RunManager.getPlayerState(player)
-	if not pState then return end
+	if not pState then
+		NetworkService.sendActionResult(player, { Action = "EquipEquipment", Success = false, Message = "Player not in party." })
+		return
+	end
 
 	local success, err = EquipmentService.equipItem(pState, equipmentInstanceId)
 	if success then
 		RunManager.broadcastRunSnapshots(string.format("%s equipped gear.", player.DisplayName), true)
-	elseif err then
-		warn(string.format("[Server] EquipEquipment failed for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "EquipEquipment", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] EquipEquipment failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "EquipEquipment", Success = false, Message = tostring(err or "Failed to equip item.") })
 	end
 end)
 
 -- 11. Unequip Equipment
 NetworkService.UnequipEquipmentEvent.OnServerEvent:Connect(function(player: Player, slot: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(slot) ~= "string" or not VALID_EQUIPMENT_SLOTS[slot] then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "UnequipEquipment", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(slot) ~= "string" or not VALID_EQUIPMENT_SLOTS[slot] then
+		NetworkService.sendActionResult(player, { Action = "UnequipEquipment", Success = false, Message = "Invalid equipment slot." })
+		return
+	end
 
 	local pState = RunManager.getPlayerState(player)
-	if not pState then return end
+	if not pState then
+		NetworkService.sendActionResult(player, { Action = "UnequipEquipment", Success = false, Message = "Player not in party." })
+		return
+	end
 
 	local success, err = EquipmentService.unequipItem(pState, slot :: any)
 	if success then
 		RunManager.broadcastRunSnapshots(string.format("%s unequipped %s.", player.DisplayName, tostring(slot)), true)
-	elseif err then
-		warn(string.format("[Server] UnequipEquipment failed for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "UnequipEquipment", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] UnequipEquipment failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "UnequipEquipment", Success = false, Message = tostring(err or "Failed to unequip item.") })
 	end
 end)
 
 -- 12. Equip Skill
 NetworkService.EquipSkillEvent.OnServerEvent:Connect(function(player: Player, skillIdentifier: any, slot: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(skillIdentifier) ~= "string" or #skillIdentifier == 0 then return end
-	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(skillIdentifier) ~= "string" or #skillIdentifier == 0 then
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = false, Message = "Invalid skill identifier." })
+		return
+	end
+	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = false, Message = "Invalid skill slot." })
+		return
+	end
 
 	local pState = RunManager.getPlayerState(player)
-	if not pState then return end
+	if not pState then
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = false, Message = "Player not in party." })
+		return
+	end
 
 	-- Authoritative Ownership Check: look up player's already-owned skill instance
 	local ownedSkill = SkillService.getOwnedSkill(pState, skillIdentifier)
 	if not ownedSkill then
 		warn(string.format("[Server] EquipSkill rejected unowned skill '%s' for %s.", tostring(skillIdentifier), player.Name))
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = false, Message = "Skill not owned." })
 		return
 	end
 
 	local success, err = SkillService.equipSkill(pState, ownedSkill, slot :: any)
 	if success then
 		RunManager.broadcastRunSnapshots(string.format("%s equipped skill %s.", player.DisplayName, ownedSkill.DefinitionId), true)
-	elseif err then
-		warn(string.format("[Server] EquipSkill failed for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] EquipSkill failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "EquipSkill", Success = false, Message = tostring(err or "Failed to equip skill.") })
 	end
 end)
 
 -- 13. Unequip Skill
 NetworkService.UnequipSkillEvent.OnServerEvent:Connect(function(player: Player, slot: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "UnequipSkill", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then
+		NetworkService.sendActionResult(player, { Action = "UnequipSkill", Success = false, Message = "Invalid skill slot." })
+		return
+	end
 
 	local pState = RunManager.getPlayerState(player)
-	if not pState then return end
+	if not pState then
+		NetworkService.sendActionResult(player, { Action = "UnequipSkill", Success = false, Message = "Player not in party." })
+		return
+	end
 
 	local success, err = SkillService.unequipSkill(pState, slot :: any)
 	if success then
 		RunManager.broadcastRunSnapshots(string.format("%s unequipped skill %s.", player.DisplayName, tostring(slot)), true)
-	elseif err then
-		warn(string.format("[Server] UnequipSkill failed for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "UnequipSkill", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] UnequipSkill failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "UnequipSkill", Success = false, Message = tostring(err or "Failed to unequip skill.") })
 	end
 end)
 
 -- 14. Unlock Passive Node
 NetworkService.UnlockPassiveEvent.OnServerEvent:Connect(function(player: Player, nodeId: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(nodeId) ~= "string" or #nodeId == 0 then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "UnlockPassive", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(nodeId) ~= "string" or #nodeId == 0 then
+		NetworkService.sendActionResult(player, { Action = "UnlockPassive", Success = false, Message = "Invalid passive node parameter." })
+		return
+	end
 
 	local def = PassiveData.getNode(nodeId)
 	if not def then
 		warn(string.format("[Server] UnlockPassive rejected invalid nodeId '%s' for %s.", tostring(nodeId), player.Name))
+		NetworkService.sendActionResult(player, { Action = "UnlockPassive", Success = false, Message = "Invalid passive node." })
 		return
 	end
 
 	local pState = RunManager.getPlayerState(player)
-	if not pState then return end
+	if not pState then
+		NetworkService.sendActionResult(player, { Action = "UnlockPassive", Success = false, Message = "Player not in party." })
+		return
+	end
 
 	local success, err = PassiveService.unlockNode(pState, nodeId)
 	if success then
 		RunManager.broadcastRunSnapshots(string.format("%s unlocked passive node %s.", player.DisplayName, nodeId), true)
-	elseif err then
-		warn(string.format("[Server] UnlockPassive failed for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "UnlockPassive", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] UnlockPassive failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "UnlockPassive", Success = false, Message = tostring(err or "Failed to unlock passive node.") })
 	end
 end)
 
@@ -305,17 +405,29 @@ end)
 NetworkService.UnlockSkillEvent.OnServerEvent:Connect(function(player: Player, skillDefId: any)
 	if not NetworkService.checkRateLimit(player, "General") then return end
 	warn(string.format("[Server] UnlockSkillEvent rejected: client-authoritative skill unlocking is disabled for %s.", player.Name))
+	NetworkService.sendActionResult(player, { Action = "UnlockSkill", Success = false, Message = "Client-authoritative skill unlocking is disabled." })
 	-- Strictly reject client-requested skill unlocks; skill acquisition is server-only.
 end)
 
 -- 16. Use Skill in Combat
 NetworkService.UseSkillEvent.OnServerEvent:Connect(function(player: Player, slot: any, targetParam: any)
-	if not NetworkService.checkRateLimit(player, "Combat") then return end
-	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then return end
+	if not NetworkService.checkRateLimit(player, "Combat") then
+		NetworkService.sendActionResult(player, { Action = "UseSkill", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(slot) ~= "string" or not VALID_SKILL_SLOTS[slot] then
+		NetworkService.sendActionResult(player, { Action = "UseSkill", Success = false, Message = "Invalid skill slot." })
+		return
+	end
 
 	local success, err = CombatService.useSkill(player, slot :: any, targetParam)
-	if not success and err then
-		warn(string.format("[Server] UseSkill failed for %s: %s", player.Name, err))
+	if not success then
+		if err then
+			warn(string.format("[Server] UseSkill failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "UseSkill", Success = false, Message = tostring(err or "Failed to use skill.") })
+	else
+		NetworkService.sendActionResult(player, { Action = "UseSkill", Success = true })
 	end
 end)
 
@@ -337,53 +449,101 @@ end
 
 -- 17. Create Deck
 NetworkService.CreateDeckEvent.OnServerEvent:Connect(function(player: Player, name: any, cards: any, classId: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(name) ~= "string" or #name == 0 then return end
-	if cards ~= nil and typeof(cards) ~= "table" then return end
-	if classId ~= nil and (typeof(classId) ~= "string" or #classId == 0) then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(name) ~= "string" or #name == 0 then
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Invalid deck name." })
+		return
+	end
+	if cards ~= nil and typeof(cards) ~= "table" then
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Invalid cards table." })
+		return
+	end
+	if classId ~= nil and (typeof(classId) ~= "string" or #classId == 0) then
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Invalid class ID." })
+		return
+	end
 
 	local success, err, createdDeck = DeckService.createDeck(player, name, cards, classId)
 	if success and createdDeck then
 		sendDeckListUpdate(player)
 		local detailView = DeckService.toDeckDetailView(player, createdDeck)
 		NetworkService.DeckDetailUpdateEvent:FireClient(player, detailView)
-	elseif err then
-		warn(string.format("[Server] CreateDeck rejected for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] CreateDeck rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = tostring(err or "Failed to create deck.") })
 	end
 end)
 
 -- 18. Rename Deck
 NetworkService.RenameDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any, newName: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(deckId) ~= "string" or #deckId == 0 then return end
-	if typeof(newName) ~= "string" or #newName == 0 then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(deckId) ~= "string" or #deckId == 0 then
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Invalid deck ID." })
+		return
+	end
+	if typeof(newName) ~= "string" or #newName == 0 then
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Invalid deck name." })
+		return
+	end
 
 	local success, err = DeckService.renameDeck(player, deckId, newName)
 	if success then
 		sendDeckListUpdate(player)
-	elseif err then
-		warn(string.format("[Server] RenameDeck rejected for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] RenameDeck rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = tostring(err or "Failed to rename deck.") })
 	end
 end)
 
 -- 19. Delete Deck
 NetworkService.DeleteDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(deckId) ~= "string" or #deckId == 0 then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(deckId) ~= "string" or #deckId == 0 then
+		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Invalid deck ID." })
+		return
+	end
 
 	local success, err = DeckService.deleteDeck(player, deckId)
 	if success then
 		sendDeckListUpdate(player)
-	elseif err then
-		warn(string.format("[Server] DeleteDeck rejected for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] DeleteDeck rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = tostring(err or "Failed to delete deck.") })
 	end
 end)
 
 -- 20. Save / Update Deck
 NetworkService.SaveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any, cards: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(deckId) ~= "string" or #deckId == 0 then return end
-	if typeof(cards) ~= "table" then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(deckId) ~= "string" or #deckId == 0 then
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Invalid deck ID." })
+		return
+	end
+	if typeof(cards) ~= "table" then
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Invalid cards table." })
+		return
+	end
 
 	local success, err = DeckService.saveDeck(player, deckId, cards)
 	if success then
@@ -393,35 +553,59 @@ NetworkService.SaveDeckEvent.OnServerEvent:Connect(function(player: Player, deck
 			local detailView = DeckService.toDeckDetailView(player, updatedDeck)
 			NetworkService.DeckDetailUpdateEvent:FireClient(player, detailView)
 		end
-	elseif err then
-		warn(string.format("[Server] SaveDeck rejected for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] SaveDeck rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = tostring(err or "Failed to save deck.") })
 	end
 end)
 
 -- 21. Duplicate Deck
 NetworkService.DuplicateDeckEvent.OnServerEvent:Connect(function(player: Player, sourceDeckId: any, newName: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(sourceDeckId) ~= "string" or #sourceDeckId == 0 then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(sourceDeckId) ~= "string" or #sourceDeckId == 0 then
+		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Invalid source deck ID." })
+		return
+	end
 	local optName = (typeof(newName) == "string" and #newName > 0) and newName or nil
 
 	local success, err = DeckService.duplicateDeck(player, sourceDeckId, optName)
 	if success then
 		sendDeckListUpdate(player)
-	elseif err then
-		warn(string.format("[Server] DuplicateDeck rejected for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] DuplicateDeck rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = tostring(err or "Failed to duplicate deck.") })
 	end
 end)
 
 -- 22. Select Active Deck
 NetworkService.SelectActiveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(deckId) ~= "string" or #deckId == 0 then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(deckId) ~= "string" or #deckId == 0 then
+		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Invalid deck ID." })
+		return
+	end
 
 	local success, err = DeckService.setActiveDeck(player, deckId)
 	if success then
 		sendDeckListUpdate(player)
-	elseif err then
-		warn(string.format("[Server] SelectActiveDeck rejected for %s: %s", player.Name, err))
+		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = true })
+	else
+		if err then
+			warn(string.format("[Server] SelectActiveDeck rejected for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = tostring(err or "Failed to select active deck.") })
 	end
 end)
 
@@ -436,6 +620,21 @@ NetworkService.RequestCardCollectionEvent.OnServerEvent:Connect(function(player:
 	if not NetworkService.checkRateLimit(player, "General") then return end
 	local collectionView = CardCollectionService.toCollectionView(player)
 	NetworkService.CardCollectionUpdateEvent:FireClient(player, collectionView)
+end)
+
+-- 25. Return to Lobby from Victory/Defeat
+NetworkService.ReturnToLobbyEvent.OnServerEvent:Connect(function(player: Player)
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	local runState = RunManager.getRunState()
+	if runState.Phase == "RunVictory" or runState.Phase == "RunDefeat" then
+		RunManager.resetToLobby()
+		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = true })
+	else
+		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = false, Message = "Cannot return to lobby while run is in progress." })
+	end
 end)
 
 print("[Server] Game network listeners successfully registered.")

@@ -83,6 +83,8 @@ NetworkService.DeckListUpdateEvent = getOrCreateRemoteEvent("DeckListUpdate")
 NetworkService.DeckDetailUpdateEvent = getOrCreateRemoteEvent("DeckDetailUpdate")
 NetworkService.CardCollectionUpdateEvent = getOrCreateRemoteEvent("CardCollectionUpdate")
 NetworkService.ClassSelectionResultEvent = getOrCreateRemoteEvent("ClassSelectionResult")
+NetworkService.ActionResultEvent = getOrCreateRemoteEvent("ActionResult")
+NetworkService.ReturnToLobbyEvent = getOrCreateRemoteEvent("ReturnToLobby")
 
 --------------------------------------------------------------------------------
 -- Token-Bucket Rate Limiting Engine
@@ -188,6 +190,13 @@ end
 function NetworkService.sendClassSelectionResult(player: Player, payload: { Success: boolean, ClassId: string?, SubclassId: string?, Error: string? })
 	if typeof(player) == "Instance" and player:IsA("Player") then
 		NetworkService.ClassSelectionResultEvent:FireClient(player, payload)
+	end
+end
+
+-- Notifies a specific player of an action result
+function NetworkService.sendActionResult(player: Player, payload: { Action: string, Success: boolean, Message: string? })
+	if typeof(player) == "Instance" and player:IsA("Player") then
+		NetworkService.ActionResultEvent:FireClient(player, payload)
 	end
 end
 

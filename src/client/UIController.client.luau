@@ -48,12 +48,14 @@ local RescueTeammateEvent = getEvent("RescueTeammate")
 local ClaimRewardCardEvent = getEvent("ClaimRewardCard")
 local ContinueFromRewardsEvent = getEvent("ContinueFromRewards")
 local RequestStateSyncEvent = getEvent("RequestStateSync")
+local ReturnToLobbyEvent = getEvent("ReturnToLobby")
 
 -- Server -> Client State
 local RunStateUpdateEvent = getEvent("RunStateUpdate")
 local CombatStateUpdateEvent = getEvent("CombatStateUpdate")
 local CombatEventLoggedEvent = getEvent("CombatEventLogged")
 local AnnouncementEvent = getEvent("Announcement")
+local ActionResultEvent = getEvent("ActionResult")
 
 --------------------------------------------------------------------------------
 -- Modular UI Component Factory
@@ -276,6 +278,22 @@ mapScroll.CanvasSize = UDim2.new(0, 0, 0, 800)
 mapScroll.ZIndex = 16
 mapScroll.Parent = mapView
 
+local function getNodeVisuals(nodeType: StateTypes.ActiveRoomType): (string, Color3)
+	if nodeType == "Combat" then
+		return "⚔️", Color3.fromRGB(195, 55, 55)
+	elseif nodeType == "Elite Monster" then
+		return "💀", Color3.fromRGB(220, 110, 30)
+	elseif nodeType == "Campfire Rest" then
+		return "🔥", Color3.fromRGB(45, 175, 95)
+	elseif nodeType == "Merchant Shop" then
+		return "💰", Color3.fromRGB(225, 195, 45)
+	elseif nodeType == "Act Boss" then
+		return "👹", Color3.fromRGB(175, 35, 195)
+	else
+		return "❓", Color3.fromRGB(120, 120, 120)
+	end
+end
+
 local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 	for _, child in mapScroll:GetChildren() do
 		if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
@@ -285,16 +303,14 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 
 	mapTitle.Text = string.format("🗺️ %s (Tier %d/10) - Select Next Room", snapshot.ActName or "Act 1", snapshot.CurrentTier or 0)
 
-	local availableSet: { [string]: boolean } = {}
-	for _, id in snapshot.AvailableNodeIds do
-		availableSet[id] = true
-	end
-
 	local tierHeight = 74
+
+	-- Render vertical tier indicators
 	for tierNum = 10, 1, -1 do
 		local yPos = (10 - tierNum) * tierHeight + 12
 
 		local tierLabel = Instance.new("TextLabel")
+		tierLabel.Name = "TierLabel_" .. tierNum
 		tierLabel.Size = UDim2.new(0, 48, 0, 48)
 		tierLabel.Position = UDim2.new(0, 8, 0, yPos)
 		tierLabel.BackgroundTransparency = 1
@@ -304,48 +320,101 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 		tierLabel.TextSize = 13
 		tierLabel.ZIndex = 17
 		tierLabel.Parent = mapScroll
+	end
 
-		-- Render available or standard nodes for tier
-		for lane = 1, 3 do
-			local laneX = 100 + (lane - 1) * 160
-			local dummyNodeId = string.format("Act%d_T%d_L%d", snapshot.ActIndex, tierNum, lane)
-			local isReachable = availableSet[dummyNodeId] or false
-
-			-- Also check exact matches
-			for _, avId in snapshot.AvailableNodeIds do
-				if avId:find("T" .. tierNum) then
-					dummyNodeId = avId
-					isReachable = true
-					break
-				end
-			end
+	-- Render authoritative MapNodes graph from server snapshot
+	if snapshot.MapNodes and #snapshot.MapNodes > 0 then
+		for _, node in snapshot.MapNodes do
+			local yPos = (10 - node.Tier) * tierHeight + 12
+			local laneX = 70 + (node.Lane - 1) * 110
+			local icon, baseColor = getNodeVisuals(node.Type)
 
 			local nodeBtn = Instance.new("TextButton")
-			nodeBtn.Name = "Node_" .. dummyNodeId
-			nodeBtn.Size = UDim2.new(0, 54, 0, 54)
+			nodeBtn.Name = "Node_" .. node.Id
+			nodeBtn.Size = UDim2.new(0, 52, 0, 52)
 			nodeBtn.Position = UDim2.new(0, laneX, 0, yPos)
-			nodeBtn.BackgroundColor3 = (tierNum == 10) and Color3.fromRGB(220, 50, 50) or (tierNum % 3 == 0 and Color3.fromRGB(220, 130, 40) or Color3.fromRGB(50, 120, 220))
+			nodeBtn.BackgroundColor3 = baseColor
 			nodeBtn.BorderSizePixel = 0
-			nodeBtn.Text = (tierNum == 10) and "👹" or (tierNum % 3 == 0 and "⚠️" or "⚔️")
-			nodeBtn.TextSize = 24
+			nodeBtn.Text = icon
+			nodeBtn.TextSize = 22
 			nodeBtn.ZIndex = 18
 			nodeBtn.Parent = mapScroll
-			UIFactory.createCorner(nodeBtn, 27)
+			UIFactory.createCorner(nodeBtn, 26)
 
-			local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(255, 240, 100), 3)
+			local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(60, 65, 80), 1)
 
-			if isReachable then
+			if node.IsCurrent then
+				stroke.Color = Color3.fromRGB(80, 220, 255)
+				stroke.Thickness = 3
+				nodeBtn.BackgroundTransparency = 0
+				nodeBtn.AutoButtonColor = false
+			elseif node.IsCleared then
+				stroke.Color = Color3.fromRGB(50, 55, 65)
+				stroke.Thickness = 1
+				nodeBtn.BackgroundTransparency = 0.6
+				nodeBtn.Text = "✓"
+				nodeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+				nodeBtn.TextSize = 16
+				nodeBtn.AutoButtonColor = false
+			elseif node.IsAvailable then
+				stroke.Color = Color3.fromRGB(255, 220, 60)
+				stroke.Thickness = 3
+				nodeBtn.BackgroundTransparency = 0
 				nodeBtn.AutoButtonColor = true
-				local targetId = dummyNodeId
+
+				local targetId = node.Id
 				nodeBtn.MouseButton1Click:Connect(function()
 					if VoteMapNodeEvent then
 						VoteMapNodeEvent:FireServer(targetId)
 					end
 				end)
 			else
-				stroke.Color = Color3.fromRGB(60, 65, 80)
+				stroke.Color = Color3.fromRGB(45, 50, 60)
 				stroke.Thickness = 1
 				nodeBtn.BackgroundTransparency = 0.5
+				nodeBtn.AutoButtonColor = false
+			end
+		end
+	else
+		-- Safe fallback when MapNodes not yet populated
+		local availableSet: { [string]: boolean } = {}
+		for _, id in snapshot.AvailableNodeIds do
+			availableSet[id] = true
+		end
+
+		for tierNum = 10, 1, -1 do
+			local yPos = (10 - tierNum) * tierHeight + 12
+			for lane = 1, 3 do
+				local laneX = 100 + (lane - 1) * 160
+				local dummyNodeId = string.format("Act%d_T%d_L%d", snapshot.ActIndex, tierNum, lane)
+				local isReachable = availableSet[dummyNodeId] == true
+
+				local nodeBtn = Instance.new("TextButton")
+				nodeBtn.Name = "Node_" .. dummyNodeId
+				nodeBtn.Size = UDim2.new(0, 54, 0, 54)
+				nodeBtn.Position = UDim2.new(0, laneX, 0, yPos)
+				nodeBtn.BackgroundColor3 = (tierNum == 10) and Color3.fromRGB(220, 50, 50) or Color3.fromRGB(50, 120, 220)
+				nodeBtn.BorderSizePixel = 0
+				nodeBtn.Text = (tierNum == 10) and "👹" or "⚔️"
+				nodeBtn.TextSize = 24
+				nodeBtn.ZIndex = 18
+				nodeBtn.Parent = mapScroll
+				UIFactory.createCorner(nodeBtn, 27)
+
+				local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(60, 65, 80), 1)
+				if isReachable then
+					stroke.Color = Color3.fromRGB(255, 240, 100)
+					stroke.Thickness = 3
+					nodeBtn.AutoButtonColor = true
+					local targetId = dummyNodeId
+					nodeBtn.MouseButton1Click:Connect(function()
+						if VoteMapNodeEvent then
+							VoteMapNodeEvent:FireServer(targetId)
+						end
+					end)
+				else
+					nodeBtn.BackgroundTransparency = 0.5
+				end
 			end
 		end
 	end
@@ -753,6 +822,116 @@ local function buildCardDraftView(offeredCards: { StateTypes.CardView }, hasClai
 end
 
 --------------------------------------------------------------------------------
+-- VIEW 5: Victory View (Phase 13)
+--------------------------------------------------------------------------------
+
+local victoryView = Instance.new("Frame")
+victoryView.Name = "VictoryView"
+victoryView.Size = UDim2.new(0, 520, 0, 360)
+victoryView.Position = UDim2.new(0.5, -260, 0.5, -180)
+victoryView.BackgroundColor3 = Color3.fromRGB(18, 24, 22)
+victoryView.BackgroundTransparency = 0.08
+victoryView.BorderSizePixel = 0
+victoryView.Visible = false
+victoryView.ZIndex = 25
+victoryView.Parent = mainFrame
+UIFactory.createCorner(victoryView, 14)
+UIFactory.createStroke(victoryView, Color3.fromRGB(80, 255, 140), 2.5)
+
+local victoryTitle = Instance.new("TextLabel")
+victoryTitle.Size = UDim2.new(1, 0, 0, 50)
+victoryTitle.Position = UDim2.new(0, 0, 0, 20)
+victoryTitle.BackgroundTransparency = 1
+victoryTitle.Text = "🏆 VICTORY ACHIEVED!"
+victoryTitle.TextColor3 = Color3.fromRGB(100, 255, 150)
+victoryTitle.Font = Enum.Font.GothamBold
+victoryTitle.TextSize = 24
+victoryTitle.ZIndex = 26
+victoryTitle.Parent = victoryView
+
+local victoryDesc = Instance.new("TextLabel")
+victoryDesc.Size = UDim2.new(1, -40, 0, 80)
+victoryDesc.Position = UDim2.new(0, 20, 0, 80)
+victoryDesc.BackgroundTransparency = 1
+victoryDesc.Text = "The Heart of the Spire has fallen!\nYour expedition was completely triumphant.\nAll earned Aether Shards and rewards have been saved to your account."
+victoryDesc.TextColor3 = Color3.fromRGB(200, 240, 210)
+victoryDesc.Font = Enum.Font.GothamMedium
+victoryDesc.TextSize = 14
+victoryDesc.TextWrapped = true
+victoryDesc.ZIndex = 26
+victoryDesc.Parent = victoryView
+
+local returnLobbyBtnContainer = Instance.new("Frame")
+returnLobbyBtnContainer.Size = UDim2.new(0, 240, 0, 52)
+returnLobbyBtnContainer.Position = UDim2.new(0.5, -120, 1, -80)
+returnLobbyBtnContainer.BackgroundTransparency = 1
+returnLobbyBtnContainer.ZIndex = 26
+returnLobbyBtnContainer.Parent = victoryView
+
+UIFactory.createButton(returnLobbyBtnContainer, "RETURN TO LOBBY ➔", Color3.fromRGB(45, 180, 90), function()
+	if ReturnToLobbyEvent then
+		ReturnToLobbyEvent:FireServer()
+	elseif RequestStateSyncEvent then
+		RequestStateSyncEvent:FireServer()
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- VIEW 6: Defeat View (Phase 13)
+--------------------------------------------------------------------------------
+
+local defeatView = Instance.new("Frame")
+defeatView.Name = "DefeatView"
+defeatView.Size = UDim2.new(0, 520, 0, 360)
+defeatView.Position = UDim2.new(0.5, -260, 0.5, -180)
+defeatView.BackgroundColor3 = Color3.fromRGB(26, 18, 18)
+defeatView.BackgroundTransparency = 0.08
+defeatView.BorderSizePixel = 0
+defeatView.Visible = false
+defeatView.ZIndex = 25
+defeatView.Parent = mainFrame
+UIFactory.createCorner(defeatView, 14)
+UIFactory.createStroke(defeatView, Color3.fromRGB(255, 60, 60), 2.5)
+
+local defeatTitle = Instance.new("TextLabel")
+defeatTitle.Size = UDim2.new(1, 0, 0, 50)
+defeatTitle.Position = UDim2.new(0, 0, 0, 20)
+defeatTitle.BackgroundTransparency = 1
+defeatTitle.Text = "💀 EXPEDITION FAILED"
+defeatTitle.TextColor3 = Color3.fromRGB(255, 70, 70)
+defeatTitle.Font = Enum.Font.GothamBold
+defeatTitle.TextSize = 24
+defeatTitle.ZIndex = 26
+defeatTitle.Parent = defeatView
+
+local defeatDesc = Instance.new("TextLabel")
+defeatDesc.Size = UDim2.new(1, -40, 0, 80)
+defeatDesc.Position = UDim2.new(0, 20, 0, 80)
+defeatDesc.BackgroundTransparency = 1
+defeatDesc.Text = "Your party was overwhelmed by the rift creatures.\nReturn to the camp, adjust your party strategy, and embark once more."
+defeatDesc.TextColor3 = Color3.fromRGB(240, 200, 200)
+defeatDesc.Font = Enum.Font.GothamMedium
+defeatDesc.TextSize = 14
+defeatDesc.TextWrapped = true
+defeatDesc.ZIndex = 26
+defeatDesc.Parent = defeatView
+
+local defeatLobbyBtnContainer = Instance.new("Frame")
+defeatLobbyBtnContainer.Size = UDim2.new(0, 240, 0, 52)
+defeatLobbyBtnContainer.Position = UDim2.new(0.5, -120, 1, -80)
+defeatLobbyBtnContainer.BackgroundTransparency = 1
+defeatLobbyBtnContainer.ZIndex = 26
+defeatLobbyBtnContainer.Parent = defeatView
+
+UIFactory.createButton(defeatLobbyBtnContainer, "RETURN TO LOBBY ➔", Color3.fromRGB(200, 50, 50), function()
+	if ReturnToLobbyEvent then
+		ReturnToLobbyEvent:FireServer()
+	elseif RequestStateSyncEvent then
+		RequestStateSyncEvent:FireServer()
+	end
+end)
+
+--------------------------------------------------------------------------------
 -- Central View Switcher
 --------------------------------------------------------------------------------
 
@@ -761,6 +940,8 @@ local function switchView(phase: StateTypes.RunPhase)
 	mapView.Visible = (phase == "MapSelect")
 	combatHudView.Visible = (phase == "ActiveRoom")
 	rewardsView.Visible = (phase == "Rewards")
+	victoryView.Visible = (phase == "RunVictory")
+	defeatView.Visible = (phase == "RunDefeat")
 end
 
 --------------------------------------------------------------------------------
@@ -900,6 +1081,19 @@ if CombatEventLoggedEvent then
 		tween.Completed:Connect(function()
 			popup:Destroy()
 		end)
+	end)
+end
+
+-- 5. Action Result Feedback (Phase 14)
+if ActionResultEvent then
+	ActionResultEvent.OnClientEvent:Connect(function(res: any)
+		if not res then return end
+		if res.Success == false then
+			bannerLabel.Text = string.format("⚠️ %s: %s", res.Action or "Action", res.Message or "Action failed.")
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+		elseif res.Action == "ReturnToLobby" and res.Success == true then
+			switchView("Lobby")
+		end
 	end)
 end
 

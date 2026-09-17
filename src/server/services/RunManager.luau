@@ -257,6 +257,35 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		}
 	end
 
+	local mapNodesList: { StateTypes.MapNodeView } = {}
+	if dRun and dRun.Acts and dRun.Acts[dRun.CurrentActIndex] then
+		local currentAct = dRun.Acts[dRun.CurrentActIndex]
+		if currentAct and currentAct.NodesById then
+			local clearedSet: { [string]: boolean } = {}
+			for _, cId in runToRead.ClearedNodeIds do
+				clearedSet[cId] = true
+			end
+			local availableSet: { [string]: boolean } = {}
+			for _, aId in runToRead.AvailableNodeIds do
+				availableSet[aId] = true
+			end
+
+			for _, node in currentAct.NodesById do
+				table.insert(mapNodesList, {
+					Id = node.Id,
+					Act = node.Act,
+					Tier = node.Tier,
+					Lane = node.Lane,
+					Type = node.Type :: StateTypes.ActiveRoomType,
+					ConnectedNodeIds = table.clone(node.OutgoingNodeIds),
+					IsAvailable = (availableSet[node.Id] == true),
+					IsCleared = (clearedSet[node.Id] == true),
+					IsCurrent = (runToRead.CurrentNodeId == node.Id),
+				})
+			end
+		end
+	end
+
 	return {
 		RunId = runToRead.RunId,
 		Phase = runToRead.Phase,
@@ -266,6 +295,7 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		CurrentNodeId = runToRead.CurrentNodeId,
 		ClearedNodeIds = runToRead.ClearedNodeIds,
 		AvailableNodeIds = runToRead.AvailableNodeIds,
+		MapNodes = mapNodesList,
 		Party = partyViews,
 		Rewards = rewardView,
 		Message = nil,

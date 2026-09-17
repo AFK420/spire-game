@@ -415,6 +415,24 @@ export type CombatSnapshot = {
 	Message: string?,
 }
 
+export type MapNodeView = {
+	Id: string,
+	Act: number,
+	Tier: number,
+	Lane: number,
+	Type: ActiveRoomType,
+	ConnectedNodeIds: { string },
+	IsAvailable: boolean,
+	IsCleared: boolean,
+	IsCurrent: boolean,
+}
+
+export type ActionResult = {
+	Action: string,
+	Success: boolean,
+	Message: string?,
+}
+
 export type RunSnapshot = {
 	RunId: string,
 	Phase: RunPhase,
@@ -424,6 +442,7 @@ export type RunSnapshot = {
 	CurrentNodeId: string?,
 	ClearedNodeIds: { string },
 	AvailableNodeIds: { string },
+	MapNodes: { MapNodeView }?,
 	Party: { [string]: PlayerView },
 	Rewards: {
 		GoldAmount: number,
