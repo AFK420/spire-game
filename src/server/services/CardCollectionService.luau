@@ -29,6 +29,9 @@ function CardCollectionService.getCardCount(player: any, cardDefId: string): num
 		return 0
 	end
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return 0
+	end
 	return profile.CardCollection[cardDefId] or 0
 end
 
@@ -40,6 +43,9 @@ end
 -- Returns an isolated copy of the player's permanent collection dictionary
 function CardCollectionService.getCollection(player: any): { [string]: number }
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return {}
+	end
 	local copy: { [string]: number } = {}
 	for cardId, count in profile.CardCollection do
 		if count > 0 then

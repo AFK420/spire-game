@@ -44,6 +44,7 @@ local StatusService = require(servicesFolder:WaitForChild("StatusService") :: Mo
 local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
 local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
 local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
+local ActionTransaction = require(servicesFolder:WaitForChild("ActionTransaction") :: ModuleScript)
 
 local CombatService = {}
 
@@ -559,38 +560,51 @@ local function resolveTurn()
 			return
 		end
 
-		-- Start Next Player Turn
-		activeCombat.TurnNumber += 1
-		activeCombat.Phase = "PlayerPhase"
-		activeCombat.TurnStartTime = os.clock()
-
+		-- Process living player TurnStart statuses before advancing TurnNumber or entering PlayerPhase
 		for _, playerState in partyRef do
 			playerState.IsReady = false
 
 			if not playerState.IsDowned and playerState.IsConnected ~= false then
 				-- Tick player turn-start statuses (Poison, Burn, etc.)
+				-- Note: StatusService via DamagePipeline authoritatively applies the damage directly to HP.
 				local pTargetId = tostring(playerState.UserId)
 				local pTicks = StatusService.tickStatuses(pTargetId, "TurnStart", playerState, false)
 				for _, tick in pTicks do
 					if tick.DamageDealt > 0 then
-						applyDamageToPlayer(playerState, tick.DamageDealt)
 						logEvent("DamageDealt", tick.DefinitionId, playerState.DisplayName, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
 					end
 					if tick.Defeated or playerState.Resources.HP <= 0 then
-						playerState.IsDowned = true
-						playerState.Resources.HP = 0
-						playerState.Resources.Shield = 0
-						logEvent("PlayerDowned", tick.DefinitionId, playerState.DisplayName, nil, string.format("%s was downed by %s!", playerState.DisplayName, tick.DefinitionId))
+						if not playerState.IsDowned then
+							playerState.IsDowned = true
+							playerState.Resources.HP = 0
+							playerState.Resources.Shield = 0
+							logEvent("PlayerDowned", tick.DefinitionId, playerState.DisplayName, nil, string.format("%s was downed by %s!", playerState.DisplayName, tick.DefinitionId))
+						end
 					end
 				end
+			end
+		end
 
-				if not playerState.IsDowned then
-					playerState.Resources.Energy = playerState.Resources.MaxEnergy
-					local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
-					playerState.Resources.Energy += startRelic.BonusEnergy
-					CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount + startRelic.BonusDraw)
-					SkillService.onTurnStart(playerState)
-				end
+		-- STATUS-INDUCED TOTAL DEFEAT:
+		-- If all players were downed by turn-start statuses, immediately trigger Defeat
+		-- without advancing TurnNumber, entering PlayerPhase, refreshing energy, or drawing cards.
+		if areAllPlayersDowned() then
+			endCombat("Defeat")
+			return
+		end
+
+		-- Living players remain: advance turn number and start next player phase
+		activeCombat.TurnNumber += 1
+		activeCombat.Phase = "PlayerPhase"
+		activeCombat.TurnStartTime = os.clock()
+
+		for _, playerState in partyRef do
+			if not playerState.IsDowned and playerState.IsConnected ~= false then
+				playerState.Resources.Energy = playerState.Resources.MaxEnergy
+				local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
+				playerState.Resources.Energy += startRelic.BonusEnergy
+				CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount + startRelic.BonusDraw)
+				SkillService.onTurnStart(playerState)
 			end
 		end
 
@@ -829,6 +843,9 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		end
 	end
 
+	-- COMMIT PHASE: All validations passed. Capture atomic snapshot before mutating combat/player state
+	local txSnapshot = ActionTransaction.beginCombatTransaction(playerState, activeCombat, partyRef)
+
 	-- Evaluate Class Gimmick (all validations passed)
 	local gimmick = ClassService.processGimmickOnCardPlay(playerState, cardInst, targetEnemy, effectiveCost)
 
@@ -924,10 +941,26 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	}
 
 	local effectResults = EffectResolver.resolveEffects(cardInst.CardData.Effects, actionCtx)
-	for _, res in effectResults do
-		if not res.Success then
-			return false, res.Message or "Card effect execution failed."
+
+	-- Transaction verification: all required effects must succeed
+	local hasFailure = false
+	local failureMsg = "Card effect execution failed."
+	if #cardInst.CardData.Effects > 0 and #effectResults == 0 then
+		hasFailure = true
+		failureMsg = "No card effects were satisfied or executed."
+	else
+		for _, res in effectResults do
+			if not res.Success then
+				hasFailure = true
+				failureMsg = res.Message or failureMsg
+				break
+			end
 		end
+	end
+
+	if hasFailure then
+		ActionTransaction.rollbackCombatTransaction(txSnapshot, playerState, activeCombat, partyRef)
+		return false, failureMsg
 	end
 
 	-- Check Victory

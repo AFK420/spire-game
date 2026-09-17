@@ -121,6 +121,15 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 		return
 	end
 
+	if not PersistenceService.isProfileLoaded(player) then
+		warn(string.format("[Server] SelectClass rejected for %s: profile is not loaded.", player.Name))
+		NetworkService.sendClassSelectionResult(player, {
+			Success = false,
+			Error = "Your player profile failed to load. Class selection is disabled.",
+		})
+		return
+	end
+
 	local pState = RunManager.getPlayerState(player)
 	if not pState then
 		if RunManager.getRunState().Phase == "Lobby" then
@@ -497,6 +506,10 @@ NetworkService.CreateDeckEvent.OnServerEvent:Connect(function(player: Player, na
 		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Profile unavailable. Cannot create deck." })
+		return
+	end
 	if typeof(name) ~= "string" or #name == 0 then
 		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Invalid deck name." })
 		return
@@ -530,6 +543,10 @@ NetworkService.RenameDeckEvent.OnServerEvent:Connect(function(player: Player, de
 		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Profile unavailable. Cannot rename deck." })
+		return
+	end
 	if typeof(deckId) ~= "string" or #deckId == 0 then
 		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Invalid deck ID." })
 		return
@@ -557,6 +574,10 @@ NetworkService.DeleteDeckEvent.OnServerEvent:Connect(function(player: Player, de
 		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Profile unavailable. Cannot delete deck." })
+		return
+	end
 	if typeof(deckId) ~= "string" or #deckId == 0 then
 		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Invalid deck ID." })
 		return
@@ -578,6 +599,10 @@ end)
 NetworkService.SaveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any, cards: any)
 	if not NetworkService.checkRateLimit(player, "General") then
 		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Profile unavailable. Cannot save deck." })
 		return
 	end
 	if typeof(deckId) ~= "string" or #deckId == 0 then
@@ -612,6 +637,10 @@ NetworkService.DuplicateDeckEvent.OnServerEvent:Connect(function(player: Player,
 		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Profile unavailable. Cannot duplicate deck." })
+		return
+	end
 	if typeof(sourceDeckId) ~= "string" or #sourceDeckId == 0 then
 		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Invalid source deck ID." })
 		return
@@ -636,6 +665,10 @@ NetworkService.SelectActiveDeckEvent.OnServerEvent:Connect(function(player: Play
 		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Profile unavailable. Cannot select active deck." })
+		return
+	end
 	if typeof(deckId) ~= "string" or #deckId == 0 then
 		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Invalid deck ID." })
 		return
@@ -656,12 +689,20 @@ end)
 -- 23. Request Decks
 NetworkService.RequestDecksEvent.OnServerEvent:Connect(function(player: Player)
 	if not NetworkService.checkRateLimit(player, "General") then return end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "DataStore", Success = false, Message = "Profile unavailable. Cannot load decks." })
+		return
+	end
 	sendDeckListUpdate(player)
 end)
 
 -- 24. Request Card Collection
 NetworkService.RequestCardCollectionEvent.OnServerEvent:Connect(function(player: Player)
 	if not NetworkService.checkRateLimit(player, "General") then return end
+	if not PersistenceService.isProfileLoaded(player) then
+		NetworkService.sendActionResult(player, { Action = "DataStore", Success = false, Message = "Profile unavailable. Cannot load card collection." })
+		return
+	end
 	local collectionView = CardCollectionService.toCollectionView(player)
 	NetworkService.CardCollectionUpdateEvent:FireClient(player, collectionView)
 end)

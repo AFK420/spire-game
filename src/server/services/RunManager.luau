@@ -333,7 +333,7 @@ end
 -- Party Lifecycle & Reconnection Resilience
 --------------------------------------------------------------------------------
 
-function RunManager.addPlayer(player: any): StateTypes.PlayerState
+function RunManager.addPlayer(player: any): StateTypes.PlayerState?
 	local userId = player.UserId
 	local displayName = player.DisplayName or player.Name or ("Player_" .. tostring(userId))
 	local isRealPlayer = (typeof(player) == "Instance" and player:IsA("Player"))
@@ -863,16 +863,23 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 		return false, "Card not in draft choices."
 	end
 
+	-- 1. Pre-create runtime CardInstance; verify creation succeeds before permanent grant
 	local newCardInst = CardService.createCardInstance(cardDefId, userId)
-	if newCardInst then
-		table.insert(member.Deck, newCardInst)
+	if not newCardInst then
+		return false, "Failed to create runtime card instance."
 	end
 
-	-- Grant to permanent card collection
+	-- 2. Verify permanent collection grant succeeds
 	local playerRef = member.PlayerInstance or player or { UserId = userId }
-	CardCollectionService.grantCard(playerRef, cardDefId, 1)
+	local grantOk, grantErr = CardCollectionService.grantCard(playerRef, cardDefId, 1)
+	if not grantOk then
+		return false, grantErr or "Failed to grant card to permanent collection."
+	end
 
+	-- 3. Both operations succeeded: commit runtime deck insertion and mark claimed
+	table.insert(member.Deck, newCardInst)
 	runToUse.PendingRewards.ClaimedCards[userId] = true
+
 	if not isIsolatedTesting or isReal then
 		RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", member.DisplayName, cardDefId), isReal)
 	end
@@ -972,30 +979,41 @@ end
 
 -- Resets existing party to clean Lobby state for a new expedition run
 function RunManager.resetToLobby()
-	currentRun.Phase = "Lobby"
-	currentRun.ActIndex = 1
-	currentRun.CurrentTier = 0
-	currentRun.CurrentNodeId = nil
-	currentRun.ClearedNodeIds = {}
-	currentRun.AvailableNodeIds = {}
-	currentRun.ActiveRoom = nil
-	currentRun.ActiveCombat = nil
-	currentRun.PendingRewards = nil
-	internalDungeonRun = nil
+	local runsToReset = { currentRun }
+	if isIsolatedTesting and liveRun and liveRun ~= currentRun then
+		table.insert(runsToReset, liveRun)
+	end
 
-	for _, member in currentRun.PartyMembers do
-		member.ClassLocked = false
-		member.IsReady = false
-		member.IsDowned = false
-		member.VotedNodeId = nil
-		member.Gold = GameConfig.Dungeon.StarterGold
-		member.RelicIds = { "Anchor" }
-		ClassService.applyBaseClassStats(member)
-		ClassService.initializeStartingDeck(member)
-		ClassService.resetCombatResources(member)
-		ClassService.resetClassCombatGimmicks(member.UserId)
-		RelicService.resetCombatState(member.UserId)
-		SkillService.resetCooldowns(member)
+	for _, run in runsToReset do
+		run.Phase = "Lobby"
+		run.ActIndex = 1
+		run.CurrentTier = 0
+		run.CurrentNodeId = nil
+		run.ClearedNodeIds = {}
+		run.AvailableNodeIds = {}
+		run.ActiveRoom = nil
+		run.ActiveCombat = nil
+		run.PendingRewards = nil
+
+		for _, member in run.PartyMembers do
+			member.ClassLocked = false
+			member.IsReady = false
+			member.IsDowned = false
+			member.VotedNodeId = nil
+			member.Gold = GameConfig.Dungeon.StarterGold
+			member.RelicIds = { "Anchor" }
+			ClassService.applyBaseClassStats(member)
+			ClassService.initializeStartingDeck(member)
+			ClassService.resetCombatResources(member)
+			ClassService.resetClassCombatGimmicks(member.UserId)
+			RelicService.resetCombatState(member.UserId)
+			SkillService.resetCooldowns(member)
+		end
+	end
+
+	internalDungeonRun = nil
+	if isIsolatedTesting then
+		liveDungeonRun = nil
 	end
 
 	if CombatService then

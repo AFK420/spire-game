@@ -58,6 +58,16 @@ end
 -- Returns detailed deck slot capacity information for a player
 function DeckService.getSlotEntitlement(player: any): StateTypes.DeckSlotView
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return {
+			BaseSlots = GameConfig.Deck.BaseDeckSlots,
+			AdditionalSlots = 0,
+			TotalSlots = GameConfig.Deck.BaseDeckSlots,
+			UsedSlots = 0,
+			AvailableSlots = 0,
+		}
+	end
+
 	local baseSlots = profile.DeckSlotEntitlement.BaseDeckSlots or GameConfig.Deck.BaseDeckSlots
 	local addSlots = profile.DeckSlotEntitlement.AdditionalDeckSlots or 0
 	local totalSlots = math.min(GameConfig.Deck.MaxDeckSlots, baseSlots + addSlots)
@@ -275,6 +285,9 @@ function DeckService.duplicateDeck(
 	end
 
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return false, "Player profile unavailable.", nil
+	end
 	local sourceDeck = profile.Decks[sourceDeckId]
 	if not sourceDeck then
 		return false, string.format("Source deck '%s' not found.", sourceDeckId), nil
@@ -298,6 +311,9 @@ function DeckService.saveDeck(player: any, deckId: string, cards: { [string]: nu
 	end
 
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return false, "Player profile unavailable."
+	end
 	local existingDeck = profile.Decks[deckId]
 	if not existingDeck then
 		return false, string.format("Deck '%s' not found.", deckId)
@@ -326,6 +342,7 @@ function DeckService.getDeck(player: any, deckId: string): StateTypes.SavedDeck?
 		return nil
 	end
 	local profile = PersistenceService.getProfile(player)
+	if not profile then return nil end
 	local deck = profile.Decks[deckId]
 	if not deck then return nil end
 	return deepCopy(deck)
@@ -334,6 +351,7 @@ end
 -- Lists all saved decks owned by the player, sorted deterministically
 function DeckService.listDecks(player: any): { StateTypes.SavedDeck }
 	local profile = PersistenceService.getProfile(player)
+	if not profile then return {} end
 	local list: { StateTypes.SavedDeck } = {}
 
 	for _, deck in profile.Decks do
@@ -361,6 +379,9 @@ function DeckService.setActiveDeck(player: any, deckId: string): (boolean, strin
 	end
 
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return false, "Player profile unavailable."
+	end
 	local deck = profile.Decks[deckId]
 	if not deck then
 		return false, string.format("Deck '%s' not found.", deckId)
@@ -381,6 +402,7 @@ end
 -- Returns the player's active saved deck if valid; otherwise finds a valid fallback deck, or returns nil
 function DeckService.getActiveDeck(player: any): StateTypes.SavedDeck?
 	local profile = PersistenceService.getProfile(player)
+	if not profile then return nil end
 	local activeId = profile.ActiveDeckId
 
 	-- 1. If active deck exists, check if it is structurally and playably valid

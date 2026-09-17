@@ -56,6 +56,35 @@ function ClassService.getGimmickTracker(userId: number): GimmickTracker
 	return getGimmickTracker(userId)
 end
 
+function ClassService.snapshotGimmickTracker(userId: number): GimmickTracker
+	local current = getGimmickTracker(userId)
+	return {
+		ComboCount = current.ComboCount,
+		OverloadCharges = current.OverloadCharges,
+		SoulTokens = current.SoulTokens,
+		BoneServants = current.BoneServants,
+		ScrapParts = current.ScrapParts,
+		ActiveTurrets = current.ActiveTurrets,
+		TotalSacrificedHP = current.TotalSacrificedHP,
+		WolfHP = current.WolfHP,
+		WolfAttack = current.WolfAttack,
+	}
+end
+
+function ClassService.restoreGimmickTracker(userId: number, snapshot: GimmickTracker)
+	playerGimmicks[userId] = {
+		ComboCount = snapshot.ComboCount,
+		OverloadCharges = snapshot.OverloadCharges,
+		SoulTokens = snapshot.SoulTokens,
+		BoneServants = snapshot.BoneServants,
+		ScrapParts = snapshot.ScrapParts,
+		ActiveTurrets = snapshot.ActiveTurrets,
+		TotalSacrificedHP = snapshot.TotalSacrificedHP,
+		WolfHP = snapshot.WolfHP,
+		WolfAttack = snapshot.WolfAttack,
+	}
+end
+
 function ClassService.resetGimmicks(userId: number)
 	playerGimmicks[userId] = {
 		ComboCount = 0,

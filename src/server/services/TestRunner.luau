@@ -81,6 +81,445 @@ local function getAnyCardInHand(playerState: StateTypes.PlayerState): StateTypes
 	error("Expected player to have cards in hand.")
 end
 
+local function runSuite65()
+	print("\n--- [Suite 65] Action Transactions, Status Integrity, Persistence Safety & Map ---")
+
+	do -- 65.1: Card action transaction rollback on second effect failure
+		CombatService.cleanupCombat()
+		RunManager.resetRunForTesting()
+		local txPlayer = {
+			UserId = 65001,
+			Name = "TxPlayer1",
+			DisplayName = "TxPlayer1",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local txPState = RunManager.addPlayer(txPlayer :: any)
+		assert(txPState, "txPState exists")
+		txPState.ClassLocked = true
+		RunManager.startRun(txPlayer :: any)
+		local txCombat = CombatService.startCombat("enc_tx1", "Combat", 1, { [txPlayer.UserId] = txPState }, function() end)
+		assert(txCombat and txCombat.Enemies["enemy_1"], "txCombat enemy exists")
+		local txEnemy = txCombat.Enemies["enemy_1"]
+		local initialEnemyHp = txEnemy.HP
+		txPState.Resources.Energy = 3
+
+		local testCardInst: StateTypes.CardInstance = {
+			CardInstanceId = "card_tx_fail_1",
+			DefinitionId = "Strike",
+			CardData = {
+				Id = "Strike",
+				Name = "Test Fail Card",
+				Description = "Deals damage then fails",
+				Type = "Attack",
+				Rarity = "Common",
+				Target = "SingleEnemy",
+				Cost = 1,
+				Upgraded = false,
+				Class = "Warlord",
+				Tags = {},
+				Effects = {
+					{ Type = "Damage", Value = 10, Target = "Enemy" },
+					{ Type = "NonExistentEffectXYZ" :: any, Value = 5, Target = "Enemy" },
+				},
+			},
+			OwnerUserId = txPlayer.UserId,
+			Upgraded = false,
+			BaseCost = 1,
+			TemporaryCostModifier = 0,
+			Keywords = {},
+		}
+		table.insert(txPState.Hand, testCardInst)
+		local playOk, playErr = CombatService.playCard(txPlayer :: any, "card_tx_fail_1", txEnemy.InstanceId)
+		assertTest(playOk == false, "[Suite 65.1a] Card with failing second effect returns false")
+		assertTest(txPState.Resources.Energy == 3, "[Suite 65.1b] Failed card restores Energy to 3")
+		assertTest(txEnemy.HP == initialEnemyHp, "[Suite 65.1c] Failed card reverts first-effect damage on enemy")
+		assertTest(#txPState.Hand == 1 and txPState.Hand[1].CardInstanceId == "card_tx_fail_1", "[Suite 65.1d] Failed card remains in exact hand position")
+		assertTest(#txPState.DiscardPile == 0, "[Suite 65.1e] Failed card not moved to discard pile")
+
+		-- 65.2: BloodPriest HP sacrifice reverted on failed card
+		txPState.ClassId = "BloodPriest"
+		txPState.Resources.Energy = 0
+		txPState.Resources.HP = 80
+		ClassService.resetClassCombatGimmicks(txPlayer.UserId)
+		local bpCardInst: StateTypes.CardInstance = {
+			CardInstanceId = "card_bp_fail",
+			DefinitionId = "Strike",
+			CardData = {
+				Id = "Strike",
+				Name = "BP Fail Strike",
+				Description = "Costs HP then fails",
+				Type = "Attack",
+				Rarity = "Common",
+				Target = "SingleEnemy",
+				Cost = 1,
+				Upgraded = false,
+				Class = "BloodPriest",
+				Tags = {},
+				Effects = {
+					{ Type = "Damage", Value = 5, Target = "Enemy" },
+					{ Type = "NonExistentEffectXYZ" :: any, Value = 1, Target = "Enemy" },
+				},
+			},
+			OwnerUserId = txPlayer.UserId,
+			Upgraded = false,
+			BaseCost = 1,
+			TemporaryCostModifier = 0,
+			Keywords = {},
+		}
+		table.insert(txPState.Hand, bpCardInst)
+		local bpOk, _ = CombatService.playCard(txPlayer :: any, "card_bp_fail", txEnemy.InstanceId)
+		assertTest(bpOk == false, "[Suite 65.2a] BloodPriest failing card returns false")
+		assertTest(txPState.Resources.HP == 80, "[Suite 65.2b] BloodPriest HP sacrifice reverted on failure")
+		local bpGimmick = ClassService.getGimmickTracker(txPlayer.UserId)
+		assertTest(bpGimmick.TotalSacrificedHP == 0, "[Suite 65.2c] BloodPriest TotalSacrificedHP reverted to 0")
+
+		-- 65.3: Shadowblade combo reverted on failed card
+		txPState.ClassId = "Shadowblade"
+		txPState.Resources.Energy = 3
+		ClassService.resetClassCombatGimmicks(txPlayer.UserId)
+		local sbGimmick = ClassService.getGimmickTracker(txPlayer.UserId)
+		sbGimmick.ComboCount = 2
+		local sbCardInst: StateTypes.CardInstance = {
+			CardInstanceId = "card_sb_fail",
+			DefinitionId = "Strike",
+			CardData = {
+				Id = "Strike",
+				Name = "SB Fail Strike",
+				Description = "Fails",
+				Type = "Attack",
+				Rarity = "Common",
+				Target = "SingleEnemy",
+				Cost = 1,
+				Upgraded = false,
+				Class = "Shadowblade",
+				Tags = {},
+				Effects = {
+					{ Type = "Damage", Value = 5, Target = "Enemy" },
+					{ Type = "InvalidEffectXYZ" :: any, Value = 1, Target = "Enemy" },
+				},
+			},
+			OwnerUserId = txPlayer.UserId,
+			Upgraded = false,
+			BaseCost = 1,
+			TemporaryCostModifier = 0,
+			Keywords = {},
+		}
+		table.insert(txPState.Hand, sbCardInst)
+		local sbOk, _ = CombatService.playCard(txPlayer :: any, "card_sb_fail", txEnemy.InstanceId)
+		assertTest(sbOk == false, "[Suite 65.3a] Shadowblade failing card returns false")
+		assertTest(ClassService.getGimmickTracker(txPlayer.UserId).ComboCount == 2, "[Suite 65.3b] Shadowblade ComboCount reverted to 2 on failure")
+
+		-- 65.4: Mechanist scrap parts reverted on failed card
+		txPState.ClassId = "Mechanist"
+		txPState.Resources.Energy = 3
+		ClassService.resetClassCombatGimmicks(txPlayer.UserId)
+		local mechGimmick = ClassService.getGimmickTracker(txPlayer.UserId)
+		mechGimmick.ScrapParts = 3
+		local mechCardInst: StateTypes.CardInstance = {
+			CardInstanceId = "card_mech_fail",
+			DefinitionId = "Defend",
+			CardData = {
+				Id = "Defend",
+				Name = "Mech Fail Skill",
+				Description = "Fails",
+				Type = "Skill",
+				Rarity = "Common",
+				Target = "Self",
+				Cost = 1,
+				Upgraded = false,
+				Class = "Mechanist",
+				Tags = {},
+				Effects = {
+					{ Type = "Shield", Value = 5, Target = "Self" },
+					{ Type = "InvalidEffectXYZ" :: any, Value = 1, Target = "Self" },
+				},
+			},
+			OwnerUserId = txPlayer.UserId,
+			Upgraded = false,
+			BaseCost = 1,
+			TemporaryCostModifier = 0,
+			Keywords = {},
+		}
+		table.insert(txPState.Hand, mechCardInst)
+		local mechOk, _ = CombatService.playCard(txPlayer :: any, "card_mech_fail", nil)
+		assertTest(mechOk == false, "[Suite 65.4a] Mechanist failing card returns false")
+		assertTest(ClassService.getGimmickTracker(txPlayer.UserId).ScrapParts == 3, "[Suite 65.4b] Mechanist ScrapParts reverted to 3 on failure")
+
+		-- 65.5: Applied status on enemy reverted on failed card
+		txPState.ClassId = "Warlord"
+		txPState.Resources.Energy = 3
+		local poisonCardInst: StateTypes.CardInstance = {
+			CardInstanceId = "card_status_fail",
+			DefinitionId = "Strike",
+			CardData = {
+				Id = "Strike",
+				Name = "Poison Fail Card",
+				Description = "Applies poison then fails",
+				Type = "Attack",
+				Rarity = "Common",
+				Target = "SingleEnemy",
+				Cost = 1,
+				Upgraded = false,
+				Class = "Warlord",
+				Tags = {},
+				Effects = {
+					{ Type = "Poison", Value = 5, Target = "Enemy" },
+					{ Type = "InvalidEffectXYZ" :: any, Value = 1, Target = "Enemy" },
+				},
+			},
+			OwnerUserId = txPlayer.UserId,
+			Upgraded = false,
+			BaseCost = 1,
+			TemporaryCostModifier = 0,
+			Keywords = {},
+		}
+		table.insert(txPState.Hand, poisonCardInst)
+		local statOk, _ = CombatService.playCard(txPlayer :: any, "card_status_fail", txEnemy.InstanceId)
+		assertTest(statOk == false, "[Suite 65.5a] Card with failing effect after status returns false")
+		local enemyPoisonInst = StatusService.getStatus(txEnemy.InstanceId, "Poison")
+		assertTest(enemyPoisonInst == nil or enemyPoisonInst.Stacks == 0, "[Suite 65.5b] Applied status on enemy reverted on failure")
+	end
+
+	do -- 65.6 - 65.9: Skill execution and rollback
+		CombatService.cleanupCombat()
+		RunManager.resetRunForTesting()
+		local txPlayer = {
+			UserId = 65006,
+			Name = "SkillPlayer",
+			DisplayName = "SkillPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local txPState = RunManager.addPlayer(txPlayer :: any)
+		assert(txPState, "txPState exists")
+		txPState.ClassLocked = true
+		RunManager.startRun(txPlayer :: any)
+		local txCombat = CombatService.startCombat("enc_tx_skill", "Combat", 1, { [txPlayer.UserId] = txPState }, function() end)
+		assert(txCombat and txCombat.Enemies["enemy_1"], "txCombat enemy exists")
+		local txEnemy = txCombat.Enemies["enemy_1"]
+
+		-- 65.6: Skill action succeeds when all effects succeed
+		txPState.Resources.Energy = 3
+		SkillService.resetCooldowns(txPState)
+		local heroicInst = SkillService.getEquippedSkill(txPState, "Skill1")
+		assert(heroicInst, "HeroicStrike equipped in Skill1")
+		heroicInst.CurrentCooldown = 0
+		local enemyHpBeforeSkill = txEnemy.HP
+		local skillSuccess, skillErr = SkillService.useSkill(txPState, "Skill1", txEnemy.InstanceId, txCombat, { [txPlayer.UserId] = txPState })
+		assertTest(skillSuccess == true, "[Suite 65.6a] Valid skill use returns true")
+		assertTest(txPState.Resources.Energy < 3, "[Suite 65.6b] Successful skill deducts Energy")
+		assertTest(heroicInst.CurrentCooldown > 0, "[Suite 65.6c] Successful skill sets cooldown turns")
+		assertTest(txEnemy.HP < enemyHpBeforeSkill, "[Suite 65.6d] Successful skill deals damage to enemy")
+
+		-- 65.7: Skill action rollback when first succeeds and second fails
+		txPState.Resources.Energy = 3
+		heroicInst.CurrentCooldown = 0
+		local enemyHpBeforeMultiSkill = txEnemy.HP
+		local heroicDef = SkillData.getSkill("HeroicStrike")
+		assert(heroicDef, "heroicDef exists")
+		local originalHeroicEffects = heroicDef.Effects
+		heroicDef.Effects = {
+			{ Type = "Damage", Value = 12, Target = "Enemy" },
+			{ Type = "NonExistentSkillEffect" :: any, Value = 5, Target = "Enemy" },
+		}
+		local failSkillOk, failSkillErr = SkillService.useSkill(txPState, "Skill1", txEnemy.InstanceId, txCombat, { [txPlayer.UserId] = txPState })
+		heroicDef.Effects = originalHeroicEffects -- restore definition
+		assertTest(failSkillOk == false, "[Suite 65.7a] Skill with failing second effect returns false")
+		assertTest(txPState.Resources.Energy == 3, "[Suite 65.7b] Failed skill keeps Energy at 3")
+		assertTest(heroicInst.CurrentCooldown == 0, "[Suite 65.7c] Failed skill keeps cooldown at 0")
+		assertTest(txEnemy.HP == enemyHpBeforeMultiSkill, "[Suite 65.7d] Failed skill rolls back first-effect damage")
+
+		-- 65.8: Skill action fails when all effects are skipped (conditions false)
+		txPState.Resources.Energy = 3
+		heroicInst.CurrentCooldown = 0
+		heroicDef.Effects = {
+			{ Type = "Damage", Value = 10, Target = "Enemy", Condition = "TargetDowned" },
+		}
+		local skipSkillOk, _ = SkillService.useSkill(txPState, "Skill1", txEnemy.InstanceId, txCombat, { [txPlayer.UserId] = txPState })
+		heroicDef.Effects = originalHeroicEffects -- restore definition
+		assertTest(skipSkillOk == false, "[Suite 65.8a] Skill with zero executed effects returns false")
+		assertTest(txPState.Resources.Energy == 3, "[Suite 65.8b] Skipped skill keeps Energy at 3")
+		assertTest(heroicInst.CurrentCooldown == 0, "[Suite 65.8c] Skipped skill keeps cooldown at 0")
+
+		-- 65.9: Skill action pre-validation rejects invalid effect type
+		txPState.Resources.Energy = 3
+		heroicInst.CurrentCooldown = 0
+		heroicDef.Effects = {
+			{ Type = "CompletelyInvalidType" :: any, Value = 1, Target = "Enemy" },
+		}
+		local invalidSkillOk, _ = SkillService.useSkill(txPState, "Skill1", txEnemy.InstanceId, txCombat, { [txPlayer.UserId] = txPState })
+		heroicDef.Effects = originalHeroicEffects
+		assertTest(invalidSkillOk == false, "[Suite 65.9] Pre-validation rejects invalid effect type on skill")
+	end
+
+	do -- 65.10 - 65.12: Player status single damage and immediate defeat termination
+		CombatService.cleanupCombat()
+		RunManager.resetRunForTesting()
+		local txPlayer = {
+			UserId = 65010,
+			Name = "StatusPlayer",
+			DisplayName = "StatusPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local txPState = RunManager.addPlayer(txPlayer :: any)
+		assert(txPState, "txPState exists")
+		txPState.ClassLocked = true
+		RunManager.startRun(txPlayer :: any)
+		local txCombat = CombatService.startCombat("enc_tx_status", "Combat", 1, { [txPlayer.UserId] = txPState }, function() end)
+		assert(txCombat, "txCombat exists")
+
+		-- 65.10: Player status single damage: 3 Poison deals exactly 3 damage to HP, does not touch Shield
+		StatusService.resetCombat()
+		txPState.Resources.HP = 50
+		txPState.Resources.Shield = 10
+		txPState.IsDowned = false
+		StatusService.applyStatus(tostring(txPlayer.UserId), "Poison", 3, nil, "system", txPState)
+		local pTicks = StatusService.tickStatuses(tostring(txPlayer.UserId), "TurnStart", txPState, false)
+		assertTest(#pTicks == 1 and pTicks[1].DamageDealt == 3, "[Suite 65.10a] StatusService ticks 3 Poison dealing 3 DamageDealt")
+		assertTest(txPState.Resources.HP == 47, "[Suite 65.10b] Player HP reduced by exactly 3 (from 50 to 47)")
+		assertTest(txPState.Resources.Shield == 10, "[Suite 65.10c] Player Shield remains untouched at 10 (Poison bypasses Shield)")
+
+		-- 65.11: Player status downed exactly once
+		txPState.Resources.HP = 2
+		txPState.Resources.Shield = 0
+		txPState.IsDowned = false
+		StatusService.applyStatus(tostring(txPlayer.UserId), "Poison", 5, nil, "system", txPState)
+		local pDownTicks = StatusService.tickStatuses(tostring(txPlayer.UserId), "TurnStart", txPState, false)
+		assertTest(#pDownTicks == 1 and pDownTicks[1].Defeated == true, "[Suite 65.11a] StatusService marks player defeated")
+		assertTest(txPState.Resources.HP == 0, "[Suite 65.11b] Player HP reduced to 0")
+
+		-- 65.12: Status-induced total defeat immediately ends combat in Defeat
+		CombatService.cleanupCombat()
+		RunManager.resetRunForTesting()
+		local soloPlayer = {
+			UserId = 65012,
+			Name = "SoloPlayer",
+			DisplayName = "SoloPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local soloPState = RunManager.addPlayer(soloPlayer :: any)
+		assert(soloPState, "soloPState exists")
+		soloPState.ClassLocked = true
+		RunManager.startRun(soloPlayer :: any)
+		local soloCombat = CombatService.startCombat("enc_solo_defeat", "Combat", 1, { [soloPlayer.UserId] = soloPState }, function() end)
+		assert(soloCombat, "soloCombat exists")
+		soloPState.Resources.HP = 2
+		soloPState.Resources.Shield = 0
+		soloPState.IsDowned = false
+		StatusService.applyStatus(tostring(soloPlayer.UserId), "Poison", 5, nil, "system", soloPState)
+		CombatService.forceTurnTimeout() -- auto-resolves turn
+		assertTest(soloCombat.Phase == "CombatEnd", "[Suite 65.12a] Status-induced defeat immediately ends combat")
+		assertTest(soloCombat.TurnNumber == 1, "[Suite 65.12b] TurnNumber did not advance past turn 1 upon defeat")
+	end
+
+	do -- 65.13: LoadFailed profile safe through DeckService and CardCollectionService
+		local failUser = {
+			UserId = 65013,
+			Name = "FailUser",
+			DisplayName = "FailUser",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.simulateLoadFailureForTesting(failUser.UserId)
+		assertTest(PersistenceService.getProfile(failUser :: any) == nil, "[Suite 65.13a] getProfile returns nil for LoadFailed player")
+		assertTest(CardCollectionService.getCardCount(failUser :: any, "Strike") == 0, "[Suite 65.13b] getCardCount returns 0 without crashing on nil profile")
+		local coll = CardCollectionService.getCollection(failUser :: any)
+		assertTest(typeof(coll) == "table" and next(coll) == nil, "[Suite 65.13c] getCollection returns empty table without crashing")
+		local slots = DeckService.getSlotEntitlement(failUser :: any)
+		assertTest(slots.AvailableSlots == 0, "[Suite 65.13d] getSlotEntitlement returns safe zero-capacity view")
+		local deckList = DeckService.listDecks(failUser :: any)
+		assertTest(#deckList == 0, "[Suite 65.13e] listDecks returns empty list without crashing")
+		assertTest(DeckService.getActiveDeck(failUser :: any) == nil, "[Suite 65.13f] getActiveDeck returns nil without crashing")
+		local saveOk, _ = DeckService.saveDeck(failUser :: any, "some_deck", {})
+		assertTest(saveOk == false, "[Suite 65.13g] saveDeck returns false without crashing")
+	end
+
+	do -- 65.14: RunManager.addPlayer optional strict typing
+		RunManager.resetRunForTesting()
+		for i = 1, 4 do
+			local m = { UserId = 65100 + i, Name = "M" .. i, DisplayName = "M" .. i, IsA = function(_, cls) return cls == "Player" end }
+			local added = RunManager.addPlayer(m :: any)
+			assertTest(added ~= nil, string.format("[Suite 65.14a] Player %d added to party", i))
+		end
+		local extraPlayer = { UserId = 65199, Name = "Extra", DisplayName = "Extra", IsA = function(_, cls) return cls == "Player" end }
+		local extraAdded: StateTypes.PlayerState? = RunManager.addPlayer(extraPlayer :: any)
+		assertTest(extraAdded == nil, "[Suite 65.14b] 5th player addition returns nil, conforming to PlayerState? return type")
+	end
+
+	do -- 65.15: claimRewardCard atomicity
+		RunManager.resetRunForTesting()
+		local rewardPlayer = {
+			UserId = 65015,
+			Name = "RewardPlayer",
+			DisplayName = "RewardPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local rewardPState = RunManager.addPlayer(rewardPlayer :: any)
+		assert(rewardPState, "rewardPState exists")
+		rewardPState.ClassLocked = true
+		RunManager.startRun(rewardPlayer :: any)
+		RunManager.transitionToRewards(false, false)
+		local rRun = RunManager.getRunState()
+		assert(rRun.PendingRewards and rRun.PendingRewards.OfferedCardsByPlayer[rewardPlayer.UserId], "rewards generated")
+		local offeredCard = rRun.PendingRewards.OfferedCardsByPlayer[rewardPlayer.UserId][1].Id
+		local initialDeckSize = #rewardPState.Deck
+		local initialCollectionCount = CardCollectionService.getCardCount(rewardPlayer :: any, offeredCard)
+		local claim1Ok, claim1Err = RunManager.claimRewardCard(rewardPlayer :: any, offeredCard)
+		assertTest(claim1Ok == true, "[Suite 65.15a] Valid reward claim returns true")
+		assertTest(#rewardPState.Deck == initialDeckSize + 1, "[Suite 65.15b] Claimed card instance added to runtime deck")
+		assertTest(CardCollectionService.getCardCount(rewardPlayer :: any, offeredCard) == initialCollectionCount + 1, "[Suite 65.15c] Permanent collection count incremented exactly once")
+		local claim2Ok, claim2Err = RunManager.claimRewardCard(rewardPlayer :: any, offeredCard)
+		assertTest(claim2Ok == false and claim2Err == "Reward already claimed.", "[Suite 65.15d] Duplicate reward claim rejected")
+		assertTest(#rewardPState.Deck == initialDeckSize + 1, "[Suite 65.15e] Duplicate claim does not add second card to deck")
+		assertTest(CardCollectionService.getCardCount(rewardPlayer :: any, offeredCard) == initialCollectionCount + 1, "[Suite 65.15f] Duplicate claim does not increment collection count")
+	end
+
+	do -- 65.16: PersistenceRevision concurrency
+		local revProfile = PersistenceService.simulateLoadSuccessForTesting(65016, { ProfileRevision = 1 })
+		assertTest(revProfile.ProfileRevision == 1, "[Suite 65.16a] Initial profile has ProfileRevision 1")
+		local remoteStale = { ProfileRevision = 5 }
+		local conflictData, applied = PersistenceService.resolveUpdateConflict(remoteStale, revProfile)
+		assertTest(applied == false, "[Suite 65.16b] Stale local session (remote 5 > local 1) conflict detected")
+		assertTest(revProfile.ProfileRevision == 1, "[Suite 65.16c] Incoming profile revision NOT incremented on conflict")
+		-- UpdateAsync retry simulation: calling resolveUpdateConflict 3 times does NOT over-increment incoming profile
+		for retry = 1, 3 do
+			local okData, isApp = PersistenceService.resolveUpdateConflict(nil, revProfile)
+			assertTest(isApp == true, "[Suite 65.16d] Retry iteration accepted")
+			assertTest(okData.ProfileRevision == 2, "[Suite 65.16e] Cloned data always has revision 2 during retries")
+		end
+		assertTest(revProfile.ProfileRevision == 1, "[Suite 65.16f] Session profile remains at revision 1 until commit")
+		PersistenceService.saveProfile(65016)
+		assertTest(revProfile.ProfileRevision == 2, "[Suite 65.16g] Session profile revision increments to 2 exactly once on commit")
+		-- Same-second save
+		PersistenceService.saveProfile(65016)
+		assertTest(revProfile.ProfileRevision == 3, "[Suite 65.16h] Same-second save increments revision to 3 without timestamp conflict")
+	end
+
+	do -- 65.17: ReturnToLobby full reset and permanent progression survival
+		RunManager.resetRunForTesting()
+		local lobbyTestPlayer = {
+			UserId = 65017,
+			Name = "LobbyPlayer",
+			DisplayName = "LobbyPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local lobbyPState = RunManager.addPlayer(lobbyTestPlayer :: any)
+		assert(lobbyPState, "lobbyPState exists")
+		lobbyPState.ClassLocked = true
+		RunManager.startRun(lobbyTestPlayer :: any)
+		lobbyPState.Gold = 999
+		table.insert(lobbyPState.RelicIds, "Vajra")
+		PersistenceService.addAetherShards(lobbyTestPlayer :: any, 250)
+		local shardsBeforeReset = PersistenceService.getProfile(lobbyTestPlayer :: any).AetherShards
+		RunManager.resetToLobby()
+		local finalRunState = RunManager.getRunState()
+		assertTest(finalRunState.Phase == "Lobby", "[Suite 65.17a] Run phase reset to Lobby")
+		assertTest(lobbyPState.Gold == GameConfig.Dungeon.StarterGold, "[Suite 65.17b] Run gold reset to starter amount")
+		assertTest(lobbyPState.ClassLocked == false, "[Suite 65.17c] ClassLocked reset to false")
+		assertTest(CombatService.getActiveCombat() == nil, "[Suite 65.17d] Active combat cleaned up")
+		local shardsAfterReset = PersistenceService.getProfile(lobbyTestPlayer :: any).AetherShards
+		assertTest(shardsAfterReset == shardsBeforeReset, "[Suite 65.17e] Permanent AetherShards survived ReturnToLobby")
+	end
+end
+
 function TestRunner.runAllTests(): boolean
 	passedCount = 0
 	totalCount = 0
@@ -6211,6 +6650,11 @@ function TestRunner.runAllTests(): boolean
 	RunManager.resetToLobby(lobbyPlayer :: any)
 	local resetState = RunManager.getRunState()
 	assertTest(resetState.Phase == "Lobby", "[Suite 64.19a] resetToLobby returns Phase to Lobby")
+
+	----------------------------------------------------------------------------
+	-- SUITE 65: ACTION TRANSACTIONS, STATUS INTEGRITY, PERSISTENCE SAFETY & MAP
+	----------------------------------------------------------------------------
+	runSuite65()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

@@ -62,6 +62,7 @@ required_files = [
     "src/server/services/DamagePipeline.luau",
     "src/server/services/StatusService.luau",
     "src/server/services/EffectResolver.luau",
+    "src/server/services/ActionTransaction.luau",
     "src/client/UIController.client.luau",
     "src/client/ClassSelectUI.client.luau",
     "src/client/RelicUI.client.luau",
@@ -1201,9 +1202,70 @@ test("RelicService.resetCombatState" in run_mgr_src, "RunManager resets relic co
 test("ClassService.resetClassCombatGimmicks" in run_mgr_src, "RunManager resets class combat gimmicks on resetToLobby")
 test("SkillService.resetCooldowns" in run_mgr_src, "RunManager resets skill cooldowns on resetToLobby")
 
+# --- [Check 59] Suite 65 Regression Tests (Final Hardening Pass) ---
+print("\n--- [Check 59] Suite 65 Regression Tests (Final Hardening Pass) ---")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+test("[Suite 65] Action Transactions, Status Integrity, Persistence Safety & Map" in testrunner_src, "TestRunner includes Suite 65")
+test("[Suite 65.1a] Card with failing second effect returns false" in testrunner_src, "Suite 65 tests card failing effect returns false")
+test("[Suite 65.1b] Failed card restores Energy to 3" in testrunner_src, "Suite 65 tests failed card restores Energy")
+test("[Suite 65.1c] Failed card reverts first-effect damage on enemy" in testrunner_src, "Suite 65 tests failed card reverts HP damage")
+test("[Suite 65.1d] Failed card remains in exact hand position" in testrunner_src, "Suite 65 tests failed card remains in hand")
+test("[Suite 65.1e] Failed card not moved to discard pile" in testrunner_src, "Suite 65 tests failed card not moved to discard pile")
+test("[Suite 65.2a] BloodPriest failing card returns false" in testrunner_src, "Suite 65 tests BloodPriest failing card returns false")
+test("[Suite 65.2b] BloodPriest HP sacrifice reverted on failure" in testrunner_src, "Suite 65 tests BloodPriest HP sacrifice reverted on failure")
+test("[Suite 65.2c] BloodPriest TotalSacrificedHP reverted to 0" in testrunner_src, "Suite 65 tests BloodPriest TotalSacrificedHP reverted")
+test("[Suite 65.3a] Shadowblade failing card returns false" in testrunner_src, "Suite 65 tests Shadowblade failing card returns false")
+test("[Suite 65.3b] Shadowblade ComboCount reverted to 2 on failure" in testrunner_src, "Suite 65 tests Shadowblade ComboCount reverted")
+test("[Suite 65.4a] Mechanist failing card returns false" in testrunner_src, "Suite 65 tests Mechanist failing card returns false")
+test("[Suite 65.4b] Mechanist ScrapParts reverted to 3 on failure" in testrunner_src, "Suite 65 tests Mechanist ScrapParts reverted")
+test("[Suite 65.5a] Card with failing effect after status returns false" in testrunner_src, "Suite 65 tests card with status rollback returns false")
+test("[Suite 65.5b] Applied status on enemy reverted on failure" in testrunner_src, "Suite 65 tests applied status reverted on failure")
+test("[Suite 65.6a] Valid skill use returns true" in testrunner_src, "Suite 65 tests valid skill use returns true")
+test("[Suite 65.7a] Skill with failing second effect returns false" in testrunner_src, "Suite 65 tests skill failing effect rollback")
+test("[Suite 65.8a] Skill with zero executed effects returns false" in testrunner_src, "Suite 65 tests skill with skipped effects returns false")
+test("[Suite 65.9] Pre-validation rejects invalid effect type on skill" in testrunner_src, "Suite 65 tests skill pre-validation rejects invalid effect")
+test("[Suite 65.10a] StatusService ticks 3 Poison dealing 3 DamageDealt" in testrunner_src, "Suite 65 tests player status single damage")
+test("[Suite 65.11a] StatusService marks player defeated" in testrunner_src, "Suite 65 tests status marks player defeated")
+test("[Suite 65.12a] Status-induced defeat immediately ends combat" in testrunner_src, "Suite 65 tests status defeat immediately ends combat")
+test("[Suite 65.13a] getProfile returns nil for LoadFailed player" in testrunner_src, "Suite 65 tests getProfile returns nil on LoadFailed")
+test("[Suite 65.13b] getCardCount returns 0 without crashing on nil profile" in testrunner_src, "Suite 65 tests CardCollectionService handles nil profile")
+test("[Suite 65.13d] getSlotEntitlement returns safe zero-capacity view" in testrunner_src, "Suite 65 tests DeckService handles nil profile")
+test("[Suite 65.14b] 5th player addition returns nil, conforming to PlayerState? return type" in testrunner_src, "Suite 65 tests addPlayer conforms to PlayerState? return type")
+test("[Suite 65.15a] Valid reward claim returns true" in testrunner_src, "Suite 65 tests claimRewardCard returns true")
+test("[Suite 65.15b] Claimed card instance added to runtime deck" in testrunner_src, "Suite 65 tests claimRewardCard adds card to deck")
+test("[Suite 65.15c] Permanent collection count incremented exactly once" in testrunner_src, "Suite 65 tests claimRewardCard increments permanent collection")
+test("[Suite 65.15d] Duplicate reward claim rejected" in testrunner_src, "Suite 65 tests claimRewardCard rejects duplicate claim")
+test("[Suite 65.16a] Initial profile has ProfileRevision 1" in testrunner_src, "Suite 65 tests ProfileRevision initial value")
+test("[Suite 65.16b] Stale local session (remote 5 > local 1) conflict detected" in testrunner_src, "Suite 65 tests stale session conflict detected")
+test("[Suite 65.16c] Incoming profile revision NOT incremented on conflict" in testrunner_src, "Suite 65 tests no incoming revision increment on conflict")
+test("[Suite 65.16e] Cloned data always has revision 2 during retries" in testrunner_src, "Suite 65 tests no over-increment on retries")
+test("[Suite 65.17a] Run phase reset to Lobby" in testrunner_src, "Suite 65 tests resetToLobby returns phase to Lobby")
+test("[Suite 65.17e] Permanent AetherShards survived ReturnToLobby" in testrunner_src, "Suite 65 tests permanent progression survived ReturnToLobby")
+
+# Check source structural invariants for final hardening pass
+ui_controller_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+action_tx_src = (ROOT / "src/server/services/ActionTransaction.luau").read_text(encoding="utf-8")
+class_svc_src = (ROOT / "src/server/services/ClassService.luau").read_text(encoding="utf-8")
+relic_svc_src = (ROOT / "src/server/services/RelicService.luau").read_text(encoding="utf-8")
+
+test("ActionTransaction" in combat_svc_src, "CombatService requires ActionTransaction")
+test("ActionTransaction" in skill_svc_src, "SkillService requires ActionTransaction")
+test("function ActionTransaction.beginCombatTransaction" in action_tx_src, "ActionTransaction implements beginCombatTransaction")
+test("function ActionTransaction.rollbackCombatTransaction" in action_tx_src, "ActionTransaction implements rollbackCombatTransaction")
+test("function ClassService.snapshotGimmickTracker" in class_svc_src, "ClassService implements snapshotGimmickTracker")
+test("function ClassService.restoreGimmickTracker" in class_svc_src, "ClassService implements restoreGimmickTracker")
+test("function StatusService.snapshotStatuses" in status_svc_src, "StatusService implements snapshotStatuses")
+test("function StatusService.restoreStatuses" in status_svc_src, "StatusService implements restoreStatuses")
+test("function RelicService.snapshotCombatState" in relic_svc_src, "RelicService implements snapshotCombatState")
+test("function RelicService.restoreCombatState" in relic_svc_src, "RelicService implements restoreCombatState")
+test("applyDamageToPlayer(playerState, tick.DamageDealt)" not in combat_svc_src, "CombatService eliminates line 576 double damage")
+test("Act%d_T%d_L%d" not in ui_controller_src, "UIController eliminates fake Act%d_T%d_L%d map fallback")
+test("MAP LOADING..." in ui_controller_src, "UIController displays MAP LOADING... placeholder")
+test("function RunManager.addPlayer(player: any): StateTypes.PlayerState?" in run_mgr_src, "RunManager.addPlayer strictly typed as StateTypes.PlayerState?")
+
 # Static Compilation of all Luau files with luau-compile
 import subprocess
-print("\n--- [Check 58] Static Compilation of All Luau Files ---")
+print("\n--- [Check 60] Static Compilation of All Luau Files ---")
 compiler_bin = ROOT / "luau-bin" / "luau-compile.exe"
 if compiler_bin.exists():
     luau_files = list((ROOT / "src").rglob("*.luau"))

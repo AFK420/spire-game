@@ -489,6 +489,41 @@ function StatusService.isTestIsolationActive(): boolean
 	return isStatusIsolation
 end
 
+function StatusService.snapshotStatuses(): { [string]: { [string]: StateTypes.StatusInstance } }
+	local snap: { [string]: { [string]: StateTypes.StatusInstance } } = {}
+	for entityId, statuses in entityStatuses do
+		snap[entityId] = {}
+		for defId, inst in statuses do
+			snap[entityId][defId] = {
+				InstanceId = inst.InstanceId,
+				DefinitionId = inst.DefinitionId,
+				Stacks = inst.Stacks,
+				RemainingDuration = inst.RemainingDuration,
+				SourceId = inst.SourceId,
+				TargetId = inst.TargetId,
+			}
+		end
+	end
+	return snap
+end
+
+function StatusService.restoreStatuses(snapshot: { [string]: { [string]: StateTypes.StatusInstance } })
+	table.clear(entityStatuses)
+	for entityId, statuses in snapshot do
+		entityStatuses[entityId] = {}
+		for defId, inst in statuses do
+			entityStatuses[entityId][defId] = {
+				InstanceId = inst.InstanceId,
+				DefinitionId = inst.DefinitionId,
+				Stacks = inst.Stacks,
+				RemainingDuration = inst.RemainingDuration,
+				SourceId = inst.SourceId,
+				TargetId = inst.TargetId,
+			}
+		end
+	end
+end
+
 function StatusService.resetCombat()
 	table.clear(entityStatuses)
 end

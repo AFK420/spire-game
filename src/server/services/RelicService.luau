@@ -49,6 +49,25 @@ function RelicService.resetCombatState(userId: number)
 	}
 end
 
+function RelicService.snapshotCombatState(userId: number): RelicCombatState
+	local s = getCombatState(userId)
+	return {
+		AttacksPlayedThisCombat = s.AttacksPlayedThisCombat,
+		FirstAttackUsed = s.FirstAttackUsed,
+		CentennialTriggered = s.CentennialTriggered,
+		PendingBonusDraw = s.PendingBonusDraw,
+	}
+end
+
+function RelicService.restoreCombatState(userId: number, snapshot: RelicCombatState)
+	relicCombatStates[userId] = {
+		AttacksPlayedThisCombat = snapshot.AttacksPlayedThisCombat,
+		FirstAttackUsed = snapshot.FirstAttackUsed,
+		CentennialTriggered = snapshot.CentennialTriggered,
+		PendingBonusDraw = snapshot.PendingBonusDraw,
+	}
+end
+
 function RelicService.hasRelic(playerState: StateTypes.PlayerState, relicId: string): boolean
 	for _, id in playerState.RelicIds do
 		if id == relicId then

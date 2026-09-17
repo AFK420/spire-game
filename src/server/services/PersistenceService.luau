@@ -380,26 +380,28 @@ function PersistenceService.retryLoadProfile(player: any): (boolean, StateTypes.
 end
 
 -- Concurrency safety: check for conflicting newer session data
-function PersistenceService.resolveUpdateConflict(currentData: any, incomingProfile: StateTypes.PlayerProfile): (any, boolean)
-	if typeof(currentData) == "table" then
-		-- Check revision conflict
-		if typeof(currentData.ProfileRevision) == "number" and typeof(incomingProfile.ProfileRevision) == "number" then
-			if currentData.ProfileRevision > incomingProfile.ProfileRevision then
-				return currentData, false -- Conflict: remote revision is newer
-			end
-		end
+-- Note: ProfileRevision is the sole authoritative concurrency key.
+-- LastSavedTimestamp is diagnostic only and never used for conflict rejection.
+-- Does NOT mutate incomingProfile in-place so UpdateAsync retries do not over-increment.
+function PersistenceService.resolveUpdateConflict(
+	currentData: any,
+	incomingProfile: StateTypes.PlayerProfile
+): (any, boolean)
+	local localRev = incomingProfile.ProfileRevision or 1
 
-		-- Check timestamp conflict
-		if typeof(currentData.LastSavedTimestamp) == "number" and typeof(incomingProfile.LastSavedTimestamp) == "number" then
-			if currentData.LastSavedTimestamp > incomingProfile.LastSavedTimestamp then
-				return currentData, false -- Conflict: keep newer remote data
-			end
+	if typeof(currentData) == "table" and typeof(currentData.ProfileRevision) == "number" then
+		local remoteRev = currentData.ProfileRevision
+		-- Stale local session: remote revision is strictly greater than incoming
+		if remoteRev > localRev then
+			return currentData, false -- Conflict: keep newer remote data
 		end
 	end
 
-	-- Incoming is accepted: monotonically increment revision
-	incomingProfile.ProfileRevision = (incomingProfile.ProfileRevision or 0) + 1
-	return incomingProfile, true -- incoming is accepted
+	-- Incoming is accepted: clone data with incremented revision
+	local dataToSave = deepCopy(incomingProfile)
+	dataToSave.ProfileRevision = localRev + 1
+	dataToSave.LastSavedTimestamp = os.time()
+	return dataToSave, true -- incoming is accepted
 end
 
 -- Internal persistence save using UpdateAsync for concurrency safety
@@ -415,17 +417,20 @@ local function saveProfileInternal(userId: number, profile: StateTypes.PlayerPro
 
 	profile.LastSavedTimestamp = os.time()
 	if not profileStore or RunService:IsStudio() then
-		profile.ProfileRevision = (profile.ProfileRevision or 0) + 1
+		profile.ProfileRevision = (profile.ProfileRevision or 1) + 1
 		return true, nil
 	end
 
 	profileLoadStates[userId] = "Saving"
 
+	local conflictOccurred = false
 	local success, err = pcall(function()
 		profileStore:UpdateAsync(tostring(userId), function(currentData: any)
 			local dataToSave, applied = PersistenceService.resolveUpdateConflict(currentData, profile)
 			if not applied then
-				warn(string.format("[PersistenceService] Conflict detected for user %d: DataStore timestamp %d > session timestamp %d.", userId, currentData.LastSavedTimestamp, profile.LastSavedTimestamp))
+				conflictOccurred = true
+				warn(string.format("[PersistenceService] Conflict detected for user %d: remote revision %s > session revision %s.", userId, tostring(currentData and currentData.ProfileRevision), tostring(profile.ProfileRevision)))
+				return nil -- abort UpdateAsync
 			end
 			return dataToSave
 		end)
@@ -433,11 +438,17 @@ local function saveProfileInternal(userId: number, profile: StateTypes.PlayerPro
 
 	profileLoadStates[userId] = loadState
 
+	if conflictOccurred then
+		return false, "Conflict detected: remote profile revision is newer."
+	end
+
 	if not success then
 		warn(string.format("[PersistenceService] Failed to save profile for %d: %s", userId, tostring(err)))
 		return false, tostring(err)
 	end
 
+	-- Session profile accepted: increment revision exactly once logically
+	profile.ProfileRevision = (profile.ProfileRevision or 1) + 1
 	return true, nil
 end
 

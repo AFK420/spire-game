@@ -376,47 +376,18 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 			end
 		end
 	else
-		-- Safe fallback when MapNodes not yet populated
-		local availableSet: { [string]: boolean } = {}
-		for _, id in snapshot.AvailableNodeIds do
-			availableSet[id] = true
-		end
-
-		for tierNum = 10, 1, -1 do
-			local yPos = (10 - tierNum) * tierHeight + 12
-			for lane = 1, 3 do
-				local laneX = 100 + (lane - 1) * 160
-				local dummyNodeId = string.format("Act%d_T%d_L%d", snapshot.ActIndex, tierNum, lane)
-				local isReachable = availableSet[dummyNodeId] == true
-
-				local nodeBtn = Instance.new("TextButton")
-				nodeBtn.Name = "Node_" .. dummyNodeId
-				nodeBtn.Size = UDim2.new(0, 54, 0, 54)
-				nodeBtn.Position = UDim2.new(0, laneX, 0, yPos)
-				nodeBtn.BackgroundColor3 = (tierNum == 10) and Color3.fromRGB(220, 50, 50) or Color3.fromRGB(50, 120, 220)
-				nodeBtn.BorderSizePixel = 0
-				nodeBtn.Text = (tierNum == 10) and "👹" or "⚔️"
-				nodeBtn.TextSize = 24
-				nodeBtn.ZIndex = 18
-				nodeBtn.Parent = mapScroll
-				UIFactory.createCorner(nodeBtn, 27)
-
-				local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(60, 65, 80), 1)
-				if isReachable then
-					stroke.Color = Color3.fromRGB(255, 240, 100)
-					stroke.Thickness = 3
-					nodeBtn.AutoButtonColor = true
-					local targetId = dummyNodeId
-					nodeBtn.MouseButton1Click:Connect(function()
-						if VoteMapNodeEvent then
-							VoteMapNodeEvent:FireServer(targetId)
-						end
-					end)
-				else
-					nodeBtn.BackgroundTransparency = 0.5
-				end
-			end
-		end
+		-- MapNodes not yet populated from server
+		local loadingLabel = Instance.new("TextLabel")
+		loadingLabel.Name = "MapLoadingLabel"
+		loadingLabel.Size = UDim2.new(1, 0, 0, 80)
+		loadingLabel.Position = UDim2.new(0, 0, 0.4, 0)
+		loadingLabel.BackgroundTransparency = 1
+		loadingLabel.Text = "MAP LOADING..."
+		loadingLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
+		loadingLabel.Font = Enum.Font.GothamBold
+		loadingLabel.TextSize = 22
+		loadingLabel.ZIndex = 18
+		loadingLabel.Parent = mapScroll
 	end
 end
 

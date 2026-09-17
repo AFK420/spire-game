@@ -25,6 +25,7 @@ local servicesFolder = script.Parent
 local TargetResolver = require(servicesFolder:WaitForChild("TargetResolver") :: ModuleScript)
 local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
 local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
+local ActionTransaction = require(servicesFolder:WaitForChild("ActionTransaction") :: ModuleScript)
 
 local SkillService = {}
 
@@ -445,10 +446,38 @@ function SkillService.useSkill(
 		return false, resolvedTarget.Error
 	end
 
-	-- 5. Collect modifiers deterministically
+	-- 5. Pre-validate effect types and conditions before capturing snapshot or executing
+	for _, eff in def.Effects do
+		if not EffectResolver.isSupportedEffectType(eff.Type) then
+			return false, "Unsupported effect type: " .. tostring(eff.Type)
+		end
+		if eff.Condition and eff.Condition ~= "" then
+			if eff.Condition ~= "TargetDowned" and eff.Condition ~= "TargetLiving" and eff.Condition ~= "LowHP" then
+				return false, "Unknown effect condition: " .. tostring(eff.Condition)
+			end
+		end
+		if eff.Type == "Damage" then
+			if not resolvedTarget.EnemyTarget or resolvedTarget.EnemyTarget.HP <= 0 then
+				return false, "No living enemy target."
+			end
+		elseif eff.Type == "Heal" then
+			if resolvedTarget.PlayerTarget and resolvedTarget.PlayerTarget.IsDowned then
+				return false, "Cannot heal downed player."
+			end
+		elseif eff.Type == "Revive" then
+			if resolvedTarget.PlayerTarget and not resolvedTarget.PlayerTarget.IsDowned then
+				return false, "Player is not downed."
+			end
+		end
+	end
+
+	-- 6. Collect modifiers deterministically
 	local modifiers = StatResolver.collectPlayerModifiers(playerState)
 
-	-- 6. Build action context and execute effects
+	-- COMMIT PHASE: All validations passed. Capture atomic snapshot before mutating combat/player state
+	local txSnapshot = ActionTransaction.beginCombatTransaction(playerState, combatState, party)
+
+	-- 7. Build action context and execute effects
 	local actionCtx: EffectResolver.ActionContext = {
 		SourcePlayer = playerState,
 		Target = resolvedTarget,
@@ -486,21 +515,29 @@ function SkillService.useSkill(
 
 	local results = EffectResolver.resolveEffects(def.Effects, actionCtx)
 
-	-- Check for execution failure: if all effects failed, do NOT deduct cost or set cooldown
-	if #results > 0 then
-		local anySuccess = false
+	-- Transaction verification: all required effects must succeed (all-required-success)
+	local hasFailure = false
+	local failureMsg = "Skill effect execution failed."
+
+	if #def.Effects > 0 and #results == 0 then
+		hasFailure = true
+		failureMsg = "No skill effects were satisfied or executed."
+	else
 		for _, r in ipairs(results) do
-			if r.Success then
-				anySuccess = true
+			if not r.Success then
+				hasFailure = true
+				failureMsg = r.Message or failureMsg
 				break
 			end
 		end
-		if not anySuccess then
-			return false, results[1].Message or "Skill effect execution failed."
-		end
 	end
 
-	-- 7. Execution succeeded: deduct costs and trigger cooldown transactionally
+	if hasFailure then
+		ActionTransaction.rollbackCombatTransaction(txSnapshot, playerState, combatState, party)
+		return false, failureMsg
+	end
+
+	-- 8. Execution succeeded: deduct costs and trigger cooldown transactionally
 	playerState.Resources.Energy -= energyCost
 	if hpCost > 0 then
 		playerState.Resources.HP -= hpCost
