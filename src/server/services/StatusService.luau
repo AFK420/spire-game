@@ -449,6 +449,29 @@ function StatusService.clearEntity(targetId: string)
 	entityStatuses[targetId] = nil
 end
 
+local liveEntityStatusesBackup: { [string]: { [string]: StateTypes.StatusInstance } }? = nil
+local isStatusIsolation = false
+
+function StatusService.beginTestIsolation()
+	if not isStatusIsolation then
+		liveEntityStatusesBackup = entityStatuses
+		entityStatuses = {}
+		isStatusIsolation = true
+	end
+end
+
+function StatusService.endTestIsolation()
+	if isStatusIsolation then
+		entityStatuses = liveEntityStatusesBackup or {}
+		liveEntityStatusesBackup = nil
+		isStatusIsolation = false
+	end
+end
+
+function StatusService.isTestIsolationActive(): boolean
+	return isStatusIsolation
+end
+
 function StatusService.resetCombat()
 	table.clear(entityStatuses)
 end

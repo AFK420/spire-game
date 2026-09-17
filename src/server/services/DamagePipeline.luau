@@ -62,6 +62,40 @@ function DamagePipeline.executeDamage(
 	-- Periodic or direct hits cannot deal negative damage
 	finalDamage = math.max(0, finalDamage)
 
+	-- 1b. Critical Hit Resolution
+	local isCritical = false
+	if not context.IsPeriodic then
+		if context.Critical == true then
+			isCritical = true
+		elseif context.Critical == nil and context.SourcePlayer then
+			local sr = servicesFolder:FindFirstChild("StatResolver")
+			if sr then
+				local StatResolverModule = require(sr :: ModuleScript)
+				local playerStats = StatResolverModule.resolvePlayerStats(context.SourcePlayer)
+				local critChance = playerStats.CritChance or 0.05
+				if critChance > 0 and math.random() < critChance then
+					isCritical = true
+				end
+			end
+		end
+	end
+
+	if isCritical then
+		local mult = 1.5
+		if context.SourcePlayer then
+			local sr = servicesFolder:FindFirstChild("StatResolver")
+			if sr then
+				local StatResolverModule = require(sr :: ModuleScript)
+				local playerStats = StatResolverModule.resolvePlayerStats(context.SourcePlayer)
+				if playerStats.CritMultiplier and playerStats.CritMultiplier > 0 then
+					mult = playerStats.CritMultiplier
+				end
+			end
+		end
+		finalDamage = math.round(finalDamage * mult)
+		context.Critical = true
+	end
+
 	local shieldAbsorbed = 0
 	local hpLost = 0
 	local isDefeatedOrDowned = false
@@ -119,6 +153,7 @@ function DamagePipeline.executeDamage(
 		ShieldAbsorbed = shieldAbsorbed,
 		HPLost = hpLost,
 		IsDefeatedOrDowned = isDefeatedOrDowned,
+		IsCritical = isCritical,
 	}
 end
 

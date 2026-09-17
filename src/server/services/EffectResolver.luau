@@ -402,13 +402,13 @@ handlers["Exhaust"] = function(effect: CardData.Effect, context: ActionContext, 
 					context.SourcePlayer.DisplayName,
 					context.SourcePlayer.DisplayName,
 					nil,
-					string.format("%s exhausted.", context.CardInstance.CardDefId)
+					string.format("%s exhausted.", context.CardInstance.DefinitionId)
 				)
 			end
 			return {
 				Success = true,
 				EffectType = "Exhaust",
-				Message = string.format("Exhausted card %s.", context.CardInstance.CardDefId),
+				Message = string.format("Exhausted card %s.", context.CardInstance.DefinitionId),
 			}
 		end
 	end

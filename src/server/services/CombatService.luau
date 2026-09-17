@@ -67,6 +67,47 @@ local partyRef: { [number]: StateTypes.PlayerState } = {}
 local onCombatEndCallback: ((outcome: "Victory" | "Defeat") -> ())? = nil
 local turnTimerConnection: RBXScriptConnection? = nil
 
+local liveActiveCombatBackup: StateTypes.CombatState? = nil
+local livePartyRefBackup: { [number]: StateTypes.PlayerState }? = nil
+local liveOnCombatEndCallbackBackup: ((outcome: "Victory" | "Defeat") -> ())? = nil
+local liveTurnTimerConnectionBackup: RBXScriptConnection? = nil
+local isCombatIsolation = false
+
+function CombatService.beginTestIsolation()
+	if not isCombatIsolation then
+		liveActiveCombatBackup = activeCombat
+		livePartyRefBackup = partyRef
+		liveOnCombatEndCallbackBackup = onCombatEndCallback
+		liveTurnTimerConnectionBackup = turnTimerConnection
+		isCombatIsolation = true
+		activeCombat = nil
+		partyRef = {}
+		onCombatEndCallback = nil
+		turnTimerConnection = nil
+	end
+end
+
+function CombatService.endTestIsolation()
+	if isCombatIsolation then
+		if turnTimerConnection then
+			turnTimerConnection:Disconnect()
+		end
+		activeCombat = liveActiveCombatBackup
+		partyRef = livePartyRefBackup or {}
+		onCombatEndCallback = liveOnCombatEndCallbackBackup
+		turnTimerConnection = liveTurnTimerConnectionBackup
+		liveActiveCombatBackup = nil
+		livePartyRefBackup = nil
+		liveOnCombatEndCallbackBackup = nil
+		liveTurnTimerConnectionBackup = nil
+		isCombatIsolation = false
+	end
+end
+
+function CombatService.isTestIsolationActive(): boolean
+	return isCombatIsolation
+end
+
 --------------------------------------------------------------------------------
 -- Snapshot Generators
 --------------------------------------------------------------------------------
@@ -391,6 +432,28 @@ local function resolveTurn()
 				logEvent("ShieldGained", "Relic", tostring(userId), relicResult.BonusShield, string.format("+%d Shield (Relic)", relicResult.BonusShield))
 			end
 
+			local gimmickEnd = ClassService.processGimmickOnTurnEnd(playerState, activeCombat.Enemies)
+			if gimmickEnd.EndTurnShield > 0 then
+				playerState.Resources.Shield += gimmickEnd.EndTurnShield
+				logEvent("ShieldGained", "Gimmick", tostring(userId), gimmickEnd.EndTurnShield, string.format("+%d Shield (Gimmick)", gimmickEnd.EndTurnShield))
+			end
+			if gimmickEnd.EndTurnHeal > 0 then
+				playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + gimmickEnd.EndTurnHeal)
+				logEvent("Healed", "Gimmick", tostring(userId), gimmickEnd.EndTurnHeal, string.format("+%d HP (Gimmick)", gimmickEnd.EndTurnHeal))
+			end
+			if gimmickEnd.EndTurnDamage > 0 then
+				for _, enemy in activeCombat.Enemies do
+					if enemy.HP > 0 then
+						local remDmg, _ = applyDamageToEnemy(enemy, gimmickEnd.EndTurnDamage)
+						logEvent("DamageDealt", "Gimmick", enemy.Name, gimmickEnd.EndTurnDamage, string.format("-%d HP (Gimmick)", remDmg))
+						if enemy.HP <= 0 then
+							logEvent("EnemyDefeated", "Gimmick", enemy.InstanceId, nil, string.format("%s was defeated by gimmick damage!", enemy.Name))
+						end
+						break
+					end
+				end
+			end
+
 			if not relicResult.RetainShield then
 				playerState.Resources.Shield = 0
 			else
@@ -459,9 +522,14 @@ local function resolveTurn()
 				elseif enemy.Intent.Type == "Debuff" then
 					for _, pState in partyRef do
 						if not pState.IsDowned and pState.IsConnected ~= false then
+							StatusService.applyStatus("player_" .. tostring(pState.UserId), "Poison", enemy.Intent.Value, -1, enemy.Name, pState)
 							logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, "Debuffed with Poison")
 						end
 					end
+
+				elseif enemy.Intent.Type == "Buff" then
+					enemy.AttackPower = (enemy.AttackPower or 10) + enemy.Intent.Value
+					logEvent("BuffGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Attack Power", enemy.Intent.Value))
 				end
 
 				enemy.Intent = generateEnemyIntent(enemy)
@@ -488,11 +556,29 @@ local function resolveTurn()
 			playerState.IsReady = false
 
 			if not playerState.IsDowned and playerState.IsConnected ~= false then
-				playerState.Resources.Energy = playerState.Resources.MaxEnergy
-				local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
-				playerState.Resources.Energy += startRelic.BonusEnergy
-				CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount + startRelic.BonusDraw)
-				SkillService.onTurnStart(playerState)
+				-- Tick player turn-start statuses (Poison, Burn, etc.)
+				local pTargetId = "player_" .. tostring(playerState.UserId)
+				local pTicks = StatusService.tickStatuses(pTargetId, "TurnStart", playerState, false)
+				for _, tick in pTicks do
+					if tick.DamageDealt > 0 then
+						applyDamageToPlayer(playerState, tick.DamageDealt)
+						logEvent("DamageDealt", tick.DefinitionId, playerState.DisplayName, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
+					end
+					if tick.Defeated or playerState.Resources.HP <= 0 then
+						playerState.IsDowned = true
+						playerState.Resources.HP = 0
+						playerState.Resources.Shield = 0
+						logEvent("PlayerDowned", tick.DefinitionId, playerState.DisplayName, nil, string.format("%s was downed by %s!", playerState.DisplayName, tick.DefinitionId))
+					end
+				end
+
+				if not playerState.IsDowned then
+					playerState.Resources.Energy = playerState.Resources.MaxEnergy
+					local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
+					playerState.Resources.Energy += startRelic.BonusEnergy
+					CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount + startRelic.BonusDraw)
+					SkillService.onTurnStart(playerState)
+				end
 			end
 		end
 
@@ -687,13 +773,19 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	-- Evaluate Class Gimmick
 	local gimmick = ClassService.processGimmickOnCardPlay(playerState, cardInst, targetEnemy)
 
-	-- Energy verification
-	if not gimmick.FreeEnergy and playerState.Resources.Energy < cardInst.CardData.Cost then
+	-- Energy verification with StatResolver CostReduction
+	local playerStats = StatResolver.resolvePlayerStats(playerState)
+	local effectiveCost = cardInst.CardData.Cost
+	if playerStats.CostReduction and playerStats.CostReduction > 0 then
+		effectiveCost = math.max(0, effectiveCost - playerStats.CostReduction)
+	end
+
+	if not gimmick.FreeEnergy and playerState.Resources.Energy < effectiveCost then
 		return false, "Not enough Energy!"
 	end
 
 	if not gimmick.FreeEnergy then
-		playerState.Resources.Energy -= cardInst.CardData.Cost
+		playerState.Resources.Energy -= effectiveCost
 	end
 
 	-- Move card from hand to discard pile
@@ -767,12 +859,27 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		Modifiers = actionModifiers,
 		LogEvent = logEvent,
 		OnKillCallback = function(defeatedEnemy)
-			RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = defeatedEnemy })
+			ClassService.processGimmickOnKill(playerState)
+			local relicResult = RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = defeatedEnemy })
+			if relicResult then
+				if relicResult.BonusEnergy > 0 then
+					playerState.Resources.Energy += relicResult.BonusEnergy
+					logEvent("EnergyGained", "Relic", playerState.DisplayName, relicResult.BonusEnergy, string.format("+%d Energy (Relic)", relicResult.BonusEnergy))
+				end
+				if relicResult.BonusDraw > 0 then
+					CardService.drawCards(playerState, relicResult.BonusDraw)
+				end
+			end
 		end,
 		DidRevive = false,
 	}
 
-	EffectResolver.resolveEffects(cardInst.CardData.Effects, actionCtx)
+	local effectResults = EffectResolver.resolveEffects(cardInst.CardData.Effects, actionCtx)
+	for _, res in effectResults do
+		if not res.Success then
+			return false, res.Message or "Card effect execution failed."
+		end
+	end
 
 	-- Check Victory
 	if areAllEnemiesDead() then

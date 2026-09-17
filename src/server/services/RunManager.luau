@@ -41,6 +41,27 @@ local PersistenceService = require(servicesFolder:WaitForChild("PersistenceServi
 local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
 
 local CombatService: any = nil
+local StatusService: any = nil
+
+local function getCombatService(): any
+	if not CombatService then
+		local cs = servicesFolder:FindFirstChild("CombatService")
+		if cs then
+			CombatService = require(cs :: ModuleScript)
+		end
+	end
+	return CombatService
+end
+
+local function getStatusService(): any
+	if not StatusService then
+		local ss = servicesFolder:FindFirstChild("StatusService")
+		if ss then
+			StatusService = require(ss :: ModuleScript)
+		end
+	end
+	return StatusService
+end
 
 local RunManager = {}
 
@@ -81,6 +102,15 @@ function RunManager.beginTestIsolation()
 	isolatedTestRun = createInitialRun("run_test_isolated")
 	currentRun = isolatedTestRun
 	internalDungeonRun = nil
+
+	local cs = getCombatService()
+	if cs and cs.beginTestIsolation then
+		cs.beginTestIsolation()
+	end
+	local ss = getStatusService()
+	if ss and ss.beginTestIsolation then
+		ss.beginTestIsolation()
+	end
 end
 
 function RunManager.endTestIsolation()
@@ -89,6 +119,15 @@ function RunManager.endTestIsolation()
 	currentRun = liveRun
 	internalDungeonRun = liveDungeonRun
 	liveDungeonRun = nil
+
+	local cs = getCombatService()
+	if cs and cs.endTestIsolation then
+		cs.endTestIsolation()
+	end
+	local ss = getStatusService()
+	if ss and ss.endTestIsolation then
+		ss.endTestIsolation()
+	end
 
 	-- Safe reconnect sync: ensure real players connected during isolation are registered in liveRun
 	local okPlayers, players = pcall(function()

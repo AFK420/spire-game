@@ -257,6 +257,7 @@ export type DamageResult = {
 	ShieldAbsorbed: number,
 	HPLost: number,
 	IsDefeatedOrDowned: boolean,
+	IsCritical: boolean?,
 }
 
 export type StatusStackingMode = "Stack" | "RefreshDuration" | "Independent" | "None"
