@@ -1319,6 +1319,47 @@ test("table.clear(member.UnlockedPassives)" in run_mgr_src, "RunManager.resetToL
 test("member.PassivePoints = 0" in run_mgr_src, "RunManager.resetToLobby sets PassivePoints = 0")
 test("SkillData" in run_mgr_src, "RunManager requires SkillData")
 
+# 62. Suite 67 Regression Tests & First Room UI Navigation Invariants
+print("\n--- [Check 62] Suite 67 Regression Tests & First Room UI Navigation Invariants ---")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+
+test("local function runSuite67" in testrunner_src, "TestRunner includes Suite 67 definition")
+test("runSuite67()" in testrunner_src, "TestRunner invokes Suite 67 in runAllTests")
+test("[Suite 67.1] addPlayer succeeds for initialized solo player" in testrunner_src, "Suite 67 tests addPlayer succeeds for solo player")
+test("[Suite 67.2] Solo player class is locked" in testrunner_src, "Suite 67 tests solo player class lock")
+test("[Suite 67.3] startRun succeeds" in testrunner_src, "Suite 67 tests startRun succeeds")
+test("[Suite 67.4] Run state transitioned to MapSelect phase" in testrunner_src, "Suite 67 tests transition to MapSelect phase")
+test("[Suite 67.5] CurrentNodeId is nil at fresh run start" in testrunner_src, "Suite 67 tests CurrentNodeId is nil at fresh run start")
+test("[Suite 67.6] CurrentTier is 0 at fresh run start" in testrunner_src, "Suite 67 tests CurrentTier is 0 at fresh run start")
+test("[Suite 67.7] AvailableNodeIds populated with at least 1 Tier-1 node" in testrunner_src, "Suite 67 tests AvailableNodeIds populated")
+test("[Suite 67.8] Player snapshot Phase is MapSelect" in testrunner_src, "Suite 67 tests player snapshot Phase is MapSelect")
+test("[Suite 67.9] Authoritative MapNodes populated in player snapshot" in testrunner_src, "Suite 67 tests MapNodes populated in snapshot")
+test("[Suite 67.11] voteMapNode succeeds" in testrunner_src, "Suite 67 tests voteMapNode succeeds")
+test("[Suite 67.12] 1-player consensus immediately advances run to ActiveRoom" in testrunner_src, "Suite 67 tests consensus advances to ActiveRoom")
+test("[Suite 67.13] CurrentNodeId matches voted node ID" in testrunner_src, "Suite 67 tests CurrentNodeId matches voted node")
+test("[Suite 67.14] CurrentTier updated to Tier 1" in testrunner_src, "Suite 67 tests CurrentTier updated to Tier 1")
+test("[Suite 67.15] ActiveCombat instantiated for combat node" in testrunner_src, "Suite 67 tests ActiveCombat instantiated")
+test("[Suite 67.16] ActiveCombat starts in PlayerPhase" in testrunner_src, "Suite 67 tests combat starts in PlayerPhase")
+test("[Suite 67.17] Active combat has at least 1 living enemy" in testrunner_src, "Suite 67 tests active combat has living enemies")
+test("[Suite 67.18] Solo player drew opening card hand" in testrunner_src, "Suite 67 tests opening hand cards drawn")
+test("[Suite 67.19] Solo player has starting energy" in testrunner_src, "Suite 67 tests starting energy initialized")
+test("[Suite 67.20] Clean reset to Lobby completes" in testrunner_src, "Suite 67 tests clean reset to Lobby")
+
+# Task 7: Stale assertion fix
+test('assertTest(soloCombat.Phase == "Defeat", "[Suite 65.12a] Status-induced defeat immediately ends combat")' in testrunner_src, "TestRunner line 410 asserts Defeat phase instead of stale CombatEnd")
+test('soloCombat.Phase == "CombatEnd"' not in testrunner_src, "TestRunner completely eliminates stale CombatEnd assertion")
+
+# UIController Client Navigation Invariants
+test("firstRoomPromptLabel" in ui_ctrl_src, "UIController declares firstRoomPromptLabel")
+test("👉 CHOOSE YOUR FIRST ROOM" in ui_ctrl_src, "UIController displays first room guidance badge")
+test("lowestAvailableTier" in ui_ctrl_src, "UIController dynamically finds lowest available tier")
+test("mapScroll.CanvasPosition = Vector2.new(0, targetCanvasY)" in ui_ctrl_src, "UIController auto-focuses map scroll canvas position")
+test("isVotePending" in ui_ctrl_src, "UIController implements map vote click debouncing")
+test("MAP DATA LOADING..." in ui_ctrl_src, "UIController displays loading diagnostic for empty map")
+test("MAP DATA ERROR" in ui_ctrl_src, "UIController displays error diagnostic for persistent empty map")
+test('res.Action == "VoteMapNode"' in ui_ctrl_src, "UIController handles ActionResult for VoteMapNode")
+
 # Static Compilation of all Luau files with luau-compile
 import subprocess
 print("\n--- [Check 60] Static Compilation of All Luau Files ---")

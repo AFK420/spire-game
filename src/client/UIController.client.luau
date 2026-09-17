@@ -267,6 +267,30 @@ mapTitle.TextXAlignment = Enum.TextXAlignment.Left
 mapTitle.ZIndex = 17
 mapTitle.Parent = mapHeader
 
+-- Map View State & Focus Tracking
+local lastFocusedPhase: string? = nil
+local lastFocusedTier: number? = nil
+local lastFocusedNodeId: string? = nil
+local isVotePending = false
+local mapSyncRequested = false
+local lastMapSyncTime = 0
+
+local firstRoomPromptLabel = Instance.new("TextLabel")
+firstRoomPromptLabel.Name = "FirstRoomPromptLabel"
+firstRoomPromptLabel.Size = UDim2.new(0, 320, 0, 36)
+firstRoomPromptLabel.Position = UDim2.new(0.5, -160, 1, -48)
+firstRoomPromptLabel.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
+firstRoomPromptLabel.BackgroundTransparency = 0.1
+firstRoomPromptLabel.Text = "👉 CHOOSE YOUR FIRST ROOM"
+firstRoomPromptLabel.TextColor3 = Color3.fromRGB(255, 220, 60)
+firstRoomPromptLabel.Font = Enum.Font.GothamBold
+firstRoomPromptLabel.TextSize = 15
+firstRoomPromptLabel.Visible = false
+firstRoomPromptLabel.ZIndex = 25
+firstRoomPromptLabel.Parent = mapView
+UIFactory.createCorner(firstRoomPromptLabel, 8)
+UIFactory.createStroke(firstRoomPromptLabel, Color3.fromRGB(255, 200, 50), 1.5)
+
 local mapScroll = Instance.new("ScrollingFrame")
 mapScroll.Name = "MapScroll"
 mapScroll.Size = UDim2.new(1, -20, 1, -65)
@@ -303,6 +327,37 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 
 	mapTitle.Text = string.format("🗺️ %s (Tier %d/10) - Select Next Room", snapshot.ActName or "Act 1", snapshot.CurrentTier or 0)
 
+	-- Diagnostic when MapNodes is empty or unpopulated
+	if not snapshot.MapNodes or #snapshot.MapNodes == 0 then
+		local loadingLabel = Instance.new("TextLabel")
+		loadingLabel.Name = "MapLoadingLabel"
+		loadingLabel.Size = UDim2.new(1, 0, 0, 80)
+		loadingLabel.Position = UDim2.new(0, 0, 0.4, 0)
+		loadingLabel.BackgroundTransparency = 1
+		loadingLabel.Font = Enum.Font.GothamBold
+		loadingLabel.TextSize = 20
+		loadingLabel.ZIndex = 18
+		loadingLabel.Parent = mapScroll
+
+		local now = os.clock()
+		if not mapSyncRequested or (now - lastMapSyncTime > 5) then
+			loadingLabel.Text = "MAP DATA LOADING..." -- MAP LOADING... placeholder
+			loadingLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
+			mapSyncRequested = true
+			lastMapSyncTime = now
+			if RequestStateSyncEvent then
+				RequestStateSyncEvent:FireServer()
+			end
+		else
+			loadingLabel.Text = "MAP DATA ERROR: Map nodes unavailable. Please re-sync."
+			loadingLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+		end
+		firstRoomPromptLabel.Visible = false
+		return
+	else
+		mapSyncRequested = false
+	end
+
 	local tierHeight = 74
 
 	-- Render vertical tier indicators
@@ -323,71 +378,104 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 	end
 
 	-- Render authoritative MapNodes graph from server snapshot
-	if snapshot.MapNodes and #snapshot.MapNodes > 0 then
-		for _, node in snapshot.MapNodes do
-			local yPos = (10 - node.Tier) * tierHeight + 12
-			local laneX = 70 + (node.Lane - 1) * 110
-			local icon, baseColor = getNodeVisuals(node.Type)
+	for _, node in snapshot.MapNodes do
+		local yPos = (10 - node.Tier) * tierHeight + 12
+		local laneX = 70 + (node.Lane - 1) * 110
+		local icon, baseColor = getNodeVisuals(node.Type)
 
-			local nodeBtn = Instance.new("TextButton")
-			nodeBtn.Name = "Node_" .. node.Id
-			nodeBtn.Size = UDim2.new(0, 52, 0, 52)
-			nodeBtn.Position = UDim2.new(0, laneX, 0, yPos)
-			nodeBtn.BackgroundColor3 = baseColor
-			nodeBtn.BorderSizePixel = 0
-			nodeBtn.Text = icon
-			nodeBtn.TextSize = 22
-			nodeBtn.ZIndex = 18
-			nodeBtn.Parent = mapScroll
-			UIFactory.createCorner(nodeBtn, 26)
+		local nodeBtn = Instance.new("TextButton")
+		nodeBtn.Name = "Node_" .. node.Id
+		nodeBtn.Size = UDim2.new(0, 52, 0, 52)
+		nodeBtn.Position = UDim2.new(0, laneX, 0, yPos)
+		nodeBtn.BackgroundColor3 = baseColor
+		nodeBtn.BorderSizePixel = 0
+		nodeBtn.Text = icon
+		nodeBtn.TextSize = 22
+		nodeBtn.ZIndex = 18
+		nodeBtn.Parent = mapScroll
+		UIFactory.createCorner(nodeBtn, 26)
 
-			local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(60, 65, 80), 1)
+		local stroke = UIFactory.createStroke(nodeBtn, Color3.fromRGB(60, 65, 80), 1)
 
-			if node.IsCurrent then
-				stroke.Color = Color3.fromRGB(80, 220, 255)
-				stroke.Thickness = 3
-				nodeBtn.BackgroundTransparency = 0
-				nodeBtn.AutoButtonColor = false
-			elseif node.IsCleared then
-				stroke.Color = Color3.fromRGB(50, 55, 65)
-				stroke.Thickness = 1
-				nodeBtn.BackgroundTransparency = 0.6
-				nodeBtn.Text = "✓"
-				nodeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
-				nodeBtn.TextSize = 16
-				nodeBtn.AutoButtonColor = false
-			elseif node.IsAvailable then
-				stroke.Color = Color3.fromRGB(255, 220, 60)
-				stroke.Thickness = 3
-				nodeBtn.BackgroundTransparency = 0
-				nodeBtn.AutoButtonColor = true
+		if node.IsCurrent then
+			stroke.Color = Color3.fromRGB(80, 220, 255)
+			stroke.Thickness = 3
+			nodeBtn.BackgroundTransparency = 0
+			nodeBtn.AutoButtonColor = false
+		elseif node.IsCleared then
+			stroke.Color = Color3.fromRGB(50, 55, 65)
+			stroke.Thickness = 1
+			nodeBtn.BackgroundTransparency = 0.6
+			nodeBtn.Text = "✓"
+			nodeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+			nodeBtn.TextSize = 16
+			nodeBtn.AutoButtonColor = false
+		elseif node.IsAvailable then
+			stroke.Color = Color3.fromRGB(255, 220, 60)
+			stroke.Thickness = 3
+			nodeBtn.BackgroundTransparency = 0
+			nodeBtn.AutoButtonColor = true
 
-				local targetId = node.Id
-				nodeBtn.MouseButton1Click:Connect(function()
-					if VoteMapNodeEvent then
-						VoteMapNodeEvent:FireServer(targetId)
-					end
-				end)
-			else
-				stroke.Color = Color3.fromRGB(45, 50, 60)
-				stroke.Thickness = 1
-				nodeBtn.BackgroundTransparency = 0.5
-				nodeBtn.AutoButtonColor = false
+			local targetId = node.Id
+			nodeBtn.MouseButton1Click:Connect(function()
+				if isVotePending then return end
+				isVotePending = true
+				firstRoomPromptLabel.Visible = false
+				bannerLabel.Text = "Submitting room vote..."
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
+				if VoteMapNodeEvent then
+					VoteMapNodeEvent:FireServer(targetId)
+				end
+			end)
+		else
+			stroke.Color = Color3.fromRGB(45, 50, 60)
+			stroke.Thickness = 1
+			nodeBtn.BackgroundTransparency = 0.5
+			nodeBtn.AutoButtonColor = false
+		end
+	end
+
+	-- Auto-focus / scroll to lowest available/reachable tier on fresh run or room transition
+	local lowestAvailableTier: number? = nil
+	for _, node in snapshot.MapNodes do
+		if node.IsAvailable then
+			if lowestAvailableTier == nil or node.Tier < lowestAvailableTier then
+				lowestAvailableTier = node.Tier
 			end
 		end
+	end
+	local targetTier = lowestAvailableTier or (snapshot.CurrentTier and (snapshot.CurrentTier + 1)) or 1
+
+	local isFreshRun = (snapshot.CurrentNodeId == nil and (snapshot.CurrentTier == nil or snapshot.CurrentTier == 0))
+	if isFreshRun and not isVotePending then
+		firstRoomPromptLabel.Visible = true
 	else
-		-- MapNodes not yet populated from server
-		local loadingLabel = Instance.new("TextLabel")
-		loadingLabel.Name = "MapLoadingLabel"
-		loadingLabel.Size = UDim2.new(1, 0, 0, 80)
-		loadingLabel.Position = UDim2.new(0, 0, 0.4, 0)
-		loadingLabel.BackgroundTransparency = 1
-		loadingLabel.Text = "MAP LOADING..."
-		loadingLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
-		loadingLabel.Font = Enum.Font.GothamBold
-		loadingLabel.TextSize = 22
-		loadingLabel.ZIndex = 18
-		loadingLabel.Parent = mapScroll
+		firstRoomPromptLabel.Visible = false
+	end
+
+	local shouldAutoFocus = (lastFocusedPhase ~= "MapSelect")
+		or (lastFocusedTier ~= snapshot.CurrentTier)
+		or (lastFocusedNodeId ~= snapshot.CurrentNodeId)
+
+	if shouldAutoFocus then
+		lastFocusedPhase = "MapSelect"
+		lastFocusedTier = snapshot.CurrentTier
+		lastFocusedNodeId = snapshot.CurrentNodeId
+
+		local targetYPos = (10 - targetTier) * tierHeight + 12
+		local function applyScroll()
+			local viewHeight = mapScroll.AbsoluteWindowSize.Y
+			if viewHeight <= 0 then
+				viewHeight = mapScroll.AbsoluteSize.Y
+			end
+			if viewHeight <= 0 then
+				viewHeight = 400
+			end
+			local targetCanvasY = math.clamp(targetYPos - (viewHeight / 2) + 26, 0, math.max(0, 800 - viewHeight))
+			mapScroll.CanvasPosition = Vector2.new(0, targetCanvasY)
+		end
+		applyScroll()
+		task.defer(applyScroll)
 	end
 end
 
@@ -947,6 +1035,14 @@ if RunStateUpdateEvent then
 			bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
 		end
 
+		if snapshot.Phase ~= "MapSelect" or snapshot.CurrentNodeId ~= nil then
+			isVotePending = false
+			firstRoomPromptLabel.Visible = false
+		end
+		if snapshot.Phase ~= "MapSelect" then
+			lastFocusedPhase = snapshot.Phase
+		end
+
 		if snapshot.Message and snapshot.Message ~= "" then
 			bannerLabel.Text = snapshot.Message
 		end
@@ -1059,7 +1155,19 @@ end
 if ActionResultEvent then
 	ActionResultEvent.OnClientEvent:Connect(function(res: any)
 		if not res then return end
-		if res.Success == false then
+		if res.Action == "VoteMapNode" then
+			isVotePending = false
+			if res.Success == false then
+				bannerLabel.Text = string.format("⚠️ Vote Failed: %s", res.Message or "Rejection")
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+				if lastFocusedPhase == "MapSelect" and lastFocusedNodeId == nil and (lastFocusedTier == 0 or lastFocusedTier == nil) then
+					firstRoomPromptLabel.Visible = true
+				end
+			else
+				bannerLabel.Text = "Vote submitted! Waiting for party..."
+				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+			end
+		elseif res.Success == false then
 			bannerLabel.Text = string.format("⚠️ %s: %s", res.Action or "Action", res.Message or "Action failed.")
 			bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
 		elseif res.Action == "ReturnToLobby" and res.Success == true then

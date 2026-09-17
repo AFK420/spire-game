@@ -407,7 +407,7 @@ local function runSuite65()
 		soloPState.IsDowned = false
 		StatusService.applyStatus(tostring(soloPlayer.UserId), "Poison", 5, nil, "system", soloPState)
 		CombatService.forceTurnTimeout() -- auto-resolves turn
-		assertTest(soloCombat.Phase == "CombatEnd", "[Suite 65.12a] Status-induced defeat immediately ends combat")
+		assertTest(soloCombat.Phase == "Defeat", "[Suite 65.12a] Status-induced defeat immediately ends combat")
 		assertTest(soloCombat.TurnNumber == 1, "[Suite 65.12b] TurnNumber did not advance past turn 1 upon defeat")
 	end
 
@@ -824,6 +824,78 @@ local function runSuite66()
 
 		CombatService.cleanupCombat()
 		RunManager.removePlayer(skPlayer :: any)
+	end
+end
+
+local function runSuite67()
+	print("\n--- [Suite 67] End-to-End Single-Player Run Flow: StartRun -> MapSelect -> Vote -> ActiveRoom -> ActiveCombat ---")
+
+	do
+		-- 1. Initialize fresh solo player
+		local soloPlayer = {
+			UserId = 67001,
+			Name = "SoloAdventurer",
+			DisplayName = "SoloAdventurer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(soloPlayer :: any)
+		local pState = RunManager.addPlayer(soloPlayer :: any)
+		assertTest(pState ~= nil, "[Suite 67.1] addPlayer succeeds for initialized solo player")
+		assert(pState, "pState exists")
+
+		-- 2. Select and lock class
+		ClassService.selectClass(soloPlayer :: any, "Ironclad")
+		ClassService.lockClass(soloPlayer :: any)
+		assertTest(pState.ClassLocked == true, "[Suite 67.2] Solo player class is locked")
+
+		-- 3. Start Run
+		local startOk = RunManager.startRun(soloPlayer :: any)
+		assertTest(startOk == true, "[Suite 67.3] startRun succeeds")
+
+		local runState = RunManager.getRunState()
+		assertTest(runState.Phase == "MapSelect", "[Suite 67.4] Run state transitioned to MapSelect phase")
+		assertTest(runState.CurrentNodeId == nil, "[Suite 67.5] CurrentNodeId is nil at fresh run start")
+		assertTest(runState.CurrentTier == 0, "[Suite 67.6] CurrentTier is 0 at fresh run start")
+		assertTest(#runState.AvailableNodeIds >= 1, "[Suite 67.7] AvailableNodeIds populated with at least 1 Tier-1 node")
+
+		-- 4. Map snapshot verification for player
+		local snap = RunManager.getRunSnapshotForPlayer(soloPlayer :: any)
+		assertTest(snap.Phase == "MapSelect", "[Suite 67.8] Player snapshot Phase is MapSelect")
+		assertTest(snap.MapNodes ~= nil and #snap.MapNodes > 0, "[Suite 67.9] Authoritative MapNodes populated in player snapshot")
+
+		-- Verify Tier-1 node availability
+		local targetNodeId = runState.AvailableNodeIds[1]
+		assertTest(targetNodeId ~= nil, "[Suite 67.10] Target first-tier node ID exists")
+
+		-- 5. Vote for first available node
+		local voteOk, voteErr = RunManager.voteMapNode(soloPlayer :: any, targetNodeId)
+		assertTest(voteOk == true, "[Suite 67.11] voteMapNode succeeds: " .. tostring(voteErr))
+
+		-- 6. Consensus in 1-player party triggers immediate travel to ActiveRoom
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 67.12] 1-player consensus immediately advances run to ActiveRoom")
+		assertTest(runState.CurrentNodeId == targetNodeId, "[Suite 67.13] CurrentNodeId matches voted node ID")
+		assertTest(runState.CurrentTier == 1, "[Suite 67.14] CurrentTier updated to Tier 1")
+
+		-- 7. ActiveCombat started in PlayerPhase with enemies and opening hand
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 67.15] ActiveCombat instantiated for combat node")
+		local combat = runState.ActiveCombat
+		assert(combat, "combat exists")
+		assertTest(combat.Phase == "PlayerPhase", "[Suite 67.16] ActiveCombat starts in PlayerPhase")
+
+		local livingEnemies = 0
+		for _, enemy in combat.Enemies do
+			if enemy.HP > 0 then
+				livingEnemies += 1
+			end
+		end
+		assertTest(livingEnemies >= 1, "[Suite 67.17] Active combat has at least 1 living enemy")
+		assertTest(#pState.Hand > 0, "[Suite 67.18] Solo player drew opening card hand")
+		assertTest(pState.Resources.Energy > 0, "[Suite 67.19] Solo player has starting energy")
+
+		-- 8. Clean up
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby(soloPlayer :: any)
+		assertTest(RunManager.getRunState().Phase == "Lobby", "[Suite 67.20] Clean reset to Lobby completes")
 	end
 end
 
@@ -6967,6 +7039,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 66: FINAL CORRECTION PASS (STATUS DURATION, FAIL-CLOSED, BUFFERING)
 	----------------------------------------------------------------------------
 	runSuite66()
+
+	----------------------------------------------------------------------------
+	-- SUITE 67: E2E FIRST ROOM NAVIGATION & COMBAT INITIATION FLOW
+	----------------------------------------------------------------------------
+	runSuite67()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()
