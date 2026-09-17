@@ -1016,6 +1016,57 @@ local function runSuite67()
 
 		RunManager.resetToLobby()
 	end
+
+	do -- 67.34 - 67.40: Idempotent first-room voting & post-ActiveRoom vote guards
+		RunManager.resetRunForTesting()
+		local soloPlayer = {
+			UserId = 67341,
+			Name = "IdempotentVotePlayer",
+			DisplayName = "IdempotentVotePlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(soloPlayer :: any)
+		local pState = RunManager.addPlayer(soloPlayer :: any)
+		assert(pState, "soloPlayer pState exists")
+		pState.ClassLocked = true
+
+		local startOk = RunManager.startRun(soloPlayer :: any)
+		assertTest(startOk == true, "[Suite 67.34] Fresh run startRun succeeds")
+
+		local runState = RunManager.getRunState()
+		assertTest(runState.Phase == "MapSelect", "[Suite 67.35] Run enters MapSelect")
+		local firstAvailableNode = runState.AvailableNodeIds[1]
+		assert(firstAvailableNode, "First available node exists")
+
+		-- First vote: succeeds, wins consensus, and transitions to ActiveRoom
+		local vOk1, vErr1, won1 = RunManager.voteMapNode(soloPlayer :: any, firstAvailableNode)
+		assertTest(vOk1 == true and won1 == true, "[Suite 67.36] First vote succeeds and wins consensus")
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 67.37] Run phase transitioned to ActiveRoom")
+		assertTest(runState.CurrentNodeId == firstAvailableNode, "[Suite 67.38] CurrentNodeId set to first room")
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 67.39] ActiveCombat instantiated for first room")
+
+		-- Duplicate vote for the SAME node while in ActiveRoom: MUST be idempotent and return true
+		local dupOk, dupErr, dupWon = RunManager.voteMapNode(soloPlayer :: any, firstAvailableNode)
+		assertTest(dupOk == true and dupWon == true, "[Suite 67.40a] Duplicate vote for already-selected node returns idempotent success")
+		assertTest(dupErr == nil, "[Suite 67.40b] Duplicate vote does not return MapSelect error")
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 67.40c] Run remains in ActiveRoom after duplicate vote")
+		assertTest(runState.CurrentNodeId == firstAvailableNode, "[Suite 67.40d] CurrentNodeId remains unchanged after duplicate vote")
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 67.40e] Combat remains active after duplicate vote")
+
+		-- Voting a DIFFERENT node after room has already won: MUST be rejected with "Map selection is no longer active."
+		local differentNode = runState.AvailableNodeIds[2] or "Act1_T1_L2"
+		local diffOk, diffErr = RunManager.voteMapNode(soloPlayer :: any, differentNode)
+		assertTest(diffOk == false, "[Suite 67.40f] Voting a different node in ActiveRoom rejected")
+		assertTest(diffErr == "Map selection is no longer active.", "[Suite 67.40g] Rejection error is 'Map selection is no longer active.'")
+
+		-- Voting a fake / fabricated arbitrary node while in ActiveRoom: MUST be rejected with "Target room does not exist in dungeon."
+		local fakeOk, fakeErr = RunManager.voteMapNode(soloPlayer :: any, "Arbitrary_Fake_Node_9999")
+		assertTest(fakeOk == false, "[Suite 67.40h] Fake node in ActiveRoom rejected")
+		assertTest(fakeErr == "Target room does not exist in dungeon.", "[Suite 67.40i] Rejection error is 'Target room does not exist in dungeon.'")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
 end
 
 function TestRunner.runAllTests(): boolean

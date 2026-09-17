@@ -273,6 +273,17 @@ local lastFocusedTier: number? = nil
 local lastFocusedNodeId: string? = nil
 local isVotePending = false
 local pendingVoteNodeId: string? = nil
+local activeNodeButtons: { [string]: TextButton } = {}
+
+local function setMapButtonsEnabled(enabled: boolean)
+	for _, btn in activeNodeButtons do
+		if btn and btn.Parent then
+			btn.Active = enabled
+			btn.AutoButtonColor = enabled
+			btn.BackgroundTransparency = enabled and 0 or 0.35
+		end
+	end
+end
 local mapSyncRequested = false
 local lastMapSyncTime = 0
 
@@ -325,6 +336,7 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 			child:Destroy()
 		end
 	end
+	table.clear(activeNodeButtons)
 
 	mapTitle.Text = string.format("🗺️ %s (Tier %d/10) - Select Next Room", snapshot.ActName or "Act 1", snapshot.CurrentTier or 0)
 
@@ -414,14 +426,17 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 		elseif node.IsAvailable then
 			stroke.Color = Color3.fromRGB(255, 220, 60)
 			stroke.Thickness = 3
-			nodeBtn.BackgroundTransparency = 0
-			nodeBtn.AutoButtonColor = true
+			nodeBtn.BackgroundTransparency = (isVotePending and 0.35) or 0
+			nodeBtn.Active = not isVotePending
+			nodeBtn.AutoButtonColor = not isVotePending
+			activeNodeButtons[node.Id] = nodeBtn
 
 			local targetId = node.Id
 			nodeBtn.MouseButton1Click:Connect(function()
 				if isVotePending or pendingVoteNodeId ~= nil then return end
 				isVotePending = true
 				pendingVoteNodeId = targetId
+				setMapButtonsEnabled(false)
 				firstRoomPromptLabel.Visible = false
 				bannerLabel.Text = "Submitting room vote..."
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
@@ -1040,7 +1055,11 @@ if RunStateUpdateEvent then
 		if snapshot.Phase ~= "MapSelect" or snapshot.CurrentNodeId ~= nil then
 			isVotePending = false
 			pendingVoteNodeId = nil
+			setMapButtonsEnabled(false)
 			firstRoomPromptLabel.Visible = false
+		end
+		if snapshot.Phase == "ActiveRoom" then
+			mapView.Visible = false
 		end
 		if snapshot.Phase ~= "MapSelect" then
 			lastFocusedPhase = snapshot.Phase
@@ -1159,9 +1178,17 @@ if ActionResultEvent then
 	ActionResultEvent.OnClientEvent:Connect(function(res: any)
 		if not res then return end
 		if res.Action == "VoteMapNode" then
+			if lastFocusedPhase == "ActiveRoom" or not mapView.Visible then
+				isVotePending = false
+				pendingVoteNodeId = nil
+				setMapButtonsEnabled(false)
+				return
+			end
+
 			if res.Success == false then
 				isVotePending = false
 				pendingVoteNodeId = nil
+				setMapButtonsEnabled(true)
 				local failReason = res.Reason or res.Message or "Rejection"
 				bannerLabel.Text = string.format("⚠️ Vote Failed: %s", failReason)
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
@@ -1169,12 +1196,14 @@ if ActionResultEvent then
 					firstRoomPromptLabel.Visible = true
 				end
 			else
+				isVotePending = false
+				pendingVoteNodeId = nil
 				if res.Won == true then
+					setMapButtonsEnabled(false)
 					bannerLabel.Text = "Room selected! Entering room..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 				else
-					isVotePending = false
-					pendingVoteNodeId = nil
+					setMapButtonsEnabled(true)
 					bannerLabel.Text = "Vote submitted — waiting for the party..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 				end

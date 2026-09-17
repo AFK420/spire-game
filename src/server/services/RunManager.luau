@@ -685,12 +685,16 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
-	if runToUse.Phase ~= "MapSelect" or not dRun then
-		return false, "Not currently on MapSelect phase.", false
+
+	if not dRun then
+		return false, "Dungeon run is not initialized.", false
 	end
 
-	local pState = runToUse.PartyMembers[player.UserId]
-	if not pState then return false, "Player not in party.", false end
+	local userId = (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId) or player
+	local pState = (typeof(userId) == "number") and runToUse.PartyMembers[userId] or nil
+	if not pState then
+		return false, "Player not in party.", false
+	end
 	if pState.IsConnected == false then
 		return false, "Player is disconnected.", false
 	end
@@ -698,6 +702,17 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	local node = DungeonService.getNode(dRun, targetNodeId)
 	if not node then
 		return false, "Target room does not exist in dungeon.", false
+	end
+
+	-- Idempotent handling: If the run has already transitioned to ActiveRoom and the winning CurrentNodeId
+	-- matches the requested targetNodeId from a valid party member, treat it as an already-completed success.
+	if runToUse.Phase == "ActiveRoom" and runToUse.CurrentNodeId == targetNodeId then
+		print(string.format("[MapVote] Duplicate/late request ignored because CurrentNodeId already equals target (Player=%s, Target=%s)", tostring(userId), targetNodeId))
+		return true, nil, true
+	end
+
+	if runToUse.Phase ~= "MapSelect" then
+		return false, "Map selection is no longer active.", false
 	end
 
 	local isAvailable = false
@@ -711,6 +726,8 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	if not isAvailable then
 		return false, "Target room is not currently reachable.", false
 	end
+
+	print(string.format("[MapVote] Player=%s Target=%s Phase=%s CurrentNode=%s", tostring(userId), targetNodeId, runToUse.Phase, tostring(runToUse.CurrentNodeId)))
 
 	pState.VotedNodeId = targetNodeId
 
@@ -758,12 +775,17 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 
 	if winningNodeId then
+		print(string.format("[MapVote] Vote accepted %d/%d", votes[winningNodeId] or 1, totalVoters))
+		print(string.format("[MapVote] Winner=%s", winningNodeId))
 		for _, member in runToUse.PartyMembers do
 			member.VotedNodeId = nil
 		end
+		print("[MapVote] Travel -> ActiveRoom")
 		local travelOk, travelErr = RunManager.travelToNode(winningNodeId, isReal)
+		print(string.format("[MapVote] Travel complete. Final Phase=%s", runToUse.Phase))
 		return travelOk, travelErr, true
 	else
+		print(string.format("[MapVote] Vote accepted %d/%d (waiting for majority)", votes[targetNodeId] or 1, totalVoters))
 		if not isIsolatedTesting or isReal then
 			RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId), isReal)
 		end

@@ -1360,17 +1360,29 @@ test("[Suite 67.30] Unregistered player voting rejected" in testrunner_src, "Sui
 test("[Suite 67.31] addPlayer waits for in-flight Loading profile and succeeds" in testrunner_src, "Suite 67 tests addPlayer waits for in-flight Loading profile")
 test("[Suite 67.32] Profile is Loaded after async resolution" in testrunner_src, "Suite 67 tests profile is Loaded after async resolution")
 test("[Suite 67.33] PlayerState registered in PartyMembers" in testrunner_src, "Suite 67 tests PlayerState registered in PartyMembers")
+test("[Suite 67.34] Fresh run startRun succeeds" in testrunner_src, "Suite 67 tests fresh run startRun")
+test("[Suite 67.36] First vote succeeds and wins consensus" in testrunner_src, "Suite 67 tests first vote succeeds and wins consensus")
+test("[Suite 67.40a] Duplicate vote for already-selected node returns idempotent success" in testrunner_src, "Suite 67 tests duplicate vote returns idempotent success")
+test("[Suite 67.40b] Duplicate vote does not return MapSelect error" in testrunner_src, "Suite 67 tests duplicate vote does not return MapSelect error")
+test("[Suite 67.40c] Run remains in ActiveRoom after duplicate vote" in testrunner_src, "Suite 67 tests run remains in ActiveRoom after duplicate vote")
+test("[Suite 67.40f] Voting a different node in ActiveRoom rejected" in testrunner_src, "Suite 67 tests voting different node in ActiveRoom rejected")
+test("[Suite 67.40h] Fake node in ActiveRoom rejected" in testrunner_src, "Suite 67 tests fake node in ActiveRoom rejected")
 
 # Task 7: Stale assertion fix
 test('assertTest(soloCombat.Phase == "Defeat", "[Suite 65.12a] Status-induced defeat immediately ends combat")' in testrunner_src, "TestRunner line 410 asserts Defeat phase instead of stale CombatEnd")
 test('soloCombat.Phase == "CombatEnd"' not in testrunner_src, "TestRunner completely eliminates stale CombatEnd assertion")
 
-# Server Network Dispatcher Invariants
+# Server Network Dispatcher & Idempotency Invariants
 init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+run_mgr_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
 test("pcall(function()" in init_server_src and "RunManager.voteMapNode" in init_server_src, "init.server.luau protects voteMapNode with pcall")
 test("Reason = errMsg" in init_server_src, "init.server.luau returns explicit Reason on runtime error")
 test("Won = (won == true)" in init_server_src, "init.server.luau forwards Won status in ActionResult")
 test("payload.Reason or payload.Message" in net_svc_src, "NetworkService normalizes Reason field in sendActionResult")
+test('runToUse.Phase == "ActiveRoom" and runToUse.CurrentNodeId == targetNodeId' in run_mgr_src, "RunManager implements idempotent voting for current node in ActiveRoom")
+test('"Dungeon run is not initialized."' in run_mgr_src, "RunManager returns distinct error for uninitialized dungeon")
+test('"Map selection is no longer active."' in run_mgr_src, "RunManager returns distinct error for non-MapSelect phase")
+test('[MapVote]' in run_mgr_src, "RunManager provides concise [MapVote] transition logging")
 
 # UIController Client Navigation Invariants
 test("firstRoomPromptLabel" in ui_ctrl_src, "UIController declares firstRoomPromptLabel")
@@ -1379,6 +1391,8 @@ test("lowestAvailableTier" in ui_ctrl_src, "UIController dynamically finds lowes
 test("mapScroll.CanvasPosition = Vector2.new(0, targetCanvasY)" in ui_ctrl_src, "UIController auto-focuses map scroll canvas position")
 test("isVotePending" in ui_ctrl_src, "UIController implements map vote click debouncing")
 test("pendingVoteNodeId" in ui_ctrl_src, "UIController implements pendingVoteNodeId per-node debounce")
+test("activeNodeButtons" in ui_ctrl_src, "UIController tracks activeNodeButtons for interactive disabling")
+test("setMapButtonsEnabled" in ui_ctrl_src, "UIController implements setMapButtonsEnabled to disable buttons in-flight")
 test("MAP DATA LOADING..." in ui_ctrl_src, "UIController displays loading diagnostic for empty map")
 test("MAP DATA ERROR" in ui_ctrl_src, "UIController displays error diagnostic for persistent empty map")
 test('res.Action == "VoteMapNode"' in ui_ctrl_src, "UIController handles ActionResult for VoteMapNode")
