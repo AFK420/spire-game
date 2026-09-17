@@ -1069,6 +1069,122 @@ local function runSuite67()
 	end
 end
 
+local function runSuite68()
+	print("\n--- [Suite 68] Transactional First-Room Progression, StateRevision & Rollback Invariants ---")
+
+	do
+		-- 68.1: Full first-room transition with monotonic StateRevision increment
+		local soloPlayer = {
+			UserId = 68001,
+			Name = "RevisionTester",
+			DisplayName = "RevisionTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(soloPlayer :: any)
+		local pState = RunManager.addPlayer(soloPlayer :: any)
+		assertTest(pState ~= nil, "[Suite 68.1] addPlayer succeeds for test player")
+		assert(pState, "pState exists")
+
+		ClassService.selectClass(soloPlayer :: any, "Ironclad")
+		ClassService.lockClass(soloPlayer :: any)
+		assertTest(pState.ClassLocked == true, "[Suite 68.2] Test player class is locked")
+
+		local startOk = RunManager.startRun(soloPlayer :: any)
+		assertTest(startOk == true, "[Suite 68.3] startRun succeeds")
+
+		local runState = RunManager.getRunState()
+		assertTest(runState.Phase == "MapSelect", "[Suite 68.4] Phase is MapSelect")
+		local mapSelectRev = runState.StateRevision
+		assertTest(mapSelectRev >= 1, "[Suite 68.5] StateRevision initialized and bumped on startRun")
+
+		local snap1 = RunManager.getRunSnapshotForPlayer(soloPlayer :: any)
+		assertTest(snap1.StateRevision == mapSelectRev, "[Suite 68.6] Snapshot StateRevision matches runState")
+		assertTest(#runState.AvailableNodeIds >= 1, "[Suite 68.7] AvailableNodeIds populated in MapSelect")
+
+		local targetNodeId = runState.AvailableNodeIds[1]
+		local vOk, vErr, vWon = RunManager.voteMapNode(soloPlayer :: any, targetNodeId)
+		assertTest(vOk == true and vWon == true, "[Suite 68.8] voteMapNode succeeds and wins consensus")
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 68.9] Run phase transitioned to ActiveRoom")
+		assertTest(runState.StateRevision > mapSelectRev, "[Suite 68.10] StateRevision strictly incremented on room entry")
+		assertTest(runState.CurrentNodeId == targetNodeId, "[Suite 68.11] CurrentNodeId updated to target room")
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 68.12] ActiveCombat initialized")
+		assertTest(#runState.AvailableNodeIds == 0, "[Suite 68.13] AvailableNodeIds cleared in ActiveRoom")
+
+		local snap2 = RunManager.getRunSnapshotForPlayer(soloPlayer :: any)
+		assertTest(snap2.Phase == "ActiveRoom", "[Suite 68.14] Snapshot Phase is ActiveRoom")
+		assertTest(snap2.StateRevision == runState.StateRevision, "[Suite 68.15] Snapshot StateRevision reflects ActiveRoom revision")
+
+		-- 68.2: Rapid duplicate click / vote idempotency
+		local dupOk, dupErr, dupWon = RunManager.voteMapNode(soloPlayer :: any, targetNodeId)
+		assertTest(dupOk == true and dupWon == true, "[Suite 68.16] Duplicate vote returns idempotent success")
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 68.17] Phase remains ActiveRoom after duplicate vote")
+		assertTest(runState.StateRevision == snap2.StateRevision, "[Suite 68.18] StateRevision unchanged on duplicate vote")
+
+		-- 68.3: RequestStateSync returns fresh ActiveRoom snapshot
+		local syncSnap = RunManager.getRunSnapshotForPlayer(soloPlayer :: any)
+		assertTest(syncSnap.Phase == "ActiveRoom", "[Suite 68.19] RequestStateSync snapshot is ActiveRoom")
+		assertTest(syncSnap.CurrentNodeId == targetNodeId, "[Suite 68.20] RequestStateSync CurrentNodeId matches target")
+		assertTest(syncSnap.StateRevision == runState.StateRevision, "[Suite 68.21] RequestStateSync StateRevision matches")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+
+	do
+		-- 68.4: Transactional failure injection and rollback test
+		local failPlayer = {
+			UserId = 68002,
+			Name = "RollbackTester",
+			DisplayName = "RollbackTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(failPlayer :: any)
+		local pState = RunManager.addPlayer(failPlayer :: any)
+		assert(pState, "pState exists")
+		ClassService.selectClass(failPlayer :: any, "Ironclad")
+		ClassService.lockClass(failPlayer :: any)
+		local startOk = RunManager.startRun(failPlayer :: any)
+		assertTest(startOk == true, "[Suite 68.22] startRun succeeds for rollback test")
+
+		local runState = RunManager.getRunState()
+		local dRun = RunManager.getDungeonRun()
+		assert(dRun, "dRun exists")
+		local targetNodeId = runState.AvailableNodeIds[1]
+		local preRev = runState.StateRevision
+
+		-- Inject failure into CombatService.startCombat
+		local originalStartCombat = CombatService.startCombat
+		CombatService.startCombat = function(...)
+			error("Simulated combat failure injection")
+		end
+
+		local travelOk, travelErr = RunManager.travelToNode(targetNodeId, true)
+		assertTest(travelOk == false, "[Suite 68.23] travelToNode fails when combat fails to initialize")
+		assertTest(string.find(tostring(travelErr), "Simulated combat failure injection") ~= nil, "[Suite 68.24] Error message reflects injected failure")
+
+		-- Verify state was rolled back / left unmutated in MapSelect
+		assertTest(runState.Phase == "MapSelect", "[Suite 68.25] Phase remains MapSelect after failed combat start")
+		assertTest(runState.CurrentNodeId == nil, "[Suite 68.26] CurrentNodeId remained nil on failure")
+		assertTest(dRun.CurrentNodeId == nil, "[Suite 68.27] Dungeon CurrentNodeId remained nil on failure")
+		assertTest(runState.ActiveCombat == nil, "[Suite 68.28] ActiveCombat remained nil on failure")
+		assertTest(runState.StateRevision == preRev, "[Suite 68.29] StateRevision remained unchanged on failed travel")
+		assertTest(#runState.AvailableNodeIds >= 1, "[Suite 68.30] AvailableNodeIds preserved for retry")
+
+		-- Restore CombatService.startCombat and retry travel
+		CombatService.startCombat = originalStartCombat
+
+		local retryOk, retryErr = RunManager.travelToNode(targetNodeId, true)
+		assertTest(retryOk == true, "[Suite 68.31] Retry travelToNode succeeds after restoring combat service")
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 68.32] Phase transitioned to ActiveRoom on retry")
+		assertTest(runState.CurrentNodeId == targetNodeId, "[Suite 68.33] CurrentNodeId updated on successful retry")
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 68.34] ActiveCombat initialized on retry")
+		assertTest(runState.StateRevision > preRev, "[Suite 68.35] StateRevision incremented on successful retry")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+end
+
 function TestRunner.runAllTests(): boolean
 	passedCount = 0
 	totalCount = 0
@@ -7214,6 +7330,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 67: E2E FIRST ROOM NAVIGATION & COMBAT INITIATION FLOW
 	----------------------------------------------------------------------------
 	runSuite67()
+
+	----------------------------------------------------------------------------
+	-- SUITE 68: TRANSACTIONAL FIRST-ROOM PROGRESSION & STATEREVISION INVARIANTS
+	----------------------------------------------------------------------------
+	runSuite68()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

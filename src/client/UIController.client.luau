@@ -271,6 +271,7 @@ mapTitle.Parent = mapHeader
 local lastFocusedPhase: string? = nil
 local lastFocusedTier: number? = nil
 local lastFocusedNodeId: string? = nil
+local lastRunStateRevision: number = -1
 local isVotePending = false
 local pendingVoteNodeId: string? = nil
 local activeNodeButtons: { [string]: TextButton } = {}
@@ -434,6 +435,7 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 			local targetId = node.Id
 			nodeBtn.MouseButton1Click:Connect(function()
 				if isVotePending or pendingVoteNodeId ~= nil then return end
+				print(string.format("[MAPFLOW][CLIENT][1] Node button clicked: Node=%s", targetId))
 				isVotePending = true
 				pendingVoteNodeId = targetId
 				setMapButtonsEnabled(false)
@@ -441,8 +443,24 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 				bannerLabel.Text = "Submitting room vote..."
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
 				if VoteMapNodeEvent then
+					print(string.format("[MAPFLOW][CLIENT][2] Vote fired to server: Node=%s", targetId))
 					VoteMapNodeEvent:FireServer(targetId)
 				end
+
+				-- 8-second timeout guard: recover cleanly if network packet drops
+				task.delay(8.0, function()
+					if isVotePending and pendingVoteNodeId == targetId and mapView.Visible then
+						warn(string.format("[MAPFLOW][CLIENT] Vote for node %s timed out after 8s; requesting state sync.", targetId))
+						isVotePending = false
+						pendingVoteNodeId = nil
+						setMapButtonsEnabled(true)
+						bannerLabel.Text = "⚠️ Room transition timed out. Refreshing state..."
+						bannerLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
+						if RequestStateSyncEvent then
+							RequestStateSyncEvent:FireServer()
+						end
+					end
+				end)
 			end)
 		else
 			stroke.Color = Color3.fromRGB(45, 50, 60)
@@ -1029,7 +1047,21 @@ if RunStateUpdateEvent then
 	RunStateUpdateEvent.OnClientEvent:Connect(function(snapshot: StateTypes.RunSnapshot)
 		if not snapshot then return end
 
+		local rev = snapshot.StateRevision or 0
+		print(string.format("[MAPFLOW][CLIENT][4] RunStateUpdate received: Phase=%s, Rev=%d, CurrentNode=%s",
+			tostring(snapshot.Phase), rev, tostring(snapshot.CurrentNodeId)))
+
+		if snapshot.StateRevision and snapshot.StateRevision < lastRunStateRevision then
+			print(string.format("[MAPFLOW][CLIENT] Stale RunStateUpdate snapshot discarded (rev %d < last %d)",
+				snapshot.StateRevision, lastRunStateRevision))
+			return
+		end
+		if snapshot.StateRevision then
+			lastRunStateRevision = snapshot.StateRevision
+		end
+
 		switchView(snapshot.Phase)
+		print(string.format("[MAPFLOW][CLIENT][5] View switched to: %s", snapshot.Phase))
 
 		if snapshot.Phase == "Lobby" then
 			bannerLabel.Text = "Lobby: Gather heroes and start run."
@@ -1178,6 +1210,9 @@ if ActionResultEvent then
 	ActionResultEvent.OnClientEvent:Connect(function(res: any)
 		if not res then return end
 		if res.Action == "VoteMapNode" then
+			print(string.format("[MAPFLOW][CLIENT][3] ActionResult received: Action=VoteMapNode, Success=%s, Won=%s",
+				tostring(res.Success), tostring(res.Won)))
+
 			if lastFocusedPhase == "ActiveRoom" or not mapView.Visible then
 				isVotePending = false
 				pendingVoteNodeId = nil
@@ -1196,13 +1231,14 @@ if ActionResultEvent then
 					firstRoomPromptLabel.Visible = true
 				end
 			else
-				isVotePending = false
-				pendingVoteNodeId = nil
 				if res.Won == true then
+					-- Vote accepted and party won consensus! Keep buttons disabled and wait for RunStateUpdate to transition phase.
 					setMapButtonsEnabled(false)
-					bannerLabel.Text = "Room selected! Entering room..."
+					bannerLabel.Text = "Your vote was accepted. Entering room..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 				else
+					isVotePending = false
+					pendingVoteNodeId = nil
 					setMapButtonsEnabled(true)
 					bannerLabel.Text = "Vote submitted — waiting for the party..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)

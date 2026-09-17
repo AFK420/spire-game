@@ -45,6 +45,7 @@ local CardCollectionService = require(servicesFolder:WaitForChild("CardCollectio
 
 local CombatService: any = nil
 local StatusService: any = nil
+local ArenaVisualizer: any = nil
 
 local function getCombatService(): any
 	if not CombatService then
@@ -64,6 +65,16 @@ local function getStatusService(): any
 		end
 	end
 	return StatusService
+end
+
+local function getArenaVisualizer(): any
+	if not ArenaVisualizer then
+		local av = servicesFolder:FindFirstChild("ArenaVisualizer")
+		if av then
+			ArenaVisualizer = require(av :: ModuleScript)
+		end
+	end
+	return ArenaVisualizer
 end
 
 local RunManager = {}
@@ -86,6 +97,7 @@ local function createInitialRun(runId: string?): StateTypes.RunState
 		ActiveRoom = nil,
 		ActiveCombat = nil,
 		PendingRewards = nil,
+		StateRevision = 0,
 	}
 end
 
@@ -305,6 +317,7 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		Party = partyViews,
 		Rewards = rewardView,
 		Message = nil,
+		StateRevision = runToRead.StateRevision or 0,
 	}
 end
 
@@ -643,6 +656,7 @@ function RunManager.startRun(initiator: any?): boolean
 
 	runToStart.RunId = runId
 	runToStart.Seed = seed
+	runToStart.StateRevision = (runToStart.StateRevision or 0) + 1
 	runToStart.Phase = "MapSelect"
 	runToStart.ActIndex = 1
 	runToStart.CurrentTier = 0
@@ -686,32 +700,41 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
 
+	local userId = (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId) or player
+	local pState = (typeof(userId) == "number") and runToUse.PartyMembers[userId] or nil
+
+	print(string.format("[MAPFLOW][SERVER][1] [MapVote] Player=%s Target=%s Phase=%s Rev=%d",
+		tostring(userId), tostring(targetNodeId), tostring(runToUse.Phase), runToUse.StateRevision or 0))
+
 	if not dRun then
+		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Dungeon run is not initialized.")
 		return false, "Dungeon run is not initialized.", false
 	end
 
-	local userId = (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId) or player
-	local pState = (typeof(userId) == "number") and runToUse.PartyMembers[userId] or nil
 	if not pState then
+		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Player not in party.")
 		return false, "Player not in party.", false
 	end
 	if pState.IsConnected == false then
+		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Player is disconnected.")
 		return false, "Player is disconnected.", false
 	end
 
 	local node = DungeonService.getNode(dRun, targetNodeId)
 	if not node then
+		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Target room does not exist in dungeon.")
 		return false, "Target room does not exist in dungeon.", false
 	end
 
 	-- Idempotent handling: If the run has already transitioned to ActiveRoom and the winning CurrentNodeId
 	-- matches the requested targetNodeId from a valid party member, treat it as an already-completed success.
 	if runToUse.Phase == "ActiveRoom" and runToUse.CurrentNodeId == targetNodeId then
-		print(string.format("[MapVote] Duplicate/late request ignored because CurrentNodeId already equals target (Player=%s, Target=%s)", tostring(userId), targetNodeId))
+		print(string.format("[MAPFLOW][SERVER][8] [MapVote] duplicate vote received: Node=%s, CurrentNode=%s", targetNodeId, tostring(runToUse.CurrentNodeId)))
 		return true, nil, true
 	end
 
 	if runToUse.Phase ~= "MapSelect" then
+		print("[MAPFLOW][SERVER][9] vote rejected: Reason=Map selection is no longer active.")
 		return false, "Map selection is no longer active.", false
 	end
 
@@ -724,10 +747,9 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 
 	if not isAvailable then
+		print("[MAPFLOW][SERVER][9] vote rejected: Reason=Target room is not currently reachable.")
 		return false, "Target room is not currently reachable.", false
 	end
-
-	print(string.format("[MapVote] Player=%s Target=%s Phase=%s CurrentNode=%s", tostring(userId), targetNodeId, runToUse.Phase, tostring(runToUse.CurrentNodeId)))
 
 	pState.VotedNodeId = targetNodeId
 
@@ -774,18 +796,17 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 		end
 	end
 
+	print(string.format("[MAPFLOW][SERVER][2] vote validation result: Valid=true, Winner=%s, Votes=%s",
+		tostring(winningNodeId), HttpService:JSONEncode(votes)))
+
 	if winningNodeId then
-		print(string.format("[MapVote] Vote accepted %d/%d", votes[winningNodeId] or 1, totalVoters))
-		print(string.format("[MapVote] Winner=%s", winningNodeId))
 		for _, member in runToUse.PartyMembers do
 			member.VotedNodeId = nil
 		end
-		print("[MapVote] Travel -> ActiveRoom")
+		print(string.format("[MAPFLOW][SERVER][3] travelToNode starting: Target=%s", winningNodeId))
 		local travelOk, travelErr = RunManager.travelToNode(winningNodeId, isReal)
-		print(string.format("[MapVote] Travel complete. Final Phase=%s", runToUse.Phase))
 		return travelOk, travelErr, true
 	else
-		print(string.format("[MapVote] Vote accepted %d/%d (waiting for majority)", votes[targetNodeId] or 1, totalVoters))
 		if not isIsolatedTesting or isReal then
 			RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId), isReal)
 		end
@@ -796,14 +817,54 @@ end
 function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): (boolean, string?)
 	local dRun = if (isIsolatedTesting and isLiveAction) then liveDungeonRun else internalDungeonRun
 	local runToMutate = if (isIsolatedTesting and isLiveAction) then liveRun else currentRun
-	if not dRun then return false, "No active run." end
+	if not dRun then
+		print("[MAPFLOW][SERVER][10] rollback executed: Phase=MapSelect, Err=No active run.")
+		return false, "No active run."
+	end
 
-	local success, err = DungeonService.selectNode(dRun, targetNodeId)
-	if not success then return false, err end
+	-- Stage 1: Validate node reachability WITHOUT mutating state
+	local valid, err, node = DungeonService.validateNode(dRun, targetNodeId)
+	if not valid or not node then
+		print(string.format("[MAPFLOW][SERVER][10] rollback executed: Phase=MapSelect, Err=%s", tostring(err)))
+		return false, err or "Invalid target node."
+	end
 
-	local node = DungeonService.getNode(dRun, targetNodeId)
-	if not node then return false, "Node not found." end
+	-- Stage 2: If combat node, attempt combat initialization in pcall BEFORE mutating run state or dungeon
+	local activeCombat = nil
+	if node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss" then
+		if not CombatService then
+			CombatService = require(servicesFolder:WaitForChild("CombatService") :: ModuleScript)
+		end
 
+		local encounterId = "enc_" .. node.Id
+		local combatOk, combatResult = pcall(function()
+			return CombatService.startCombat(
+				encounterId,
+				node.Type,
+				node.Tier,
+				runToMutate.PartyMembers,
+				function(outcome: "Victory" | "Defeat")
+					RunManager.onCombatCompleted(outcome, node)
+				end
+			)
+		end)
+
+		if not combatOk or not combatResult then
+			local combatErr = not combatOk and tostring(combatResult) or "startCombat returned nil"
+			warn(string.format("[MAPFLOW][SERVER][4] combat setup result: Success=false, Err=%s", combatErr))
+			print(string.format("[MAPFLOW][SERVER][10] rollback executed: Phase=MapSelect, Err=%s", combatErr))
+			return false, "Failed to start combat: " .. combatErr
+		end
+
+		activeCombat = combatResult
+		print("[MAPFLOW][SERVER][4] combat setup result: Success=true")
+	end
+
+	-- Stage 3: Commit dungeon progression now that encounter is verified
+	DungeonService.commitNode(dRun, node)
+
+	-- Stage 4: Commit run state transactionally with incremented revision
+	runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
 	runToMutate.CurrentNodeId = targetNodeId
 	runToMutate.CurrentTier = node.Tier
 	runToMutate.ActIndex = node.Act
@@ -823,22 +884,10 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 	}
 
 	runToMutate.Phase = "ActiveRoom"
+	table.clear(runToMutate.AvailableNodeIds)
 
-	if node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss" then
-		if not CombatService then
-			CombatService = require(servicesFolder:WaitForChild("CombatService") :: ModuleScript)
-		end
-
-		runToMutate.ActiveCombat = CombatService.startCombat(
-			runToMutate.ActiveRoom.RoomEncounterId or "enc_def",
-			node.Type,
-			node.Tier,
-			runToMutate.PartyMembers,
-			function(outcome: "Victory" | "Defeat")
-				RunManager.onCombatCompleted(outcome, node)
-			end
-		)
-
+	if activeCombat then
+		runToMutate.ActiveCombat = activeCombat
 	elseif node.Type == "Campfire Rest" then
 		for _, member in runToMutate.PartyMembers do
 			local heal = math.floor(member.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
@@ -849,7 +898,6 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		if not isIsolatedTesting or isLiveAction then
 			RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered).", isLiveAction)
 		end
-
 	elseif node.Type == "Merchant Shop" then
 		DungeonService.markNodeCleared(dRun, targetNodeId)
 		table.insert(runToMutate.ClearedNodeIds, targetNodeId)
@@ -858,14 +906,28 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		end
 	end
 
+	-- Stage 5: Teleport players in live game
+	local av = getArenaVisualizer()
+	if av and av.teleportPlayersToPedestal then
+		av.teleportPlayersToPedestal()
+	end
+
+	print(string.format("[MAPFLOW][SERVER][5] state committed: Phase=ActiveRoom, Rev=%d, Node=%s",
+		runToMutate.StateRevision, targetNodeId))
+
+	-- Stage 6: Broadcast state snapshot to all connected clients
 	if not isIsolatedTesting or isLiveAction then
+		print(string.format("[MAPFLOW][SERVER][6] snapshot broadcast dispatched: Rev=%d", runToMutate.StateRevision))
 		RunManager.broadcastRunSnapshots(string.format("Entered Room: %s (Tier %d)", node.Type, node.Tier), isLiveAction)
 	end
+
+	print("[MAPFLOW][SERVER][7] travelToNode completed: Success=true")
 	return true, nil
 end
 
 function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: DungeonMap.DungeonNode)
 	if outcome == "Defeat" then
+		currentRun.StateRevision = (currentRun.StateRevision or 0) + 1
 		currentRun.Phase = "RunDefeat"
 		RunManager.broadcastRunSnapshots("DEFEAT! The party has fallen.")
 		NetworkService.broadcastAnnouncement("EXPEDITION FAILED", "Your party was overwhelmed by the rift.", Color3.fromRGB(255, 60, 60))
@@ -890,6 +952,7 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 	end
 
 	if node.Type == "Act Boss" and node.Act == 4 then
+		currentRun.StateRevision = (currentRun.StateRevision or 0) + 1
 		currentRun.Phase = "RunVictory"
 		for _, member in currentRun.PartyMembers do
 			if member.PlayerInstance then
@@ -905,6 +968,7 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 end
 
 function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
+	currentRun.StateRevision = (currentRun.StateRevision or 0) + 1
 	currentRun.Phase = "Rewards"
 
 	local gold = GameConfig.Rewards.BaseCombatGold + (isElite and GameConfig.Rewards.EliteBonusGold or 0) + (isBoss and GameConfig.Rewards.BossBonusGold or 0)
@@ -1013,6 +1077,7 @@ function RunManager.continueFromRewards(player: any): boolean
 		table.insert(runToUse.AvailableNodeIds, node.Id)
 	end
 
+	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
 	runToUse.Phase = "MapSelect"
 	if (runToUse :: any).RoomPhase then
 		(runToUse :: any).RoomPhase = "MapSelect"
@@ -1088,6 +1153,7 @@ function RunManager.resetToLobby()
 	end
 
 	for _, run in runsToReset do
+		run.StateRevision = (run.StateRevision or 0) + 1
 		run.Phase = "Lobby"
 		run.ActIndex = 1
 		run.CurrentTier = 0

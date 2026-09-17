@@ -439,10 +439,10 @@ function DungeonMap.getAvailableNextNodes(run: DungeonRun): { DungeonNode }
 	return reachable
 end
 
--- Selects a node to travel to after clearing a room
-function DungeonMap.selectNextNode(run: DungeonRun, targetNodeId: string): (boolean, string?)
+-- Validates if a target node is reachable from the current dungeon state without mutating state
+function DungeonMap.validateNextNode(run: DungeonRun, targetNodeId: string): (boolean, string?, DungeonNode?)
 	if run.IsCompleted then
-		return false, "Dungeon run is already completed."
+		return false, "Dungeon run is already completed.", nil
 	end
 
 	local available = DungeonMap.getAvailableNextNodes(run)
@@ -456,14 +456,26 @@ function DungeonMap.selectNextNode(run: DungeonRun, targetNodeId: string): (bool
 	end
 
 	if not targetNode then
-		return false, string.format("Node '%s' is not an available path from the current room.", targetNodeId)
+		return false, string.format("Node '%s' is not an available path from the current room.", targetNodeId), nil
 	end
 
-	-- Transition player to the selected node (Visited, but NOT yet Cleared)
+	return true, nil, targetNode
+end
+
+-- Commits travel to an already-validated node
+function DungeonMap.commitNextNode(run: DungeonRun, targetNode: DungeonNode)
 	run.CurrentActIndex = targetNode.Act
 	run.CurrentTier = targetNode.Tier
 	run.CurrentNodeId = targetNode.Id
+end
 
+-- Selects a node to travel to after clearing a room (atomic validate + commit)
+function DungeonMap.selectNextNode(run: DungeonRun, targetNodeId: string): (boolean, string?)
+	local valid, err, targetNode = DungeonMap.validateNextNode(run, targetNodeId)
+	if not valid or not targetNode then
+		return false, err
+	end
+	DungeonMap.commitNextNode(run, targetNode)
 	return true, nil
 end
 

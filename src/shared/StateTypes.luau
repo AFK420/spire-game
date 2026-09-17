@@ -347,6 +347,7 @@ export type RunState = {
 	ActiveRoom: ActiveRoom?,
 	ActiveCombat: CombatState?,
 	PendingRewards: RunRewards?,
+	StateRevision: number,
 }
 
 --------------------------------------------------------------------------------
@@ -455,6 +456,7 @@ export type RunSnapshot = {
 		HasClaimed: boolean,
 	}?,
 	Message: string?,
+	StateRevision: number?,
 }
 
 --------------------------------------------------------------------------------

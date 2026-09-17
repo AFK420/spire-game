@@ -344,10 +344,19 @@ end
 function ArenaVisualizer.teleportPlayersToPedestal()
 	for _, player in Players:GetPlayers() do
 		task.spawn(function()
-			local char = player.Character or player.CharacterAdded:Wait()
-			local root = char:WaitForChild("HumanoidRootPart", 5) :: BasePart?
-			if root then
-				root.CFrame = CFrame.lookAt(PLAYER_STAND_POS + Vector3.new(0, 3, 0), ENEMY_STAND_POS)
+			local char = player.Character
+			if not char then
+				local start = os.clock()
+				while not player.Character and (os.clock() - start < 3.0) do
+					task.wait(0.1)
+				end
+				char = player.Character
+			end
+			if char then
+				local root = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+				if root then
+					root.CFrame = CFrame.lookAt(PLAYER_STAND_POS + Vector3.new(0, 3, 0), ENEMY_STAND_POS)
+				end
 			end
 		end)
 	end

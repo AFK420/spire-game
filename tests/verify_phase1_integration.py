@@ -1398,6 +1398,45 @@ test("MAP DATA ERROR" in ui_ctrl_src, "UIController displays error diagnostic fo
 test('res.Action == "VoteMapNode"' in ui_ctrl_src, "UIController handles ActionResult for VoteMapNode")
 test('res.Won == true' in ui_ctrl_src, "UIController distinguishes winning vote vs pending vote in ActionResult")
 
+# Check 63: Suite 68 Regression Tests & Transactional Progression Invariants
+print("\n--- [Check 63] Suite 68 Regression Tests & Transactional Progression Invariants ---")
+test("local function runSuite68()" in testrunner_src, "TestRunner includes Suite 68 definition")
+test("runSuite68()" in testrunner_src, "TestRunner invokes Suite 68 in runAllTests")
+test("[Suite 68.1]" in testrunner_src, "Suite 68 tests addPlayer succeeds for test player")
+test("[Suite 68.5]" in testrunner_src, "Suite 68 tests StateRevision initialized and bumped on startRun")
+test("[Suite 68.10]" in testrunner_src, "Suite 68 tests StateRevision strictly incremented on room entry")
+test("[Suite 68.13]" in testrunner_src, "Suite 68 tests AvailableNodeIds cleared in ActiveRoom")
+test("[Suite 68.16]" in testrunner_src, "Suite 68 tests duplicate vote returns idempotent success")
+test("[Suite 68.19]" in testrunner_src, "Suite 68 tests RequestStateSync snapshot is ActiveRoom")
+test("[Suite 68.23]" in testrunner_src, "Suite 68 tests travelToNode fails when combat fails to initialize")
+test("[Suite 68.25]" in testrunner_src, "Suite 68 tests Phase remains MapSelect after failed combat start")
+test("[Suite 68.29]" in testrunner_src, "Suite 68 tests StateRevision remained unchanged on failed travel")
+test("[Suite 68.31]" in testrunner_src, "Suite 68 tests retry travelToNode succeeds after restoring combat service")
+
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+dungeon_map_src = (ROOT / "src/shared/DungeonMap.luau").read_text(encoding="utf-8")
+dungeon_svc_src = (ROOT / "src/server/services/DungeonService.luau").read_text(encoding="utf-8")
+combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+
+test("StateRevision: number" in state_types_src, "StateTypes.RunState declares StateRevision: number")
+test("StateRevision: number?" in state_types_src, "StateTypes.RunSnapshot declares StateRevision: number?")
+test("DungeonMap.validateNextNode" in dungeon_map_src, "DungeonMap implements validateNextNode without mutation")
+test("DungeonMap.commitNextNode" in dungeon_map_src, "DungeonMap implements commitNextNode")
+test("DungeonService.validateNode" in dungeon_svc_src, "DungeonService exposes validateNode")
+test("DungeonService.commitNode" in dungeon_svc_src, "DungeonService exposes commitNode")
+
+test("StateRevision = 0" in run_mgr_src, "RunManager initializes StateRevision = 0")
+test("runToStart.StateRevision = (runToStart.StateRevision or 0) + 1" in run_mgr_src, "RunManager increments StateRevision in startRun")
+test("runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1" in run_mgr_src, "RunManager increments StateRevision in travelToNode")
+test("table.clear(runToMutate.AvailableNodeIds)" in run_mgr_src, "RunManager clears AvailableNodeIds upon room entry")
+test("ArenaVisualizer.teleportPlayersToPedestal()" in combat_svc_src, "CombatService invokes teleportPlayersToPedestal on combat start")
+test("[MAPFLOW][SERVER]" in run_mgr_src, "RunManager implements [MAPFLOW][SERVER] diagnostic logging")
+
+test("lastRunStateRevision" in ui_ctrl_src, "UIController tracks lastRunStateRevision")
+test("snapshot.StateRevision < lastRunStateRevision" in ui_ctrl_src, "UIController discards stale RunStateUpdate snapshots")
+test("[MAPFLOW][CLIENT]" in ui_ctrl_src, "UIController implements [MAPFLOW][CLIENT] diagnostic logging")
+test("task.delay(8.0" in ui_ctrl_src, "UIController implements 8s in-flight timeout recovery for map voting")
+
 # Static Compilation of all Luau files with luau-compile
 import subprocess
 print("\n--- [Check 60] Static Compilation of All Luau Files ---")

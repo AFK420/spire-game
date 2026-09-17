@@ -756,6 +756,10 @@ function CombatService.startCombat(
 		end
 	end)
 
+	if not isCombatIsolation then
+		ArenaVisualizer.teleportPlayersToPedestal()
+	end
+
 	CombatService.broadcastSnapshots("Battle initiated! Choose your actions.")
 	return activeCombat
 end

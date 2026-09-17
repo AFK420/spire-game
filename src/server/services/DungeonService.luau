@@ -21,6 +21,14 @@ function DungeonService.getAvailableNodes(run: DungeonMap.DungeonRun): { Dungeon
 	return DungeonMap.getAvailableNextNodes(run)
 end
 
+function DungeonService.validateNode(run: DungeonMap.DungeonRun, nodeId: string): (boolean, string?, DungeonMap.DungeonNode?)
+	return DungeonMap.validateNextNode(run, nodeId)
+end
+
+function DungeonService.commitNode(run: DungeonMap.DungeonRun, node: DungeonMap.DungeonNode)
+	DungeonMap.commitNextNode(run, node)
+end
+
 function DungeonService.selectNode(run: DungeonMap.DungeonRun, nodeId: string): (boolean, string?)
 	return DungeonMap.selectNextNode(run, nodeId)
 end
