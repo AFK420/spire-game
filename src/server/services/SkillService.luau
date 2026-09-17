@@ -344,6 +344,24 @@ function SkillService.onTurnStart(playerState: StateTypes.PlayerState)
 	end
 end
 
+function SkillService.resetCooldowns(playerState: StateTypes.PlayerState)
+	if not playerState then return end
+	if playerState.EquippedSkills then
+		for _, skillInst in playerState.EquippedSkills do
+			if skillInst then
+				skillInst.CurrentCooldown = 0
+			end
+		end
+	end
+	if playerState.SkillInventory then
+		for _, skillInst in ipairs(playerState.SkillInventory) do
+			if skillInst then
+				skillInst.CurrentCooldown = 0
+			end
+		end
+	end
+end
+
 -- Retrieves the skill equipped in a specific slot
 function SkillService.getEquippedSkill(
 	playerState: StateTypes.PlayerState,

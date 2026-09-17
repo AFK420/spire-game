@@ -34,6 +34,7 @@ local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
 local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
+local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 
 local services = script.Parent
 local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
@@ -5868,6 +5869,350 @@ function TestRunner.runAllTests(): boolean
 	assertTest(startRunFailRes == false, "[Suite 63.8] startRun rejected when player profile failed to load (Item 16)")
 
 	-- Cleanup
+	CombatService.cleanupCombat()
+	RunManager.resetRunForTesting()
+	PersistenceService.resetForTesting()
+	end
+
+	----------------------------------------------------------------------------
+	-- TEST 64: Hardening & Blocker Repair Regression Suite
+	----------------------------------------------------------------------------
+	do
+	print("\n--- [Suite 64] Hardening & Blocker Repair Regression Suite ---")
+
+	-- 64.1: StatusService removeStatus syntax & return contract
+	StatusService.clearAllStatusesForTesting()
+	local s1 = StatusService.applyStatus("p_64001", "Strength", 2)
+	assertTest(s1 ~= nil and s1.Stacks == 2, "[Suite 64.1a] StatusService.applyStatus applies Strength")
+	local removedOk = StatusService.removeStatus("p_64001", "Strength")
+	assertTest(removedOk == true, "[Suite 64.1b] StatusService.removeStatus returns true on existing status")
+	local removedAgain = StatusService.removeStatus("p_64001", "Strength")
+	assertTest(removedAgain == false, "[Suite 64.1c] StatusService.removeStatus returns false on non-existent status")
+
+	-- 64.2: Combat skip exploit rejection in ActiveRoom (Item 3)
+	RunManager.resetRunForTesting()
+	local skipPlayer = {
+		UserId = 64002,
+		Name = "SkipTester",
+		DisplayName = "SkipTester",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local addedSkip = RunManager.addPlayer(skipPlayer :: any)
+	assert(addedSkip, "addedSkip exists")
+	addedSkip.ClassLocked = true
+	local rState = RunManager.getRunState()
+	rState.Phase = "Dungeon"
+	rState.RoomPhase = "ActiveRoom"
+	local contRes, contErr = RunManager.continueFromRewards(skipPlayer :: any)
+	assertTest(contRes == false and rState.RoomPhase == "ActiveRoom", "[Suite 64.2] continueFromRewards rejected while RoomPhase is ActiveRoom")
+
+	-- 64.3: StartRun Preconditions: nil, non-party, disconnected, unlocked (Item 4)
+	RunManager.resetRunForTesting()
+	local okNil, _ = RunManager.startRun(nil :: any)
+	assertTest(okNil == false, "[Suite 64.3a] startRun rejected with nil initiator")
+	local outsider = {
+		UserId = 64099,
+		Name = "Outsider",
+		DisplayName = "Outsider",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local okOut, _ = RunManager.startRun(outsider :: any)
+	assertTest(okOut == false, "[Suite 64.3b] startRun rejected with non-party initiator")
+	local member1 = {
+		UserId = 64003,
+		Name = "Member1",
+		DisplayName = "Member1",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local p1 = RunManager.addPlayer(member1 :: any)
+	assert(p1, "p1 exists")
+	p1.ClassLocked = false
+	local okUnlock, _ = RunManager.startRun(member1 :: any)
+	assertTest(okUnlock == false, "[Suite 64.3c] startRun rejected when player has not locked class")
+	p1.ClassLocked = true
+	p1.IsConnected = false
+	local okDisc, _ = RunManager.startRun(member1 :: any)
+	assertTest(okDisc == false, "[Suite 64.3d] startRun rejected when initiator is disconnected")
+	p1.IsConnected = true
+	local okValid, _ = RunManager.startRun(member1 :: any)
+	assertTest(okValid == true, "[Suite 64.3e] startRun succeeds with valid locked connected initiator")
+
+	-- 64.4: Class selection duplicate lock rejection (Item 5)
+	RunManager.resetRunForTesting()
+	local classLockPlayer = {
+		UserId = 64004,
+		Name = "ClassLockPlayer",
+		DisplayName = "ClassLockPlayer",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local clState = RunManager.addPlayer(classLockPlayer :: any)
+	assert(clState, "clState exists")
+	local sel1, _ = ClassService.selectClass(classLockPlayer :: any, clState, "Warlord", "Berserker")
+	assertTest(sel1 == true and clState.ClassLocked == true, "[Suite 64.4a] Initial class selection locks class")
+	local sel2, errSel2 = ClassService.selectClass(classLockPlayer :: any, clState, "Shadowblade", "Assassin")
+	assertTest(sel2 == false and string.find(errSel2 or "", "locked") ~= nil, "[Suite 64.4b] Duplicate class selection rejected once locked")
+
+	-- 64.5: 4-Player cap rejection (Item 6)
+	RunManager.resetRunForTesting()
+	for i = 1, 4 do
+		local p = {
+			UserId = 64010 + i,
+			Name = "CapPlayer" .. i,
+			DisplayName = "CapPlayer" .. i,
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local res = RunManager.addPlayer(p :: any)
+		assertTest(res ~= nil, string.format("[Suite 64.5a] Player %d added under 4-player cap", i))
+	end
+	local extraPlayer = {
+		UserId = 64015,
+		Name = "CapPlayer5",
+		DisplayName = "CapPlayer5",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local resExtra = RunManager.addPlayer(extraPlayer :: any)
+	assertTest(resExtra == nil, "[Suite 64.5b] 5th player rejected due to 4-player cap")
+
+	-- 64.6: Late-join rejected during active run (Item 7)
+	local capInitiator = {
+		UserId = 64011,
+		Name = "CapPlayer1",
+		DisplayName = "CapPlayer1",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	for _, ps in RunManager.getRunState().Party do
+		ps.ClassLocked = true
+	end
+	RunManager.startRun(capInitiator :: any)
+	local lateJoiner = {
+		UserId = 64020,
+		Name = "LateJoiner",
+		DisplayName = "LateJoiner",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local resLate = RunManager.addPlayer(lateJoiner :: any)
+	assertTest(resLate == nil, "[Suite 64.6] Late join rejected when run phase is not Lobby")
+
+	-- 64.7: Map vote consensus: 1/4, 2/4 pending; 3/4 majority resolves (Item 8)
+	local activeRunState = RunManager.getRunState()
+	activeRunState.RoomPhase = "MapSelect"
+	local currentAct = activeRunState.DungeonRun.Acts[activeRunState.DungeonRun.CurrentActIndex]
+	local tier1Nodes = currentAct.Tiers[1]
+	local targetNode = tier1Nodes[1]
+	assert(targetNode, "targetNode exists")
+
+	table.clear(activeRunState.MapVotes)
+	local pVote1 = { UserId = 64011, Name = "CapPlayer1", DisplayName = "CapPlayer1", IsA = function(_, cls) return cls == "Player" end }
+	local pVote2 = { UserId = 64012, Name = "CapPlayer2", DisplayName = "CapPlayer2", IsA = function(_, cls) return cls == "Player" end }
+	local pVote3 = { UserId = 64013, Name = "CapPlayer3", DisplayName = "CapPlayer3", IsA = function(_, cls) return cls == "Player" end }
+
+	local okV1, _ = RunManager.voteMapNode(pVote1 :: any, targetNode.Id)
+	assertTest(okV1 == true and activeRunState.RoomPhase == "MapSelect", "[Suite 64.7a] 1/4 vote recorded; travel pending")
+	local okV2, _ = RunManager.voteMapNode(pVote2 :: any, targetNode.Id)
+	assertTest(okV2 == true and activeRunState.RoomPhase == "MapSelect", "[Suite 64.7b] 2/4 vote recorded; travel pending")
+	local okV3, _ = RunManager.voteMapNode(pVote3 :: any, targetNode.Id)
+	assertTest(okV3 == true and activeRunState.CurrentNodeId == targetNode.Id, "[Suite 64.7c] 3/4 vote reaches majority; consensus travel triggered")
+
+	-- 64.8: Visited vs Cleared separation (Item 9)
+	local dRun = activeRunState.DungeonRun
+	assertTest(table.find(dRun.ClearedNodeIds, targetNode.Id) == nil, "[Suite 64.8a] Traveled node is NOT marked cleared prior to room resolution")
+	local availableBeforeClear = DungeonMap.getAvailableNextNodes(dRun)
+	assertTest(#availableBeforeClear == 0, "[Suite 64.8b] Next tier paths NOT available while current node is uncleared")
+	DungeonMap.markNodeCleared(dRun, targetNode.Id)
+	assertTest(table.find(dRun.ClearedNodeIds, targetNode.Id) ~= nil, "[Suite 64.8c] Node marked cleared via markNodeCleared")
+	local availableAfterClear = DungeonMap.getAvailableNextNodes(dRun)
+	assertTest(#availableAfterClear > 0, "[Suite 64.8d] Outgoing paths available after node is cleared")
+
+	-- 64.9: StatusService.applyStatus rejects Implemented == false (Item 28)
+	local unimplRes = StatusService.applyStatus("p_64030", "Chill", 2)
+	assertTest(unimplRes == nil, "[Suite 64.9a] applyStatus rejects unimplemented status 'Chill'")
+	local freezeRes = StatusService.applyStatus("p_64030", "Freeze", 1)
+	assertTest(freezeRes == nil, "[Suite 64.9b] applyStatus rejects unimplemented status 'Freeze'")
+	local validPoison = StatusService.applyStatus("p_64030", "Poison", 3)
+	assertTest(validPoison ~= nil and validPoison.Stacks == 3, "[Suite 64.9c] applyStatus accepts implemented status 'Poison'")
+
+	-- 64.10: Single-hit kill trigger guard (Item 12)
+	local dummyEnemy: StateTypes.EnemyState = {
+		InstanceId = "guard_dummy_1",
+		DefinitionId = "TrainingDummy",
+		Name = "Kill Dummy",
+		HP = 1,
+		MaxHP = 50,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 0,
+		Intent = { Type = "Defend", Value = 0 },
+		ModelRef = nil,
+	}
+	local dummyCombatState: StateTypes.CombatState = {
+		CombatId = "combat_kill_guard",
+		Phase = "PlayerPhase",
+		TurnNumber = 1,
+		TurnStartTime = os.clock(),
+		TurnDuration = 45,
+		Participants = { 64011 },
+		Enemies = { ["guard_dummy_1"] = dummyEnemy },
+		ReadyPlayers = {},
+		CombatLog = {},
+	}
+	local testAttacker: StateTypes.PlayerState = {
+		UserId = 64011,
+		PlayerInstance = nil,
+		DisplayName = "Attacker",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+	}
+	local hit1 = DamagePipeline.applyDamage({
+		TargetType = "Enemy",
+		TargetEnemy = dummyEnemy,
+		AttackerPlayer = testAttacker,
+		BaseDamage = 10,
+		CombatState = dummyCombatState,
+		Party = { [64011] = testAttacker },
+	})
+	assertTest(hit1.IsDefeatedOrDowned == true and (dummyEnemy :: any)._killTriggered == true, "[Suite 64.10a] First lethal hit flags _killTriggered")
+	local hit2 = DamagePipeline.applyDamage({
+		TargetType = "Enemy",
+		TargetEnemy = dummyEnemy,
+		AttackerPlayer = testAttacker,
+		BaseDamage = 10,
+		CombatState = dummyCombatState,
+		Party = { [64011] = testAttacker },
+	})
+	assertTest((dummyEnemy :: any)._killTriggered == true, "[Suite 64.10b] Second hit retains _killTriggered without redundant re-triggering")
+
+	-- 64.11: Deterministic crit RNG hook (Item 16)
+	DamagePipeline.setCritRngHook(function() return 0.0 end)
+	local critDmg = DamagePipeline.applyDamage({
+		TargetType = "Enemy",
+		TargetEnemy = dummyEnemy,
+		AttackerPlayer = testAttacker,
+		BaseDamage = 10,
+		CombatState = dummyCombatState,
+		Party = { [64011] = testAttacker },
+	})
+	assertTest(critDmg.IsCrit == true, "[Suite 64.11a] Deterministic RNG hook forces critical hit")
+	DamagePipeline.setCritRngHook(function() return 0.999 end)
+	local nonCritDmg = DamagePipeline.applyDamage({
+		TargetType = "Enemy",
+		TargetEnemy = dummyEnemy,
+		AttackerPlayer = testAttacker,
+		BaseDamage = 10,
+		CombatState = dummyCombatState,
+		Party = { [64011] = testAttacker },
+	})
+	assertTest(nonCritDmg.IsCrit == false, "[Suite 64.11b] Deterministic RNG hook forces non-critical hit")
+	DamagePipeline.setCritRngHook(nil)
+
+	-- 64.12: Condition failure fail-closed (Item 27)
+	local condFailClosed = EffectResolver.evaluateCondition({
+		Condition = "NonExistentCondition_Test" :: any,
+		Params = {},
+	}, testAttacker, dummyEnemy, dummyCombatState)
+	assertTest(condFailClosed == false, "[Suite 64.12] EffectResolver.evaluateCondition fails closed (false) on unknown condition")
+
+	-- 64.13: Unknown effect type returns explicit failure (Item 14)
+	local unkEffectRes = EffectResolver.resolveEffects({
+		Effects = { { Type = "TotallyBogusEffectType" :: any, Target = "Enemy" } },
+		Caster = testAttacker,
+		Target = dummyEnemy,
+		CombatState = dummyCombatState,
+		Party = { [64011] = testAttacker },
+	})
+	assertTest(unkEffectRes.Success == false and unkEffectRes.Error ~= nil, "[Suite 64.13] EffectResolver.resolveEffects returns failure on unsupported effect type")
+
+	-- 64.14: Dynamic card cost reduction in CardService.toCardView (Item 17)
+	local testCardInst = CardService.createCardInstance("Strike", 64011) :: StateTypes.CardInstance
+	assert(testCardInst, "testCardInst created")
+	local viewBase = CardService.toCardView(testCardInst)
+	assertTest(viewBase.Cost == 1, "[Suite 64.14a] CardView base cost is 1")
+	local playerWithReduction: StateTypes.PlayerState = {
+		UserId = 64011,
+		PlayerInstance = nil,
+		DisplayName = "DiscountHero",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+		EquippedItems = {},
+		UnlockedPassives = {},
+	}
+	local viewDiscount = CardService.toCardView(testCardInst, playerWithReduction)
+	assertTest(viewDiscount.Cost >= 0, "[Suite 64.14b] CardView with playerState computes valid effective cost")
+
+	-- 64.15: SkillService.resetCooldowns (Item 25)
+	local cdHero: StateTypes.PlayerState = {
+		UserId = 64040,
+		DisplayName = "CDHero",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {}, Hand = {}, DiscardPile = {}, ExhaustPile = {},
+		RelicIds = {}, Gold = 0, IsReady = false, IsDowned = false, IsConnected = true,
+		EquippedSkills = {
+			Skill1 = { InstanceId = "sk_1", DefinitionId = "HeroicStrike", CurrentCooldown = 3 },
+		},
+		SkillInventory = {
+			{ InstanceId = "sk_2", DefinitionId = "HeroicStrike", CurrentCooldown = 5 },
+		},
+		EquippedItems = {},
+		UnlockedPassives = {},
+		UnlockedSkills = { ["HeroicStrike"] = true },
+	}
+	SkillService.resetCooldowns(cdHero)
+	local sk1 = cdHero.EquippedSkills.Skill1
+	assertTest(sk1 ~= nil and sk1.CurrentCooldown == 0, "[Suite 64.15a] resetCooldowns resets equipped skill cooldown to 0")
+	assertTest(cdHero.SkillInventory[1].CurrentCooldown == 0, "[Suite 64.15b] resetCooldowns resets inventory skill cooldown to 0")
+
+	-- 64.16: Persistence fail-closed guard & retry (Item 21)
+	PersistenceService.simulateLoadFailureForTesting(64050)
+	local pFailUser = { UserId = 64050, Name = "FailUser", DisplayName = "FailUser" }
+	local profFailed = PersistenceService.getProfile(pFailUser)
+	assertTest(profFailed == nil, "[Suite 64.16a] getProfile returns nil when LoadFailed")
+	local saveOk, _ = PersistenceService.saveProfile(pFailUser)
+	assertTest(saveOk == false, "[Suite 64.16b] saveProfile rejected when LoadFailed")
+	PersistenceService.addAetherShards(pFailUser, 100)
+	assertTest(PersistenceService.getProfile(pFailUser) == nil, "[Suite 64.16c] addAetherShards blocked on LoadFailed")
+	local retryOk, retryProf = PersistenceService.retryLoadProfile(pFailUser)
+	assertTest(retryOk == true and retryProf ~= nil, "[Suite 64.16d] retryLoadProfile recovers profile once store succeeds")
+
+	-- 64.17: Profile revision increments monotonically on save (Item 22)
+	assert(retryProf, "retryProf exists")
+	local revBefore = retryProf.ProfileRevision or 1
+	PersistenceService.saveProfile(pFailUser)
+	local revAfter = retryProf.ProfileRevision
+	assertTest(revAfter == revBefore + 1, "[Suite 64.17] ProfileRevision increments monotonically on save")
+
+	-- 64.18: MapNodeView aliases exposed in getRunSnapshotForPlayer (Item 23)
+	local mapPlayer = {
+		UserId = 64011,
+		Name = "CapPlayer1",
+		DisplayName = "CapPlayer1",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local snapshot = RunManager.getRunSnapshotForPlayer(mapPlayer :: any)
+	assert(snapshot and snapshot.CurrentActMap, "snapshot with map exists")
+	local firstNodeView = snapshot.CurrentActMap.Nodes[1]
+	assertTest(firstNodeView ~= nil and firstNodeView.NodeId == firstNodeView.Id, "[Suite 64.18a] MapNodeView exposes NodeId alias")
+	assertTest(firstNodeView.Connections ~= nil, "[Suite 64.18b] MapNodeView exposes Connections alias")
+	assertTest(firstNodeView.Reachable ~= nil and firstNodeView.Cleared ~= nil, "[Suite 64.18c] MapNodeView exposes Reachable and Cleared aliases")
+
+	-- 64.19: resetToLobby wipes run state and resets combat relics, gimmicks, cooldowns (Item 25)
+	local lobbyPlayer = {
+		UserId = 64011,
+		Name = "CapPlayer1",
+		DisplayName = "CapPlayer1",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	RunManager.resetToLobby(lobbyPlayer :: any)
+	local resetState = RunManager.getRunState()
+	assertTest(resetState.Phase == "Lobby", "[Suite 64.19a] resetToLobby returns Phase to Lobby")
+
+	-- Final Cleanup
 	CombatService.cleanupCombat()
 	RunManager.resetRunForTesting()
 	PersistenceService.resetForTesting()

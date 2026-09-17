@@ -207,7 +207,7 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 	-- Local Hand Views
 	local localHand: { StateTypes.CardView } = {}
 	for _, cardInst in playerState.Hand do
-		table.insert(localHand, CardService.toCardView(cardInst))
+		table.insert(localHand, CardService.toCardView(cardInst, playerState))
 	end
 	table.sort(localHand, function(a, b) return a.Name < b.Name end)
 
@@ -534,7 +534,7 @@ local function resolveTurn()
 				elseif enemy.Intent.Type == "Debuff" then
 					for _, pState in partyRef do
 						if not pState.IsDowned and pState.IsConnected ~= false then
-							StatusService.applyStatus("player_" .. tostring(pState.UserId), "Poison", enemy.Intent.Value, -1, enemy.Name, pState)
+							StatusService.applyStatus(tostring(pState.UserId), "Poison", enemy.Intent.Value, nil, enemy.InstanceId, pState)
 							logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, "Debuffed with Poison")
 						end
 					end
@@ -569,7 +569,7 @@ local function resolveTurn()
 
 			if not playerState.IsDowned and playerState.IsConnected ~= false then
 				-- Tick player turn-start statuses (Poison, Burn, etc.)
-				local pTargetId = "player_" .. tostring(playerState.UserId)
+				local pTargetId = tostring(playerState.UserId)
 				local pTicks = StatusService.tickStatuses(pTargetId, "TurnStart", playerState, false)
 				for _, tick in pTicks do
 					if tick.DamageDealt > 0 then
@@ -784,6 +784,14 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 
 	-- Pre-validate effect preconditions before mutating any state or resources
 	for _, eff in cardDef.Effects do
+		if not EffectResolver.isSupportedEffectType(eff.Type) then
+			return false, "Unsupported effect type: " .. tostring(eff.Type)
+		end
+		if eff.Condition and eff.Condition ~= "" then
+			if eff.Condition ~= "TargetDowned" and eff.Condition ~= "TargetLiving" and eff.Condition ~= "LowHP" then
+				return false, "Unknown effect condition: " .. tostring(eff.Condition)
+			end
+		end
 		if eff.Type == "Damage" then
 			if not targetEnemy or targetEnemy.HP <= 0 then
 				return false, "No living enemy target."

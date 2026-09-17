@@ -43,12 +43,21 @@ function CardService.createCardInstance(definitionId: string, ownerUserId: numbe
 end
 
 -- Converts a runtime CardInstance into a serializable client snapshot
-function CardService.toCardView(instance: StateTypes.CardInstance): StateTypes.CardView
+function CardService.toCardView(instance: StateTypes.CardInstance, playerState: StateTypes.PlayerState?): StateTypes.CardView
+	local cost = instance.CardData.Cost
+	if playerState then
+		local StatResolver = require(script.Parent:WaitForChild("StatResolver") :: ModuleScript)
+		local stats = StatResolver.resolvePlayerStats(playerState)
+		if stats.CostReduction and stats.CostReduction > 0 then
+			cost = math.max(0, cost - stats.CostReduction)
+		end
+	end
+
 	return {
 		InstanceId = instance.InstanceId,
 		DefinitionId = instance.DefinitionId,
 		Name = instance.CardData.Name,
-		Cost = instance.CardData.Cost,
+		Cost = cost,
 		Target = instance.CardData.Target,
 		Description = instance.CardData.Description,
 		Icon = instance.CardData.Icon,

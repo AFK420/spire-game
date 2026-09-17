@@ -75,27 +75,31 @@ local function resolveEffectTarget(effect: CardData.Effect, context: ActionConte
 end
 
 -- Evaluates a condition against action context
-local function evaluateCondition(condition: string?, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget?): boolean
+-- Returns (isSatisfied: boolean, isValid: boolean, errorMsg: string?)
+local function evaluateCondition(condition: string?, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget?): (boolean, boolean, string?)
 	if not condition or condition == "" then
-		return true
+		return true, true, nil
 	end
 
 	local t = resolvedTarget or context.Target
 
 	if condition == "TargetDowned" then
 		local p = t.PlayerTarget
-		return p ~= nil and p.IsDowned == true
+		return (p ~= nil and p.IsDowned == true), true, nil
 
 	elseif condition == "TargetLiving" then
 		local p = t.PlayerTarget
-		return p == nil or p.IsDowned ~= true
+		return (p == nil or p.IsDowned ~= true), true, nil
 
 	elseif condition == "LowHP" then
 		local p = t.PlayerTarget or context.SourcePlayer
-		return p.Resources.HP < (p.Resources.MaxHP * 0.5)
+		return (p.Resources.HP < (p.Resources.MaxHP * 0.5)), true, nil
 	end
 
-	return true
+	-- Fail closed on unknown conditions
+	local msg = string.format("Unknown condition '%s'. Failing closed.", tostring(condition))
+	warn("[EffectResolver] " .. msg)
+	return false, false, msg
 end
 
 --------------------------------------------------------------------------------
@@ -148,7 +152,8 @@ handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext, r
 			string.format("-%d HP", dmgResult.HPLost)
 		)
 
-		if enemy.HP <= 0 then
+		if dmgResult.IsDefeatedOrDowned and not (enemy :: any)._killTriggered then
+			(enemy :: any)._killTriggered = true
 			context.LogEvent(
 				"EnemyDefeated",
 				context.SourcePlayer.DisplayName,
@@ -634,11 +639,22 @@ end
 -- Public Dispatcher
 --------------------------------------------------------------------------------
 
+function EffectResolver.isSupportedEffectType(effectType: string): boolean
+	return handlers[effectType] ~= nil
+end
+
 -- Resolves an array of card/action effects against the given context
 function EffectResolver.resolveEffects(effects: { CardData.Effect }, context: ActionContext): { EffectExecutionResult }
 	if currentDepth >= MAX_RECURSION_DEPTH then
-		warn("[EffectResolver] Exceeded maximum recursion depth of " .. tostring(MAX_RECURSION_DEPTH))
-		return {}
+		local msg = "[EffectResolver] Exceeded maximum recursion depth of " .. tostring(MAX_RECURSION_DEPTH)
+		warn(msg)
+		return {
+			{
+				Success = false,
+				EffectType = "Recursion",
+				Message = msg,
+			}
+		}
 	end
 
 	currentDepth += 1
@@ -646,22 +662,42 @@ function EffectResolver.resolveEffects(effects: { CardData.Effect }, context: Ac
 
 	local ok, err = pcall(function()
 		for _, effect in effects do
+			local handler = handlers[effect.Type]
+			if not handler then
+				local msg = "[EffectResolver] No handler registered for effect type: " .. tostring(effect.Type)
+				warn(msg)
+				table.insert(results, {
+					Success = false,
+					EffectType = tostring(effect.Type),
+					Message = msg,
+				})
+				continue
+			end
+
 			local resolvedTarget = resolveEffectTarget(effect, context)
-			if evaluateCondition(effect.Condition, context, resolvedTarget) then
-				local handler = handlers[effect.Type]
-				if handler then
-					local res = handler(effect, context, resolvedTarget)
-					table.insert(results, res)
-				else
-					warn("[EffectResolver] No handler registered for effect type: " .. tostring(effect.Type))
-				end
+			local isSatisfied, isValid, condErr = evaluateCondition(effect.Condition, context, resolvedTarget)
+			if not isValid then
+				table.insert(results, {
+					Success = false,
+					EffectType = tostring(effect.Type),
+					Message = condErr or ("Unknown condition: " .. tostring(effect.Condition)),
+				})
+			elseif isSatisfied then
+				local res = handler(effect, context, resolvedTarget)
+				table.insert(results, res)
 			end
 		end
 	end)
 
 	currentDepth -= 1
 	if not ok then
-		warn("[EffectResolver] Error during effect resolution: " .. tostring(err))
+		local msg = "[EffectResolver] Error during effect resolution: " .. tostring(err)
+		warn(msg)
+		table.insert(results, {
+			Success = false,
+			EffectType = "Error",
+			Message = msg,
+		})
 	end
 
 	return results

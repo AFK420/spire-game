@@ -16,6 +16,12 @@ local ModifierResolver = require(servicesFolder:WaitForChild("ModifierResolver")
 
 local DamagePipeline = {}
 
+local customCritRng: (() -> number)? = nil
+
+function DamagePipeline.setCritRngHook(fn: (() -> number)?)
+	customCritRng = fn
+end
+
 -- Executes damage against an enemy or player target through the full mitigation pipeline
 function DamagePipeline.executeDamage(
 	context: StateTypes.DamageContext,
@@ -73,7 +79,8 @@ function DamagePipeline.executeDamage(
 				local StatResolverModule = require(sr :: ModuleScript)
 				local playerStats = StatResolverModule.resolvePlayerStats(context.SourcePlayer)
 				local critChance = playerStats.CritChance or 0.05
-				if critChance > 0 and math.random() < critChance then
+				local roll = if customCritRng then customCritRng() else math.random()
+				if critChance > 0 and roll < critChance then
 					isCritical = true
 				end
 			end

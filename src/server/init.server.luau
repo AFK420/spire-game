@@ -123,8 +123,19 @@ NetworkService.SelectClassEvent.OnServerEvent:Connect(function(player: Player, c
 
 	local pState = RunManager.getPlayerState(player)
 	if not pState then
-		print(string.format("[Server] PlayerState missing for %s (UserId %d); adding to expedition party.", player.Name, player.UserId))
-		pState = RunManager.addPlayer(player)
+		if RunManager.getRunState().Phase == "Lobby" then
+			print(string.format("[Server] PlayerState missing for %s (UserId %d); adding to expedition party.", player.Name, player.UserId))
+			pState = RunManager.addPlayer(player)
+		end
+	end
+
+	if not pState then
+		warn(string.format("[Server] Cannot select class for %s: not in party or run active.", player.Name))
+		NetworkService.sendClassSelectionResult(player, {
+			Success = false,
+			Error = "Unable to select class: not in party or run already active.",
+		})
+		return
 	end
 
 	local success, err = ClassService.selectClass(player, pState, cId, scId)
@@ -209,19 +220,38 @@ end)
 
 -- 7. Draft Card Reward Claim
 NetworkService.ClaimRewardCardEvent.OnServerEvent:Connect(function(player: Player, cardDefId: any)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	if typeof(cardDefId) ~= "string" then return end
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if typeof(cardDefId) ~= "string" then
+		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = false, Message = "Invalid card definition ID." })
+		return
+	end
 
 	local success, err = RunManager.claimRewardCard(player, cardDefId)
-	if not success and err then
-		warn(string.format("[Server] ClaimRewardCard failed for %s: %s", player.Name, err))
+	if not success then
+		if err then
+			warn(string.format("[Server] ClaimRewardCard failed for %s: %s", player.Name, err))
+		end
+		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = false, Message = tostring(err or "Failed to claim reward card.") })
+	else
+		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = true })
 	end
 end)
 
 -- 8. Continue From Rewards
 NetworkService.ContinueFromRewardsEvent.OnServerEvent:Connect(function(player: Player)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-	RunManager.continueFromRewards(player)
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "ContinueFromRewards", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	local success, err = RunManager.continueFromRewards(player)
+	if not success then
+		NetworkService.sendActionResult(player, { Action = "ContinueFromRewards", Success = false, Message = tostring(err or "Cannot continue from rewards.") })
+	else
+		NetworkService.sendActionResult(player, { Action = "ContinueFromRewards", Success = true })
+	end
 end)
 
 -- 9. Client Full State Sync Request
@@ -229,7 +259,9 @@ NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Play
 	if not NetworkService.checkRateLimit(player, "General") then return end
 
 	if not RunManager.getPlayerState(player) then
-		RunManager.addPlayer(player)
+		if RunManager.getRunState().Phase == "Lobby" then
+			RunManager.addPlayer(player)
+		end
 	end
 
 	if PersistenceService.getLoadState(player) == "LoadFailed" then

@@ -119,13 +119,25 @@ function StatusService.getDefinition(defId: string): StateTypes.StatusDefinition
 	return definitions[defId]
 end
 
-function StatusService.getStatus(targetId: string, defId: string): StateTypes.StatusInstance?
+local function resolveEntityTable(targetId: string): { [string]: StateTypes.StatusInstance }?
 	local targetTable = entityStatuses[targetId]
+	if not targetTable then
+		if targetId:sub(1, 7) == "player_" then
+			targetTable = entityStatuses[targetId:sub(8)]
+		else
+			targetTable = entityStatuses["player_" .. targetId]
+		end
+	end
+	return targetTable
+end
+
+function StatusService.getStatus(targetId: string, defId: string): StateTypes.StatusInstance?
+	local targetTable = resolveEntityTable(targetId)
 	return targetTable and targetTable[defId] or nil
 end
 
 function StatusService.getStatuses(targetId: string): { StateTypes.StatusInstance }
-	local targetTable = entityStatuses[targetId]
+	local targetTable = resolveEntityTable(targetId)
 	if not targetTable then return {} end
 
 	local list = {}
@@ -147,6 +159,11 @@ function StatusService.applyStatus(
 	local def = definitions[defId]
 	if not def then
 		warn("[StatusService] Unknown status definition: " .. tostring(defId))
+		return nil
+	end
+
+	if def.Implemented == false then
+		warn(string.format("[StatusService] Status definition '%s' is not implemented.", tostring(defId)))
 		return nil
 	end
 
@@ -203,7 +220,7 @@ end
 
 -- Removes a specific status definition from a target
 function StatusService.removeStatus(targetId: string, defId: string, targetEntityRef: any?): boolean
-	local targetTable = entityStatuses[targetId]
+	local targetTable = resolveEntityTable(targetId)
 	if not targetTable or not targetTable[defId] then
 		return false
 	end
@@ -388,10 +405,10 @@ function StatusService.tickStatuses(
 	isEnemy: boolean
 ): { StatusTickResult }
 	-- Backward compatibility: only sync from projection if StatusService has no record of this entity
-	local targetTable = entityStatuses[targetId]
+	local targetTable = resolveEntityTable(targetId)
 	if (not targetTable or not targetTable["Poison"]) and targetEntity and targetEntity.Poison ~= nil and targetEntity.Poison > 0 then
 		StatusService.syncEntityFromProjection(targetId, targetEntity)
-		targetTable = entityStatuses[targetId]
+		targetTable = resolveEntityTable(targetId)
 	end
 
 	if not targetTable then return {} end

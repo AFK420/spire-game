@@ -39,6 +39,7 @@ local DungeonService = require(servicesFolder:WaitForChild("DungeonService") :: 
 local NetworkService = require(servicesFolder:WaitForChild("NetworkService") :: ModuleScript)
 local PersistenceService = require(servicesFolder:WaitForChild("PersistenceService") :: ModuleScript)
 local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
+local RelicService = require(servicesFolder:WaitForChild("RelicService") :: ModuleScript)
 local CardCollectionService = require(servicesFolder:WaitForChild("CardCollectionService") :: ModuleScript)
 
 local CombatService: any = nil
@@ -273,13 +274,17 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 			for _, node in currentAct.NodesById do
 				table.insert(mapNodesList, {
 					Id = node.Id,
+					NodeId = node.Id,
 					Act = node.Act,
 					Tier = node.Tier,
 					Lane = node.Lane,
 					Type = node.Type :: StateTypes.ActiveRoomType,
 					ConnectedNodeIds = table.clone(node.OutgoingNodeIds),
+					Connections = table.clone(node.OutgoingNodeIds),
 					IsAvailable = (availableSet[node.Id] == true),
+					Reachable = (availableSet[node.Id] == true),
 					IsCleared = (clearedSet[node.Id] == true),
+					Cleared = (clearedSet[node.Id] == true),
 					IsCurrent = (runToRead.CurrentNodeId == node.Id),
 				})
 			end
@@ -505,11 +510,29 @@ function RunManager.startRun(initiator: any?): boolean
 		return false
 	end
 
-	-- 2. Validate initiator belongs to the party (if initiator specified)
-	if initiator ~= nil then
+	-- 2. Validate initiator belongs to the party, is connected, and is locked
+	if initiator == nil then
+		if not isIsolatedTesting then
+			warn("[RunManager] Cannot start run: initiator is required.")
+			return false
+		end
+	else
 		local initUserId = (typeof(initiator) == "Instance" and initiator.UserId) or (typeof(initiator) == "table" and initiator.UserId) or initiator
-		if typeof(initUserId) == "number" and not runToStart.PartyMembers[initUserId] then
+		if typeof(initUserId) ~= "number" then
+			warn("[RunManager] Cannot start run: invalid initiator identifier.")
+			return false
+		end
+		local initMember = runToStart.PartyMembers[initUserId]
+		if not initMember then
 			warn(string.format("[RunManager] Cannot start run: initiator %s is not in the party.", tostring(initUserId)))
+			return false
+		end
+		if initMember.IsConnected == false then
+			warn(string.format("[RunManager] Cannot start run: initiator %s is disconnected.", tostring(initUserId)))
+			return false
+		end
+		if not initMember.ClassLocked then
+			warn(string.format("[RunManager] Cannot start run: initiator %s has not locked their class.", initMember.DisplayName))
 			return false
 		end
 	end
@@ -681,7 +704,6 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 	runToMutate.CurrentNodeId = targetNodeId
 	runToMutate.CurrentTier = node.Tier
 	runToMutate.ActIndex = node.Act
-	table.insert(runToMutate.ClearedNodeIds, targetNodeId)
 
 	for _, member in runToMutate.PartyMembers do
 		member.VotedNodeId = nil
@@ -719,11 +741,15 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 			local heal = math.floor(member.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
 			member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + heal)
 		end
+		DungeonService.markNodeCleared(dRun, targetNodeId)
+		table.insert(runToMutate.ClearedNodeIds, targetNodeId)
 		if not isIsolatedTesting or isLiveAction then
 			RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered).", isLiveAction)
 		end
 
 	elseif node.Type == "Merchant Shop" then
+		DungeonService.markNodeCleared(dRun, targetNodeId)
+		table.insert(runToMutate.ClearedNodeIds, targetNodeId)
 		if not isIsolatedTesting or isLiveAction then
 			RunManager.broadcastRunSnapshots("💰 Visited the Merchant Shop. Supplies replenished.", isLiveAction)
 		end
@@ -741,6 +767,23 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 		RunManager.broadcastRunSnapshots("DEFEAT! The party has fallen.")
 		NetworkService.broadcastAnnouncement("EXPEDITION FAILED", "Your party was overwhelmed by the rift.", Color3.fromRGB(255, 60, 60))
 		return
+	end
+
+	-- Combat Victory: mark the combat node cleared!
+	local dRun = if (isIsolatedTesting and liveDungeonRun and liveRun.Phase == "ActiveRoom") then liveDungeonRun else internalDungeonRun
+	local runToMutate = if (isIsolatedTesting and liveRun.Phase == "ActiveRoom") then liveRun else currentRun
+	if dRun then
+		DungeonService.markNodeCleared(dRun, node.Id)
+	end
+	local already = false
+	for _, id in runToMutate.ClearedNodeIds do
+		if id == node.Id then
+			already = true
+			break
+		end
+	end
+	if not already then
+		table.insert(runToMutate.ClearedNodeIds, node.Id)
 	end
 
 	if node.Type == "Act Boss" and node.Act == 4 then
@@ -843,7 +886,12 @@ function RunManager.continueFromRewards(player: any): boolean
 	end
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
-	if runToUse.Phase ~= "Rewards" then
+
+	-- Strict security guard: only allowed in Rewards phase and never during active combat or active room
+	if runToUse.Phase ~= "Rewards" and (runToUse :: any).RoomPhase ~= "Rewards" then
+		return false
+	end
+	if runToUse.Phase == "ActiveRoom" or (runToUse :: any).RoomPhase == "ActiveRoom" or runToUse.ActiveCombat ~= nil then
 		return false
 	end
 
@@ -856,6 +904,9 @@ function RunManager.continueFromRewards(player: any): boolean
 	end
 
 	runToUse.Phase = "MapSelect"
+	if (runToUse :: any).RoomPhase then
+		(runToUse :: any).RoomPhase = "MapSelect"
+	end
 	runToUse.ActiveRoom = nil
 	runToUse.ActiveCombat = nil
 	runToUse.PendingRewards = nil
@@ -942,6 +993,9 @@ function RunManager.resetToLobby()
 		ClassService.applyBaseClassStats(member)
 		ClassService.initializeStartingDeck(member)
 		ClassService.resetCombatResources(member)
+		ClassService.resetClassCombatGimmicks(member.UserId)
+		RelicService.resetCombatState(member.UserId)
+		SkillService.resetCooldowns(member)
 	end
 
 	if CombatService then

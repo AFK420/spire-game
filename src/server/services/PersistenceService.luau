@@ -292,13 +292,28 @@ end)
 local mockGetAsyncFailure = false
 
 -- Queries the current load state of a player's profile
-function PersistenceService.getLoadState(userId: number): ProfileLoadState
+function PersistenceService.getLoadState(playerOrUserId: any): ProfileLoadState
+	local userId: number = 0
+	if typeof(playerOrUserId) == "number" then
+		userId = playerOrUserId
+	elseif typeof(playerOrUserId) == "Instance" and playerOrUserId:IsA("Player") then
+		userId = playerOrUserId.UserId
+	elseif typeof(playerOrUserId) == "table" and playerOrUserId.UserId then
+		userId = playerOrUserId.UserId
+	end
 	return profileLoadStates[userId] or "NotLoaded"
 end
 
 -- Checks if a player's profile is authoritative and ready for gameplay
 function PersistenceService.isProfileLoaded(playerOrUserId: any): boolean
-	local userId = if typeof(playerOrUserId) == "number" then playerOrUserId else playerOrUserId.UserId
+	local userId: number = 0
+	if typeof(playerOrUserId) == "number" then
+		userId = playerOrUserId
+	elseif typeof(playerOrUserId) == "Instance" and playerOrUserId:IsA("Player") then
+		userId = playerOrUserId.UserId
+	elseif typeof(playerOrUserId) == "table" and playerOrUserId.UserId then
+		userId = playerOrUserId.UserId
+	end
 	local state = profileLoadStates[userId]
 	return state == "Loaded" or state == "New"
 end
@@ -349,6 +364,21 @@ function PersistenceService.loadProfile(player: any): StateTypes.PlayerProfile?
 	end
 end
 
+-- Safe retry mechanism for players whose profiles initially failed to load
+function PersistenceService.retryLoadProfile(player: any): (boolean, StateTypes.PlayerProfile?)
+	local userId = if typeof(player) == "number" then player else (if player and player.UserId then player.UserId else 0)
+	if profileLoadStates[userId] == "LoadFailed" then
+		profileLoadStates[userId] = "NotLoaded"
+		activeProfiles[userId] = nil
+	end
+	local profile = PersistenceService.loadProfile(player)
+	if profile then
+		return true, profile
+	else
+		return false, nil
+	end
+end
+
 -- Concurrency safety: check for conflicting newer session data
 function PersistenceService.resolveUpdateConflict(currentData: any, incomingProfile: StateTypes.PlayerProfile): (any, boolean)
 	if typeof(currentData) == "table" then
@@ -385,6 +415,7 @@ local function saveProfileInternal(userId: number, profile: StateTypes.PlayerPro
 
 	profile.LastSavedTimestamp = os.time()
 	if not profileStore or RunService:IsStudio() then
+		profile.ProfileRevision = (profile.ProfileRevision or 0) + 1
 		return true, nil
 	end
 
@@ -427,17 +458,17 @@ function PersistenceService.saveProfile(player: any): (boolean, string?)
 	return saveProfileInternal(userId, profile)
 end
 
-function PersistenceService.getProfile(player: any): StateTypes.PlayerProfile
-	local userId = player.UserId
+function PersistenceService.getProfile(player: any): StateTypes.PlayerProfile?
+	local userId = if typeof(player) == "number" then player else (if player and player.UserId then player.UserId else 0)
+	if profileLoadStates[userId] == "LoadFailed" then
+		return nil
+	end
 	local profile = activeProfiles[userId]
 	if not profile then
 		if typeof(player) == "Instance" and player:IsA("Player") then
 			local loaded = PersistenceService.loadProfile(player)
 			if loaded then return loaded end
-			-- Return safe fallback memory profile but do NOT mark saveable
-			local fallback = reconcile(nil, userId)
-			activeProfiles[userId] = fallback
-			return fallback
+			return nil
 		else
 			-- Synthetic / mock player for testing or headless execution
 			local newProfile = reconcile(nil, userId)
@@ -454,7 +485,13 @@ function PersistenceService.mutateProfile(
 	player: any,
 	mutator: (profile: StateTypes.PlayerProfile) -> (boolean, string?)
 ): (boolean, string?)
+	if not PersistenceService.isProfileLoaded(player) then
+		return false, "Player profile is not loaded (fail-closed protection)"
+	end
 	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return false, "Player profile not found"
+	end
 	local ok, err = mutator(profile)
 	if not ok then
 		return false, err
@@ -466,22 +503,35 @@ end
 -- Currency and Stat Helpers
 function PersistenceService.addAetherShards(player: any, amount: number)
 	if amount <= 0 then return end
+	if not PersistenceService.isProfileLoaded(player) then
+		warn(string.format("[PersistenceService] addAetherShards rejected: profile for %s not loaded.", tostring(player)))
+		return
+	end
 	local profile = PersistenceService.getProfile(player)
-	profile.AetherShards += amount
+	if profile then
+		profile.AetherShards += amount
+	end
 end
 
 function PersistenceService.recordRunStarted(player: any)
+	if not PersistenceService.isProfileLoaded(player) then return end
 	local profile = PersistenceService.getProfile(player)
-	profile.TotalRuns += 1
+	if profile then
+		profile.TotalRuns += 1
+	end
 end
 
 function PersistenceService.recordRunVictory(player: any)
+	if not PersistenceService.isProfileLoaded(player) then return end
 	local profile = PersistenceService.getProfile(player)
-	profile.TotalVictories += 1
+	if profile then
+		profile.TotalVictories += 1
+	end
 end
 
 function PersistenceService.isClassUnlocked(player: any, classId: string): boolean
 	local profile = PersistenceService.getProfile(player)
+	if not profile then return false end
 	for _, unlocked in profile.UnlockedClasses do
 		if unlocked == classId then
 			return true
@@ -491,8 +541,9 @@ function PersistenceService.isClassUnlocked(player: any, classId: string): boole
 end
 
 function PersistenceService.unlockClass(player: any, classId: string)
+	if not PersistenceService.isProfileLoaded(player) then return end
 	local profile = PersistenceService.getProfile(player)
-	if not PersistenceService.isClassUnlocked(player, classId) then
+	if profile and not PersistenceService.isClassUnlocked(player, classId) then
 		table.insert(profile.UnlockedClasses, classId)
 	end
 end

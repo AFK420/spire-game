@@ -29,6 +29,10 @@ function DungeonService.getNode(run: DungeonMap.DungeonRun, nodeId: string): Dun
 	return DungeonMap.getNode(run, nodeId)
 end
 
+function DungeonService.markNodeCleared(run: DungeonMap.DungeonRun, nodeId: string)
+	DungeonMap.markNodeCleared(run, nodeId)
+end
+
 function DungeonService.init()
 	print("[DungeonService] Initialized procedural dungeon pathfinding service.")
 end

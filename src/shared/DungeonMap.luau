@@ -398,6 +398,18 @@ function DungeonMap.getAvailableNextNodes(run: DungeonRun): { DungeonNode }
 		return {}
 	end
 
+	-- Verify current node has actually been cleared before generating next reachable nodes
+	local isCurrentCleared = false
+	for _, id in run.ClearedNodeIds do
+		if id == run.CurrentNodeId then
+			isCurrentCleared = true
+			break
+		end
+	end
+	if not isCurrentCleared then
+		return {}
+	end
+
 	-- If current node is Tier 10 (Boss cleared)
 	if currentNode.Tier == TIERS_PER_ACT then
 		if run.CurrentActIndex < TOTAL_ACTS then
@@ -447,18 +459,31 @@ function DungeonMap.selectNextNode(run: DungeonRun, targetNodeId: string): (bool
 		return false, string.format("Node '%s' is not an available path from the current room.", targetNodeId)
 	end
 
-	-- Transition player to the selected node
+	-- Transition player to the selected node (Visited, but NOT yet Cleared)
 	run.CurrentActIndex = targetNode.Act
 	run.CurrentTier = targetNode.Tier
 	run.CurrentNodeId = targetNode.Id
-	table.insert(run.ClearedNodeIds, targetNode.Id)
-
-	-- Check if final Act 4 Boss is cleared
-	if targetNode.Type == "Act Boss" and targetNode.Act == TOTAL_ACTS then
-		run.IsCompleted = true
-	end
 
 	return true, nil
+end
+
+-- Authoritatively marks a node as cleared upon victory or completion of room action
+function DungeonMap.markNodeCleared(run: DungeonRun, nodeId: string)
+	local alreadyCleared = false
+	for _, id in run.ClearedNodeIds do
+		if id == nodeId then
+			alreadyCleared = true
+			break
+		end
+	end
+	if not alreadyCleared then
+		table.insert(run.ClearedNodeIds, nodeId)
+	end
+
+	local node = DungeonMap.getNode(run, nodeId)
+	if node and node.Type == "Act Boss" and node.Act == TOTAL_ACTS then
+		run.IsCompleted = true
+	end
 end
 
 -- Look up a node by its ID across the entire run

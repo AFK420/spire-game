@@ -417,13 +417,17 @@ export type CombatSnapshot = {
 
 export type MapNodeView = {
 	Id: string,
+	NodeId: string?,
 	Act: number,
 	Tier: number,
 	Lane: number,
 	Type: ActiveRoomType,
 	ConnectedNodeIds: { string },
+	Connections: { string }?,
 	IsAvailable: boolean,
+	Reachable: boolean?,
 	IsCleared: boolean,
+	Cleared: boolean?,
 	IsCurrent: boolean,
 }
 
