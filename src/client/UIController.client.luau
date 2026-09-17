@@ -273,6 +273,7 @@ local lastFocusedTier: number? = nil
 local lastFocusedNodeId: string? = nil
 local lastRunStateRevision: number = -1
 local isVotePending = false
+local isRewardClaimPending = false
 local pendingVoteNodeId: string? = nil
 local activeNodeButtons: { [string]: TextButton } = {}
 
@@ -714,7 +715,7 @@ handLayout.Padding = UDim.new(0, 12)
 handLayout.Parent = handContainer
 
 -- Card Widget Creator (Uses CardView with CardInstanceId)
-local function renderCardWidget(card: StateTypes.CardView): Frame
+local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (() -> ())?): Frame
 	local cardFrame = Instance.new("Frame")
 	cardFrame.Name = "Card_" .. card.InstanceId
 	cardFrame.Size = UDim2.new(0, 135, 0, 175)
@@ -803,19 +804,23 @@ local function renderCardWidget(card: StateTypes.CardView): Frame
 		}):Play()
 	end)
 
-	clickBtn.MouseButton1Click:Connect(function()
-		if PlayCardEvent then
-			local targetParam: any = nil
-			if card.Target == "Enemy" then
-				targetParam = selectedEnemyId
-			elseif card.Target == "Ally" then
-				targetParam = localPlayer.UserId
-			elseif card.Target == "Self" or card.Target == "None" then
-				targetParam = nil
+	if customClickHandler then
+		clickBtn.MouseButton1Click:Connect(customClickHandler)
+	else
+		clickBtn.MouseButton1Click:Connect(function()
+			if PlayCardEvent then
+				local targetParam: any = nil
+				if card.Target == "Enemy" then
+					targetParam = selectedEnemyId
+				elseif card.Target == "Ally" then
+					targetParam = localPlayer.UserId
+				elseif card.Target == "Self" or card.Target == "None" then
+					targetParam = nil
+				end
+				PlayCardEvent:FireServer(card.InstanceId, targetParam)
 			end
-			PlayCardEvent:FireServer(card.InstanceId, targetParam)
-		end
-	end)
+		end)
+	end
 
 	return cardFrame
 end
@@ -882,6 +887,9 @@ continueBtnContainer.ZIndex = 21
 continueBtnContainer.Parent = rewardsView
 
 UIFactory.createButton(continueBtnContainer, "CONTINUE ➔", Color3.fromRGB(45, 175, 80), function()
+	print("[REWARDFLOW][CLIENT][2] Continue button clicked")
+	bannerLabel.Text = "Submitting continue request..."
+	bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
 	if ContinueFromRewardsEvent then
 		ContinueFromRewardsEvent:FireServer()
 	end
@@ -895,20 +903,24 @@ local function buildCardDraftView(offeredCards: { StateTypes.CardView }, hasClai
 	end
 
 	for _, cardView in offeredCards do
-		local cardFrame = renderCardWidget(cardView)
+		local cardFrame = renderCardWidget(cardView, function()
+			if isRewardClaimPending or hasClaimed then return end
+			isRewardClaimPending = true
+			print(string.format("[REWARDFLOW][CLIENT][1] Card reward clicked: %s (%s)", cardView.Name, cardView.DefinitionId))
+			bannerLabel.Text = string.format("Drafting [%s]...", cardView.Name)
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
+			if ClaimRewardCardEvent then
+				ClaimRewardCardEvent:FireServer(cardView.DefinitionId)
+			end
+		end)
 		cardFrame.ZIndex = 22
 
 		local clickBtn = cardFrame:FindFirstChild("ClickButton") :: TextButton?
 		if clickBtn then
 			if hasClaimed then
 				clickBtn.Active = false
+				clickBtn.AutoButtonColor = false
 				cardFrame.BackgroundTransparency = 0.5
-			else
-				clickBtn.MouseButton1Click:Connect(function()
-					if ClaimRewardCardEvent then
-						ClaimRewardCardEvent:FireServer(cardView.DefinitionId)
-					end
-				end)
 			end
 		end
 		cardFrame.Parent = draftCardsContainer
@@ -1071,17 +1083,32 @@ if RunStateUpdateEvent then
 		elseif snapshot.Phase == "ActiveRoom" then
 			bannerLabel.Text = string.format("Act %d: Tier %d Room", snapshot.ActIndex, snapshot.CurrentTier)
 		elseif snapshot.Phase == "Rewards" then
-			bannerLabel.Text = "Room Cleared! Draft 1 card reward."
+			isRewardClaimPending = false
+			local isBossRoom = (snapshot.CurrentTier == 10)
+			rewardsTitle.Text = if isBossRoom then "👑 ACT BOSS CLEARED: CLAIM REWARDS" else "🎁 ROOM CLEARED: CLAIM REWARDS"
+			if snapshot.Rewards and snapshot.Rewards.HasClaimed then
+				bannerLabel.Text = "Reward claimed! Click CONTINUE ➔ to proceed."
+				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+			else
+				bannerLabel.Text = if isBossRoom then "👑 Boss Defeated! Draft 1 card reward." else "Room Cleared! Draft 1 card reward."
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 230, 100)
+			end
 			if snapshot.Rewards then
 				rewardsGoldText.Text = string.format("💰 Gold: +%d  |  💎 Aether Shards: +%d", snapshot.Rewards.GoldAmount, snapshot.Rewards.AetherShardsAmount)
 				buildCardDraftView(snapshot.Rewards.OfferedCards, snapshot.Rewards.HasClaimed)
 			end
 		elseif snapshot.Phase == "RunVictory" then
+			isRewardClaimPending = false
 			bannerLabel.Text = "🏆 VICTORY! The Spire has fallen!"
 			bannerLabel.TextColor3 = Color3.fromRGB(80, 255, 120)
 		elseif snapshot.Phase == "RunDefeat" then
+			isRewardClaimPending = false
 			bannerLabel.Text = "💀 DEFEAT! All party members have fallen."
 			bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+		end
+
+		if snapshot.Phase ~= "Rewards" then
+			isRewardClaimPending = false
 		end
 
 		if snapshot.Phase ~= "MapSelect" or snapshot.CurrentNodeId ~= nil then
@@ -1243,6 +1270,27 @@ if ActionResultEvent then
 					bannerLabel.Text = "Vote submitted — waiting for the party..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 				end
+			end
+		elseif res.Action == "ClaimRewardCard" then
+			isRewardClaimPending = false
+			if res.Success == true then
+				print("[REWARDFLOW][CLIENT][3] ClaimRewardCard confirmed by server")
+				bannerLabel.Text = "✅ Card drafted! Click CONTINUE ➔ to proceed."
+				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+			else
+				print(string.format("[REWARDFLOW][CLIENT][3] ClaimRewardCard rejected: %s", tostring(res.Message)))
+				bannerLabel.Text = string.format("⚠️ Failed to claim card: %s", tostring(res.Message or "Unknown error."))
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+			end
+		elseif res.Action == "ContinueFromRewards" then
+			if res.Success == true then
+				print("[REWARDFLOW][CLIENT][4] ContinueFromRewards confirmed by server")
+				bannerLabel.Text = "Entering map..."
+				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+			else
+				print(string.format("[REWARDFLOW][CLIENT][4] ContinueFromRewards rejected: %s", tostring(res.Message)))
+				bannerLabel.Text = string.format("⚠️ Cannot continue: %s", tostring(res.Message or "Unknown error."))
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
 			end
 		elseif res.Success == false then
 			bannerLabel.Text = string.format("⚠️ %s: %s", res.Action or "Action", res.Message or "Action failed.")

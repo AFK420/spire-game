@@ -410,12 +410,14 @@ local function endCombat(outcome: "Victory" | "Defeat")
 			if not isCombatIsolation then
 				ArenaVisualizer.cleanup()
 			end
+			activeCombat = nil
 			cb(outcome)
 		else
 			task.delay(1.5, function()
 				if not isCombatIsolation then
 					ArenaVisualizer.cleanup()
 				end
+				activeCombat = nil
 				cb(outcome)
 			end)
 		end

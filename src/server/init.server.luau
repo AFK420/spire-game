@@ -276,14 +276,14 @@ NetworkService.ClaimRewardCardEvent.OnServerEvent:Connect(function(player: Playe
 		return
 	end
 
+	print(string.format("[REWARDFLOW][SERVER][1] ClaimRewardCard received from %s: CardDefId=%s", player.Name, tostring(cardDefId)))
 	local success, err = RunManager.claimRewardCard(player, cardDefId)
 	if not success then
-		if err then
-			warn(string.format("[Server] ClaimRewardCard failed for %s: %s", player.Name, err))
-		end
+		warn(string.format("[REWARDFLOW][SERVER][2] ClaimRewardCard failed for %s: %s", player.Name, tostring(err)))
 		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = false, Message = tostring(err or "Failed to claim reward card.") })
 	else
-		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = true })
+		print(string.format("[REWARDFLOW][SERVER][2] ClaimRewardCard succeeded for %s: CardDefId=%s", player.Name, tostring(cardDefId)))
+		NetworkService.sendActionResult(player, { Action = "ClaimRewardCard", Success = true, CardDefId = cardDefId })
 	end
 end)
 
@@ -293,10 +293,14 @@ NetworkService.ContinueFromRewardsEvent.OnServerEvent:Connect(function(player: P
 		NetworkService.sendActionResult(player, { Action = "ContinueFromRewards", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+
+	print(string.format("[REWARDFLOW][SERVER][3] ContinueFromRewards received from %s", player.Name))
 	local success, err = RunManager.continueFromRewards(player)
 	if not success then
+		warn(string.format("[REWARDFLOW][SERVER][4] ContinueFromRewards failed for %s: %s", player.Name, tostring(err)))
 		NetworkService.sendActionResult(player, { Action = "ContinueFromRewards", Success = false, Message = tostring(err or "Cannot continue from rewards.") })
 	else
+		print(string.format("[REWARDFLOW][SERVER][4] ContinueFromRewards succeeded for %s", player.Name))
 		NetworkService.sendActionResult(player, { Action = "ContinueFromRewards", Success = true })
 	end
 end)

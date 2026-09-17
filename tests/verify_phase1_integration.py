@@ -1437,6 +1437,46 @@ test("snapshot.StateRevision < lastRunStateRevision" in ui_ctrl_src, "UIControll
 test("[MAPFLOW][CLIENT]" in ui_ctrl_src, "UIController implements [MAPFLOW][CLIENT] diagnostic logging")
 test("task.delay(8.0" in ui_ctrl_src, "UIController implements 8s in-flight timeout recovery for map voting")
 
+# Check 64: Suite 69 Regression Tests & Reward Progression Invariants
+print("\n--- [Check 64] Suite 69 Regression Tests & Reward Progression Invariants ---")
+test("local function runSuite69()" in testrunner_src, "TestRunner includes Suite 69 definition")
+test("runSuite69()" in testrunner_src, "TestRunner invokes Suite 69 in runAllTests")
+test("[Suite 69.1]" in testrunner_src, "Suite 69 tests startRun succeeds for reward test")
+test("[Suite 69.5]" in testrunner_src, "Suite 69 tests phase transitioned to Rewards on victory")
+test("[Suite 69.6]" in testrunner_src, "Suite 69 tests ActiveCombat cleared to nil on combat victory")
+test("[Suite 69.8]" in testrunner_src, "Suite 69 tests StateRevision strictly incremented on Rewards transition")
+test("[Suite 69.10]" in testrunner_src, "Suite 69 tests claimRewardCard succeeds")
+test("[Suite 69.14]" in testrunner_src, "Suite 69 tests StateRevision strictly incremented on reward claim")
+test("[Suite 69.15]" in testrunner_src, "Suite 69 tests duplicate reward claim safely rejected")
+test("[Suite 69.18]" in testrunner_src, "Suite 69 tests continueFromRewards succeeded without ActiveCombat conflict")
+test("[Suite 69.25]" in testrunner_src, "Suite 69 tests Boss victory transitions to Rewards")
+test("[Suite 69.28]" in testrunner_src, "Suite 69 tests continueFromRewards succeeds after Boss clearance")
+test("[Suite 69.30]" in testrunner_src, "Suite 69 tests DungeonRun CurrentActIndex advanced to Act 2")
+test("[Suite 69.32]" in testrunner_src, "Suite 69 tests DungeonRun CurrentTier reset to 0 for fresh Act 2")
+test("[Suite 69.36]" in testrunner_src, "Suite 69 tests Act 2 Tier 1 nodes populated in AvailableNodeIds")
+test("[Suite 69.41]" in testrunner_src, "Suite 69 tests Act 2 starter nodes marked IsAvailable in client snapshot")
+
+run_mgr_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+
+test("runToMutate.ActiveCombat = nil" in run_mgr_src, "RunManager clears ActiveCombat in transitionToRewards")
+test("runToUse.StateRevision = (runToUse.StateRevision or 0) + 1" in run_mgr_src, "RunManager increments StateRevision in claimRewardCard")
+test("dRun.CurrentActIndex += 1" in run_mgr_src, "RunManager advances CurrentActIndex after Act Boss")
+test("dRun.CurrentTier = 0" in run_mgr_src, "RunManager resets CurrentTier to 0 after Act Boss")
+test("[REWARDFLOW][SERVER]" in run_mgr_src, "RunManager implements [REWARDFLOW][SERVER] diagnostic logging")
+
+test("customClickHandler: (() -> ())?" in ui_ctrl_src, "UIController renderCardWidget supports customClickHandler")
+test("isRewardClaimPending" in ui_ctrl_src, "UIController implements isRewardClaimPending debounce guard")
+test("res.Action == \"ClaimRewardCard\"" in ui_ctrl_src, "UIController handles ClaimRewardCard ActionResult")
+test("res.Action == \"ContinueFromRewards\"" in ui_ctrl_src, "UIController handles ContinueFromRewards ActionResult")
+test("[REWARDFLOW][CLIENT]" in ui_ctrl_src, "UIController implements [REWARDFLOW][CLIENT] diagnostic logging")
+
+test("[REWARDFLOW][SERVER][1]" in init_server_src, "init.server.luau implements REWARDFLOW logging on ClaimRewardCard")
+test("[REWARDFLOW][SERVER][3]" in init_server_src, "init.server.luau implements REWARDFLOW logging on ContinueFromRewards")
+test("activeCombat = nil" in combat_svc_src, "CombatService cleans up activeCombat on victory callback")
+
 # Static Compilation of all Luau files with luau-compile
 import subprocess
 print("\n--- [Check 60] Static Compilation of All Luau Files ---")

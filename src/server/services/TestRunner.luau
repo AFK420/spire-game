@@ -1185,6 +1185,151 @@ local function runSuite68()
 	end
 end
 
+local function runSuite69()
+	print("\n--- [Suite 69] Reward Flow, Card Draft Atomicity & Boss Act Progression ---")
+
+	do
+		-- 69.1: Combat victory transitions to Rewards with ActiveCombat cleared & StateRevision incremented
+		local rewardPlayer = {
+			UserId = 69001,
+			Name = "RewardChampion",
+			DisplayName = "RewardChampion",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(rewardPlayer :: any)
+		local pState = RunManager.addPlayer(rewardPlayer :: any)
+		assert(pState, "pState exists")
+		ClassService.selectClass(rewardPlayer :: any, "Ironclad")
+		ClassService.lockClass(rewardPlayer :: any)
+		local startOk = RunManager.startRun(rewardPlayer :: any)
+		assertTest(startOk == true, "[Suite 69.1] startRun succeeds for reward test")
+
+		local runState = RunManager.getRunState()
+		local dRun = RunManager.getDungeonRun()
+		assert(dRun, "dRun exists")
+		local targetNodeId = runState.AvailableNodeIds[1]
+		local targetNode = DungeonService.getNode(dRun, targetNodeId)
+		assert(targetNode, "targetNode exists")
+
+		local travelOk = RunManager.travelToNode(targetNodeId, true)
+		assertTest(travelOk == true, "[Suite 69.2] travelToNode succeeds")
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 69.3] Phase is ActiveRoom")
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 69.4] ActiveCombat initialized")
+		local preVictoryRev = runState.StateRevision
+
+		-- Simulate combat completion
+		RunManager.onCombatCompleted("Victory", targetNode)
+		assertTest(runState.Phase == "Rewards", "[Suite 69.5] Phase transitioned to Rewards on victory")
+		assertTest(runState.ActiveCombat == nil, "[Suite 69.6] ActiveCombat cleared to nil on combat victory")
+		assertTest(runState.PendingRewards ~= nil, "[Suite 69.7] PendingRewards populated in RunState")
+		assertTest(runState.StateRevision > preVictoryRev, "[Suite 69.8] StateRevision strictly incremented on Rewards transition")
+
+		-- 69.2: Single card draft claim atomicity & StateRevision bump
+		local offered = runState.PendingRewards.OfferedCardsByPlayer[rewardPlayer.UserId]
+		assertTest(offered ~= nil and #offered == GameConfig.Rewards.CardDraftChoicesCount, "[Suite 69.9] Exact 3 draft cards offered to player")
+		local chosenCardDefId = offered[1].Id
+		local preClaimRev = runState.StateRevision
+		local preDeckSize = #pState.Deck
+		local preCollectionCount = CardCollectionService.getCardCount(rewardPlayer :: any, chosenCardDefId)
+
+		local claimOk, claimErr = RunManager.claimRewardCard(rewardPlayer :: any, chosenCardDefId)
+		assertTest(claimOk == true and claimErr == nil, "[Suite 69.10] Valid claimRewardCard succeeds")
+		assertTest(runState.PendingRewards.ClaimedCards[rewardPlayer.UserId] == true, "[Suite 69.11] ClaimedCards marked true for player")
+		assertTest(#pState.Deck == preDeckSize + 1, "[Suite 69.12] Claimed card instance added to runtime deck")
+		assertTest(CardCollectionService.getCardCount(rewardPlayer :: any, chosenCardDefId) == preCollectionCount + 1, "[Suite 69.13] Permanent collection count incremented")
+		assertTest(runState.StateRevision > preClaimRev, "[Suite 69.14] StateRevision strictly incremented on reward claim")
+
+		-- 69.3: Duplicate claim rejection
+		local dupClaimOk, dupClaimErr = RunManager.claimRewardCard(rewardPlayer :: any, offered[2].Id)
+		assertTest(dupClaimOk == false and dupClaimErr == "Reward already claimed.", "[Suite 69.15] Duplicate reward claim safely rejected")
+		assertTest(#pState.Deck == preDeckSize + 1, "[Suite 69.16] Deck size unchanged on duplicate claim rejection")
+
+		-- 69.4: continueFromRewards returns to MapSelect cleanly
+		local preContRev = runState.StateRevision
+		local contOk = RunManager.continueFromRewards(rewardPlayer :: any)
+		assertTest(contOk == true, "[Suite 69.18] continueFromRewards succeeded without ActiveCombat conflict")
+		assertTest(runState.Phase == "MapSelect", "[Suite 69.19] Phase transitioned back to MapSelect")
+		assertTest(runState.ActiveCombat == nil, "[Suite 69.20] ActiveCombat is nil in MapSelect")
+		assertTest(runState.ActiveRoom == nil, "[Suite 69.21] ActiveRoom is nil in MapSelect")
+		assertTest(runState.PendingRewards == nil, "[Suite 69.22] PendingRewards is nil in MapSelect")
+		assertTest(runState.StateRevision > preContRev, "[Suite 69.23] StateRevision incremented on continueFromRewards")
+		assertTest(#runState.AvailableNodeIds >= 1, "[Suite 69.24] Next tier available nodes populated")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+
+	do
+		-- 69.5: Act 1 Boss (Tier 10) defeat & Act 2 transition
+		local bossPlayer = {
+			UserId = 69002,
+			Name = "BossConqueror",
+			DisplayName = "BossConqueror",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(bossPlayer :: any)
+		local pState = RunManager.addPlayer(bossPlayer :: any)
+		assert(pState, "pState exists")
+		ClassService.selectClass(bossPlayer :: any, "Ironclad")
+		ClassService.lockClass(bossPlayer :: any)
+		RunManager.startRun(bossPlayer :: any)
+
+		local runState = RunManager.getRunState()
+		local dRun = RunManager.getDungeonRun()
+		assert(dRun, "dRun exists")
+
+		-- Simulate party reaching Act 1 Boss at Tier 10
+		local bossNode = dRun.Acts[1].NodesById["Act1_T10_L3"]
+		assert(bossNode, "bossNode exists")
+		runState.CurrentTier = 10
+		runState.CurrentNodeId = bossNode.Id
+		dRun.CurrentTier = 10
+		dRun.CurrentNodeId = bossNode.Id
+		runState.Phase = "ActiveRoom"
+
+		-- Boss victory
+		RunManager.onCombatCompleted("Victory", bossNode)
+		assertTest(runState.Phase == "Rewards", "[Suite 69.25] Boss victory transitions to Rewards")
+		assertTest(runState.ActiveCombat == nil, "[Suite 69.26] ActiveCombat is nil after Boss victory")
+		assertTest(runState.PendingRewards ~= nil, "[Suite 69.27] PendingRewards populated for Boss")
+
+		-- Continue from Boss rewards
+		local continueOk = RunManager.continueFromRewards(bossPlayer :: any)
+		assertTest(continueOk == true, "[Suite 69.28] continueFromRewards succeeds after Boss clearance")
+		assertTest(runState.Phase == "MapSelect", "[Suite 69.29] Phase returns to MapSelect for next Act")
+		assertTest(dRun.CurrentActIndex == 2, "[Suite 69.30] DungeonRun CurrentActIndex advanced to Act 2")
+		assertTest(runState.ActIndex == 2, "[Suite 69.31] RunState ActIndex advanced to Act 2")
+		assertTest(dRun.CurrentTier == 0, "[Suite 69.32] DungeonRun CurrentTier reset to 0 for fresh Act 2")
+		assertTest(runState.CurrentTier == 0, "[Suite 69.33] RunState CurrentTier reset to 0 for fresh Act 2")
+		assertTest(dRun.CurrentNodeId == nil, "[Suite 69.34] DungeonRun CurrentNodeId reset to nil")
+		assertTest(runState.CurrentNodeId == nil, "[Suite 69.35] RunState CurrentNodeId reset to nil")
+
+		-- Check available nodes in Act 2
+		assertTest(#runState.AvailableNodeIds >= 1, "[Suite 69.36] Act 2 Tier 1 nodes populated in AvailableNodeIds")
+		for _, nodeId in runState.AvailableNodeIds do
+			assertTest(string.sub(nodeId, 1, 4) == "Act2", "[Suite 69.37] Available node belongs to Act 2")
+		end
+
+		-- Verify client snapshot generates valid Act 2 MapNodes
+		local act2Snapshot = RunManager.getRunSnapshotForPlayer(bossPlayer :: any)
+		assertTest(act2Snapshot.ActIndex == 2, "[Suite 69.38] Snapshot ActIndex is 2")
+		assertTest(act2Snapshot.ActName == dRun.Acts[2].Name, "[Suite 69.39] Snapshot ActName reflects Act 2 name")
+		assertTest(act2Snapshot.MapNodes ~= nil and #act2Snapshot.MapNodes > 0, "[Suite 69.40] Snapshot MapNodes populated with Act 2 rooms")
+
+		local hasAvailableAct2Node = false
+		for _, nodeView in act2Snapshot.MapNodes :: any do
+			if nodeView.IsAvailable then
+				hasAvailableAct2Node = true
+				break
+			end
+		end
+		assertTest(hasAvailableAct2Node == true, "[Suite 69.41] Act 2 starter nodes marked IsAvailable in client snapshot")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+end
+
 function TestRunner.runAllTests(): boolean
 	passedCount = 0
 	totalCount = 0
@@ -7335,6 +7480,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 68: TRANSACTIONAL FIRST-ROOM PROGRESSION & STATEREVISION INVARIANTS
 	----------------------------------------------------------------------------
 	runSuite68()
+
+	----------------------------------------------------------------------------
+	-- SUITE 69: REWARD FLOW, CARD DRAFT ATOMICITY & BOSS ACT PROGRESSION
+	----------------------------------------------------------------------------
+	runSuite69()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

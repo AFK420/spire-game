@@ -970,8 +970,16 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 end
 
 function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
-	currentRun.StateRevision = (currentRun.StateRevision or 0) + 1
-	currentRun.Phase = "Rewards"
+	local runToMutate = if (isIsolatedTesting and liveRun.Phase == "ActiveRoom") then liveRun else currentRun
+	runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
+	runToMutate.Phase = "Rewards"
+	runToMutate.ActiveCombat = nil -- Clear ActiveCombat reference on room completion
+	if (runToMutate :: any).RoomPhase then
+		(runToMutate :: any).RoomPhase = "Rewards"
+	end
+
+	print(string.format("[REWARDFLOW][SERVER][0] transitionToRewards: isElite=%s, isBoss=%s, Rev=%d",
+		tostring(isElite), tostring(isBoss), runToMutate.StateRevision))
 
 	local gold = GameConfig.Rewards.BaseCombatGold + (isElite and GameConfig.Rewards.EliteBonusGold or 0) + (isBoss and GameConfig.Rewards.BossBonusGold or 0)
 	local shards = GameConfig.Rewards.BaseCombatShards + (isElite and GameConfig.Rewards.EliteBonusShards or 0) + (isBoss and GameConfig.Rewards.BossBonusShards or 0)
@@ -979,7 +987,7 @@ function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
 	local offeredCards: { [number]: { CardData.Card } } = {}
 	local claimedFlags: { [number]: boolean } = {}
 
-	for userId, member in currentRun.PartyMembers do
+	for userId, member in runToMutate.PartyMembers do
 		member.Gold += gold
 		offeredCards[userId] = generateDraftChoices()
 		claimedFlags[userId] = false
@@ -989,7 +997,7 @@ function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
 		end
 	end
 
-	currentRun.PendingRewards = {
+	runToMutate.PendingRewards = {
 		GoldAmount = gold,
 		AetherShardsAmount = shards,
 		OfferedCardsByPlayer = offeredCards,
@@ -1032,9 +1040,12 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 		return false, "Card not in draft choices."
 	end
 
+	print(string.format("[REWARDFLOW][SERVER][1] claimRewardCard starting: Player=%s, Card=%s", tostring(userId), tostring(cardDefId)))
+
 	-- 1. Pre-create runtime CardInstance; verify creation succeeds before permanent grant
 	local newCardInst = CardService.createCardInstance(cardDefId, userId)
 	if not newCardInst then
+		warn(string.format("[REWARDFLOW][SERVER][1] failed to create CardInstance for %s", tostring(cardDefId)))
 		return false, "Failed to create runtime card instance."
 	end
 
@@ -1042,12 +1053,17 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 	local playerRef = member.PlayerInstance or player or { UserId = userId }
 	local grantOk, grantErr = CardCollectionService.grantCard(playerRef, cardDefId, 1)
 	if not grantOk then
+		warn(string.format("[REWARDFLOW][SERVER][1] failed to grant card to collection: %s", tostring(grantErr)))
 		return false, grantErr or "Failed to grant card to permanent collection."
 	end
 
 	-- 3. Both operations succeeded: commit runtime deck insertion and mark claimed
 	table.insert(member.Deck, newCardInst)
 	runToUse.PendingRewards.ClaimedCards[userId] = true
+	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+
+	print(string.format("[REWARDFLOW][SERVER][2] claimRewardCard committed: Player=%s, Card=%s, Rev=%d",
+		tostring(userId), tostring(cardDefId), runToUse.StateRevision))
 
 	if not isIsolatedTesting or isReal then
 		RunManager.broadcastRunSnapshots(string.format("%s drafted [%s]!", member.DisplayName, cardDefId), isReal)
@@ -1063,15 +1079,37 @@ function RunManager.continueFromRewards(player: any): boolean
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
 
+	local userId = if typeof(player) == "table" or (typeof(player) == "Instance" and player:IsA("Player")) then player.UserId else "?"
+	print(string.format("[REWARDFLOW][SERVER][3] continueFromRewards requested: Player=%s, Phase=%s", tostring(userId), tostring(runToUse.Phase)))
+
 	-- Strict security guard: only allowed in Rewards phase and never during active combat or active room
 	if runToUse.Phase ~= "Rewards" and (runToUse :: any).RoomPhase ~= "Rewards" then
+		warn("[REWARDFLOW][SERVER][3] rejected: Not in Rewards phase.")
 		return false
 	end
 	if runToUse.Phase == "ActiveRoom" or (runToUse :: any).RoomPhase == "ActiveRoom" or runToUse.ActiveCombat ~= nil then
+		warn(string.format("[REWARDFLOW][SERVER][3] rejected: ActiveRoom or ActiveCombat non-nil (Phase=%s, ActiveCombat=%s)",
+			tostring(runToUse.Phase), tostring(runToUse.ActiveCombat)))
 		return false
 	end
 
-	if not dRun then return false end
+	if not dRun then
+		warn("[REWARDFLOW][SERVER][3] rejected: No dungeon run found.")
+		return false
+	end
+
+	-- Check if continuing after an Act Boss (Tier 10) was cleared: advance to the next Act
+	local isBossCleared = (runToUse.CurrentTier == DungeonMap.TIERS_PER_ACT or (dRun and dRun.CurrentTier == DungeonMap.TIERS_PER_ACT))
+	if isBossCleared and dRun.CurrentActIndex < DungeonMap.TOTAL_ACTS then
+		dRun.CurrentActIndex += 1
+		dRun.CurrentTier = 0
+		dRun.CurrentNodeId = nil
+		runToUse.ActIndex = dRun.CurrentActIndex
+		runToUse.CurrentTier = 0
+		runToUse.CurrentNodeId = nil
+		print(string.format("[REWARDFLOW][SERVER] Advanced to Act %d (%s) after Boss victory!",
+			dRun.CurrentActIndex, dRun.Acts[dRun.CurrentActIndex].Name))
+	end
 
 	local available = DungeonService.getAvailableNodes(dRun)
 	table.clear(runToUse.AvailableNodeIds)
@@ -1087,6 +1125,9 @@ function RunManager.continueFromRewards(player: any): boolean
 	runToUse.ActiveRoom = nil
 	runToUse.ActiveCombat = nil
 	runToUse.PendingRewards = nil
+
+	print(string.format("[REWARDFLOW][SERVER][4] continueFromRewards committed: Phase=MapSelect, Rev=%d, AvailableCount=%d",
+		runToUse.StateRevision, #runToUse.AvailableNodeIds))
 
 	if not isIsolatedTesting or isReal then
 		RunManager.broadcastRunSnapshots("Select the next room on the Map.", isReal)
