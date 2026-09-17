@@ -897,6 +897,125 @@ local function runSuite67()
 		RunManager.resetToLobby(soloPlayer :: any)
 		assertTest(RunManager.getRunState().Phase == "Lobby", "[Suite 67.20] Clean reset to Lobby completes")
 	end
+
+	do -- 67.21 - 67.25: Multiplayer co-op consensus voting flow
+		RunManager.resetRunForTesting()
+		local mp1 = {
+			UserId = 67211,
+			Name = "MP_Player1",
+			DisplayName = "MP_Player1",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local mp2 = {
+			UserId = 67212,
+			Name = "MP_Player2",
+			DisplayName = "MP_Player2",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(mp1 :: any)
+		PersistenceService.loadProfile(mp2 :: any)
+
+		local pState1 = RunManager.addPlayer(mp1 :: any)
+		local pState2 = RunManager.addPlayer(mp2 :: any)
+		assert(pState1 and pState2, "Both MP players added")
+		pState1.ClassLocked = true
+		pState2.ClassLocked = true
+
+		local mpStartOk = RunManager.startRun(mp1 :: any)
+		assertTest(mpStartOk == true, "[Suite 67.21] 2-player co-op startRun succeeds")
+
+		local mpRun = RunManager.getRunState()
+		assertTest(mpRun.Phase == "MapSelect", "[Suite 67.22] 2-player run enters MapSelect")
+		local targetNode = mpRun.AvailableNodeIds[1]
+		assert(targetNode, "targetNode exists")
+
+		-- Player 1 votes: 1 out of 2 votes cast (no majority yet)
+		local vOk1, vErr1, won1 = RunManager.voteMapNode(mp1 :: any, targetNode)
+		assertTest(vOk1 == true and won1 == false, "[Suite 67.23] Player 1 vote accepted with pending consensus (won = false)")
+		assertTest(mpRun.Phase == "MapSelect", "[Suite 67.24] Run stays in MapSelect while consensus is pending")
+
+		-- Player 2 votes for same node: 2 out of 2 votes cast (majority reached!)
+		local vOk2, vErr2, won2 = RunManager.voteMapNode(mp2 :: any, targetNode)
+		assertTest(vOk2 == true and won2 == true, "[Suite 67.25a] Player 2 vote triggers consensus win (won = true)")
+		assertTest(mpRun.Phase == "ActiveRoom", "[Suite 67.25b] 2-player consensus transitions all members to ActiveRoom")
+		assertTest(mpRun.ActiveCombat ~= nil, "[Suite 67.25c] ActiveCombat initialized for multiplayer room")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+
+	do -- 67.26 - 67.30: Negative vote scenarios (fabricated, unavailable, disconnected, wrong phase, unlisted)
+		RunManager.resetRunForTesting()
+		local negPlayer = {
+			UserId = 67261,
+			Name = "NegPlayer",
+			DisplayName = "NegPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(negPlayer :: any)
+		local pState = RunManager.addPlayer(negPlayer :: any)
+		assert(pState, "negPlayer pState exists")
+		pState.ClassLocked = true
+
+		-- Test: voting when phase is Lobby (not MapSelect)
+		local wrongPhaseOk, wrongPhaseErr = RunManager.voteMapNode(negPlayer :: any, "Act1_T1_L1")
+		assertTest(wrongPhaseOk == false, "[Suite 67.26] Voting in Lobby phase rejected")
+
+		RunManager.startRun(negPlayer :: any)
+		local runState = RunManager.getRunState()
+
+		-- Test: voting for fabricated / non-existent node ID
+		local fabOk, fabErr = RunManager.voteMapNode(negPlayer :: any, "Bogus_Fabricated_Node_999")
+		assertTest(fabOk == false, "[Suite 67.27] Fabricated node ID strictly rejected")
+
+		-- Test: voting for unavailable node (e.g. Act 1 Boss / Tier 10 node while at Tier 1)
+		local unavailNodeId = "Act1_T10_L3"
+		local unavailOk, unavailErr = RunManager.voteMapNode(negPlayer :: any, unavailNodeId)
+		assertTest(unavailOk == false, "[Suite 67.28] Unavailable node ID rejected")
+
+		-- Test: disconnected player cannot vote
+		pState.IsConnected = false
+		local discOk, discErr = RunManager.voteMapNode(negPlayer :: any, runState.AvailableNodeIds[1])
+		assertTest(discOk == false, "[Suite 67.29] Disconnected player voting rejected")
+		pState.IsConnected = true
+
+		-- Test: player not in party cannot vote
+		local stranger = {
+			UserId = 99999,
+			Name = "StrangerPlayer",
+			DisplayName = "StrangerPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		local strangerOk, strangerErr = RunManager.voteMapNode(stranger :: any, runState.AvailableNodeIds[1])
+		assertTest(strangerOk == false, "[Suite 67.30] Unregistered player voting rejected")
+
+		RunManager.resetToLobby()
+	end
+
+	do -- 67.31 - 67.33: Real player async profile loading wait test
+		RunManager.resetRunForTesting()
+		local asyncPlayer = {
+			UserId = 67311,
+			Name = "AsyncRealPlayer",
+			DisplayName = "AsyncRealPlayer",
+			_isSimulatedRealPlayer = true,
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(asyncPlayer.UserId)
+		PersistenceService.setLoadStateForTesting(asyncPlayer.UserId, "Loading")
+
+		-- Spawn task to resolve profile load after brief delay
+		task.delay(0.1, function()
+			PersistenceService.simulateLoadSuccessForTesting(asyncPlayer.UserId, nil)
+		end)
+
+		local addResult = RunManager.addPlayer(asyncPlayer :: any)
+		assertTest(addResult ~= nil, "[Suite 67.31] addPlayer waits for in-flight Loading profile and succeeds")
+		assertTest(PersistenceService.isProfileLoaded(asyncPlayer) == true, "[Suite 67.32] Profile is Loaded after async resolution")
+		assertTest(RunManager.getPlayerState(asyncPlayer) ~= nil, "[Suite 67.33] PlayerState registered in PartyMembers")
+
+		RunManager.resetToLobby()
+	end
 end
 
 function TestRunner.runAllTests(): boolean

@@ -32,7 +32,7 @@ local PersistenceService = {}
 
 export type PlayerProfile = StateTypes.PlayerProfile
 export type SavedDeck = StateTypes.SavedDeck
-export type ProfileLoadState = "NotLoaded" | "Loaded" | "New" | "LoadFailed" | "Saving"
+export type ProfileLoadState = "NotLoaded" | "Loading" | "Loaded" | "New" | "LoadFailed" | "Saving"
 
 local DATA_STORE_NAME = "CardRift_PlayerProfiles_v3"
 local AUTOSAVE_INTERVAL = 300
@@ -324,6 +324,22 @@ function PersistenceService.loadProfile(player: any): StateTypes.PlayerProfile?
 	if activeProfiles[userId] and (profileLoadStates[userId] == "Loaded" or profileLoadStates[userId] == "New") then
 		return activeProfiles[userId]
 	end
+
+	-- If load is already in-flight from another thread, wait for resolution
+	if profileLoadStates[userId] == "Loading" then
+		local startWait = os.clock()
+		while profileLoadStates[userId] == "Loading" and (os.clock() - startWait < 6.0) do
+			task.wait(0.05)
+		end
+		if activeProfiles[userId] and (profileLoadStates[userId] == "Loaded" or profileLoadStates[userId] == "New") then
+			return activeProfiles[userId]
+		end
+		if profileLoadStates[userId] == "LoadFailed" then
+			return nil
+		end
+	end
+
+	profileLoadStates[userId] = "Loading"
 
 	local loadFailed = false
 	local loadedData = nil

@@ -202,9 +202,23 @@ function NetworkService.sendClassSelectionResult(player: Player, payload: { Succ
 	end
 end
 
+export type ActionResultPayload = {
+	Action: string,
+	Success: boolean,
+	Message: string?,
+	Reason: string?,
+	NodeId: string?,
+	Won: boolean?,
+}
+
 -- Notifies a specific player of an action result
-function NetworkService.sendActionResult(player: Player, payload: { Action: string, Success: boolean, Message: string? })
+function NetworkService.sendActionResult(player: Player, payload: ActionResultPayload)
 	if typeof(player) == "Instance" and player:IsA("Player") then
+		if payload.Success == false then
+			local reason = payload.Reason or payload.Message or "Action rejected."
+			payload.Reason = reason
+			payload.Message = payload.Message or reason
+		end
 		NetworkService.ActionResultEvent:FireClient(player, payload)
 	end
 end

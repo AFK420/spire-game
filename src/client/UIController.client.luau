@@ -272,6 +272,7 @@ local lastFocusedPhase: string? = nil
 local lastFocusedTier: number? = nil
 local lastFocusedNodeId: string? = nil
 local isVotePending = false
+local pendingVoteNodeId: string? = nil
 local mapSyncRequested = false
 local lastMapSyncTime = 0
 
@@ -327,8 +328,8 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 
 	mapTitle.Text = string.format("🗺️ %s (Tier %d/10) - Select Next Room", snapshot.ActName or "Act 1", snapshot.CurrentTier or 0)
 
-	-- Diagnostic when MapNodes is empty or unpopulated
-	if not snapshot.MapNodes or #snapshot.MapNodes == 0 then
+	-- Diagnostic when MapNodes or AvailableNodeIds is empty or unpopulated
+	if not snapshot.MapNodes or #snapshot.MapNodes == 0 or not snapshot.AvailableNodeIds or #snapshot.AvailableNodeIds == 0 then
 		local loadingLabel = Instance.new("TextLabel")
 		loadingLabel.Name = "MapLoadingLabel"
 		loadingLabel.Size = UDim2.new(1, 0, 0, 80)
@@ -341,7 +342,7 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 
 		local now = os.clock()
 		if not mapSyncRequested or (now - lastMapSyncTime > 5) then
-			loadingLabel.Text = "MAP DATA LOADING..." -- MAP LOADING... placeholder
+			loadingLabel.Text = "Loading map..." -- MAP DATA LOADING... MAP LOADING...
 			loadingLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
 			mapSyncRequested = true
 			lastMapSyncTime = now
@@ -418,8 +419,9 @@ local function buildDungeonMapTree(snapshot: StateTypes.RunSnapshot)
 
 			local targetId = node.Id
 			nodeBtn.MouseButton1Click:Connect(function()
-				if isVotePending then return end
+				if isVotePending or pendingVoteNodeId ~= nil then return end
 				isVotePending = true
+				pendingVoteNodeId = targetId
 				firstRoomPromptLabel.Visible = false
 				bannerLabel.Text = "Submitting room vote..."
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
@@ -1037,6 +1039,7 @@ if RunStateUpdateEvent then
 
 		if snapshot.Phase ~= "MapSelect" or snapshot.CurrentNodeId ~= nil then
 			isVotePending = false
+			pendingVoteNodeId = nil
 			firstRoomPromptLabel.Visible = false
 		end
 		if snapshot.Phase ~= "MapSelect" then
@@ -1156,16 +1159,25 @@ if ActionResultEvent then
 	ActionResultEvent.OnClientEvent:Connect(function(res: any)
 		if not res then return end
 		if res.Action == "VoteMapNode" then
-			isVotePending = false
 			if res.Success == false then
-				bannerLabel.Text = string.format("⚠️ Vote Failed: %s", res.Message or "Rejection")
+				isVotePending = false
+				pendingVoteNodeId = nil
+				local failReason = res.Reason or res.Message or "Rejection"
+				bannerLabel.Text = string.format("⚠️ Vote Failed: %s", failReason)
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
 				if lastFocusedPhase == "MapSelect" and lastFocusedNodeId == nil and (lastFocusedTier == 0 or lastFocusedTier == nil) then
 					firstRoomPromptLabel.Visible = true
 				end
 			else
-				bannerLabel.Text = "Vote submitted! Waiting for party..."
-				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+				if res.Won == true then
+					bannerLabel.Text = "Room selected! Entering room..."
+					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+				else
+					isVotePending = false
+					pendingVoteNodeId = nil
+					bannerLabel.Text = "Vote submitted — waiting for the party..."
+					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+				end
 			end
 		elseif res.Success == false then
 			bannerLabel.Text = string.format("⚠️ %s: %s", res.Action or "Action", res.Message or "Action failed.")

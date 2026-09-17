@@ -1345,10 +1345,32 @@ test("[Suite 67.17] Active combat has at least 1 living enemy" in testrunner_src
 test("[Suite 67.18] Solo player drew opening card hand" in testrunner_src, "Suite 67 tests opening hand cards drawn")
 test("[Suite 67.19] Solo player has starting energy" in testrunner_src, "Suite 67 tests starting energy initialized")
 test("[Suite 67.20] Clean reset to Lobby completes" in testrunner_src, "Suite 67 tests clean reset to Lobby")
+test("[Suite 67.21] 2-player co-op startRun succeeds" in testrunner_src, "Suite 67 tests 2-player co-op startRun")
+test("[Suite 67.22] 2-player run enters MapSelect" in testrunner_src, "Suite 67 tests 2-player run enters MapSelect")
+test("[Suite 67.23] Player 1 vote accepted with pending consensus (won = false)" in testrunner_src, "Suite 67 tests pending consensus on partial vote")
+test("[Suite 67.24] Run stays in MapSelect while consensus is pending" in testrunner_src, "Suite 67 tests run stays in MapSelect while pending")
+test("[Suite 67.25a] Player 2 vote triggers consensus win (won = true)" in testrunner_src, "Suite 67 tests majority vote triggers consensus win")
+test("[Suite 67.25b] 2-player consensus transitions all members to ActiveRoom" in testrunner_src, "Suite 67 tests consensus transitions to ActiveRoom")
+test("[Suite 67.25c] ActiveCombat initialized for multiplayer room" in testrunner_src, "Suite 67 tests ActiveCombat initialized for multiplayer room")
+test("[Suite 67.26] Voting in Lobby phase rejected" in testrunner_src, "Suite 67 tests voting in Lobby rejected")
+test("[Suite 67.27] Fabricated node ID strictly rejected" in testrunner_src, "Suite 67 tests fabricated node ID rejected")
+test("[Suite 67.28] Unavailable node ID rejected" in testrunner_src, "Suite 67 tests unavailable node ID rejected")
+test("[Suite 67.29] Disconnected player voting rejected" in testrunner_src, "Suite 67 tests disconnected player voting rejected")
+test("[Suite 67.30] Unregistered player voting rejected" in testrunner_src, "Suite 67 tests unregistered player voting rejected")
+test("[Suite 67.31] addPlayer waits for in-flight Loading profile and succeeds" in testrunner_src, "Suite 67 tests addPlayer waits for in-flight Loading profile")
+test("[Suite 67.32] Profile is Loaded after async resolution" in testrunner_src, "Suite 67 tests profile is Loaded after async resolution")
+test("[Suite 67.33] PlayerState registered in PartyMembers" in testrunner_src, "Suite 67 tests PlayerState registered in PartyMembers")
 
 # Task 7: Stale assertion fix
 test('assertTest(soloCombat.Phase == "Defeat", "[Suite 65.12a] Status-induced defeat immediately ends combat")' in testrunner_src, "TestRunner line 410 asserts Defeat phase instead of stale CombatEnd")
 test('soloCombat.Phase == "CombatEnd"' not in testrunner_src, "TestRunner completely eliminates stale CombatEnd assertion")
+
+# Server Network Dispatcher Invariants
+init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+test("pcall(function()" in init_server_src and "RunManager.voteMapNode" in init_server_src, "init.server.luau protects voteMapNode with pcall")
+test("Reason = errMsg" in init_server_src, "init.server.luau returns explicit Reason on runtime error")
+test("Won = (won == true)" in init_server_src, "init.server.luau forwards Won status in ActionResult")
+test("payload.Reason or payload.Message" in net_svc_src, "NetworkService normalizes Reason field in sendActionResult")
 
 # UIController Client Navigation Invariants
 test("firstRoomPromptLabel" in ui_ctrl_src, "UIController declares firstRoomPromptLabel")
@@ -1356,9 +1378,11 @@ test("👉 CHOOSE YOUR FIRST ROOM" in ui_ctrl_src, "UIController displays first 
 test("lowestAvailableTier" in ui_ctrl_src, "UIController dynamically finds lowest available tier")
 test("mapScroll.CanvasPosition = Vector2.new(0, targetCanvasY)" in ui_ctrl_src, "UIController auto-focuses map scroll canvas position")
 test("isVotePending" in ui_ctrl_src, "UIController implements map vote click debouncing")
+test("pendingVoteNodeId" in ui_ctrl_src, "UIController implements pendingVoteNodeId per-node debounce")
 test("MAP DATA LOADING..." in ui_ctrl_src, "UIController displays loading diagnostic for empty map")
 test("MAP DATA ERROR" in ui_ctrl_src, "UIController displays error diagnostic for persistent empty map")
 test('res.Action == "VoteMapNode"' in ui_ctrl_src, "UIController handles ActionResult for VoteMapNode")
+test('res.Won == true' in ui_ctrl_src, "UIController distinguishes winning vote vs pending vote in ActionResult")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

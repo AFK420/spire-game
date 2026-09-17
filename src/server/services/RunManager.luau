@@ -368,8 +368,22 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState?
 	-- FAIL-CLOSED PROTECTION:
 	-- For REAL Roblox Players only, require profile to be loaded before creating or initializing PlayerState
 	if isRealPlayer and not PersistenceService.isProfileLoaded(player) then
-		warn(string.format("[RunManager] Authoritative profile not loaded for real player %s (UserId %d). Cannot add to party (fail-closed).", displayName, userId))
-		return nil
+		local loadState = PersistenceService.getLoadState(player)
+		if loadState == "NotLoaded" then
+			PersistenceService.loadProfile(player)
+		end
+		local waitStart = os.clock()
+		while not PersistenceService.isProfileLoaded(player) and (os.clock() - waitStart < 5.0) do
+			if PersistenceService.getLoadState(player) == "LoadFailed" then
+				break
+			end
+			task.wait(0.05)
+		end
+
+		if not PersistenceService.isProfileLoaded(player) then
+			warn(string.format("[RunManager] Authoritative profile not loaded for real player %s (UserId %d). Cannot add to party (fail-closed).", displayName, userId))
+			return nil
+		end
 	end
 
 	-- Player rejoining existing run: reattach instance without corrupting state
@@ -478,6 +492,36 @@ function RunManager.removePlayer(player: any)
 
 	if targetRun.Phase == "Lobby" then
 		targetRun.PartyMembers[userId] = nil
+	elseif targetRun.Phase == "MapSelect" then
+		-- Re-evaluate votes among remaining connected members so disconnected players do not deadlock progress
+		local votes: { [string]: number } = {}
+		local totalVoters = 0
+		local totalCastVotes = 0
+		for _, memberState in targetRun.PartyMembers do
+			if memberState.IsConnected ~= false then
+				totalVoters += 1
+				if memberState.VotedNodeId then
+					totalCastVotes += 1
+					votes[memberState.VotedNodeId] = (votes[memberState.VotedNodeId] or 0) + 1
+				end
+			end
+		end
+		if totalVoters > 0 then
+			local requiredMajority = math.floor(totalVoters / 2) + 1
+			local winningNodeId: string? = nil
+			for nodeId, count in votes do
+				if count >= requiredMajority then
+					winningNodeId = nodeId
+					break
+				end
+			end
+			if winningNodeId then
+				for _, memberState in targetRun.PartyMembers do
+					memberState.VotedNodeId = nil
+				end
+				RunManager.travelToNode(winningNodeId, isRealPlayer)
+			end
+		end
 	end
 
 	if not isIsolatedTesting or isRealPlayer then
@@ -634,7 +678,7 @@ function RunManager.startRun(initiator: any?): boolean
 	return true
 end
 
-function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?)
+function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?, boolean?)
 	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
 	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
 		isReal = true
@@ -642,13 +686,18 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
 	if runToUse.Phase ~= "MapSelect" or not dRun then
-		return false, "Not currently on MapSelect phase."
+		return false, "Not currently on MapSelect phase.", false
 	end
 
 	local pState = runToUse.PartyMembers[player.UserId]
-	if not pState then return false, "Player not in party." end
+	if not pState then return false, "Player not in party.", false end
 	if pState.IsConnected == false then
-		return false, "Player is disconnected."
+		return false, "Player is disconnected.", false
+	end
+
+	local node = DungeonService.getNode(dRun, targetNodeId)
+	if not node then
+		return false, "Target room does not exist in dungeon.", false
 	end
 
 	local isAvailable = false
@@ -660,7 +709,7 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 
 	if not isAvailable then
-		return false, "Target room is not currently reachable."
+		return false, "Target room is not currently reachable.", false
 	end
 
 	pState.VotedNodeId = targetNodeId
@@ -709,12 +758,16 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 
 	if winningNodeId then
-		return RunManager.travelToNode(winningNodeId, isReal)
+		for _, member in runToUse.PartyMembers do
+			member.VotedNodeId = nil
+		end
+		local travelOk, travelErr = RunManager.travelToNode(winningNodeId, isReal)
+		return travelOk, travelErr, true
 	else
 		if not isIsolatedTesting or isReal then
 			RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId), isReal)
 		end
-		return true, nil
+		return true, nil, false
 	end
 end
 

@@ -169,22 +169,60 @@ end)
 -- 3. Vote / Travel to Map Node
 NetworkService.VoteMapNodeEvent.OnServerEvent:Connect(function(player: Player, targetNodeId: any)
 	if not NetworkService.checkRateLimit(player, "Map") then
-		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = false, Message = "Rate limit exceeded. Please wait a moment." })
+		NetworkService.sendActionResult(player, {
+			Action = "VoteMapNode",
+			Success = false,
+			Message = "Rate limit exceeded. Please wait a moment.",
+			Reason = "Rate limit exceeded. Please wait a moment.",
+			NodeId = typeof(targetNodeId) == "string" and targetNodeId or nil,
+		})
 		return
 	end
-	if typeof(targetNodeId) ~= "string" then
-		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = false, Message = "Invalid target node parameter." })
+	if typeof(targetNodeId) ~= "string" or #targetNodeId == 0 then
+		NetworkService.sendActionResult(player, {
+			Action = "VoteMapNode",
+			Success = false,
+			Message = "Invalid target node parameter.",
+			Reason = "Invalid target node parameter.",
+		})
 		return
 	end
 
-	local success, err = RunManager.voteMapNode(player, targetNodeId)
+	local ok, success, err, won = pcall(function()
+		return RunManager.voteMapNode(player, targetNodeId)
+	end)
+
+	if not ok then
+		local errMsg = tostring(success)
+		warn(string.format("[Server] VoteMapNode runtime error for %s: %s", player.Name, errMsg))
+		NetworkService.sendActionResult(player, {
+			Action = "VoteMapNode",
+			Success = false,
+			Message = "Server error: " .. errMsg,
+			Reason = errMsg,
+			NodeId = targetNodeId,
+		})
+		return
+	end
+
 	if not success then
 		if err then
-			warn(string.format("[Server] VoteMapNode failed for %s: %s", player.Name, err))
+			warn(string.format("[Server] VoteMapNode rejected for %s: %s", player.Name, err))
 		end
-		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = false, Message = tostring(err or "Failed to vote for map node.") })
+		NetworkService.sendActionResult(player, {
+			Action = "VoteMapNode",
+			Success = false,
+			Message = tostring(err or "Failed to vote for map node."),
+			Reason = tostring(err or "Failed to vote for map node."),
+			NodeId = targetNodeId,
+		})
 	else
-		NetworkService.sendActionResult(player, { Action = "VoteMapNode", Success = true })
+		NetworkService.sendActionResult(player, {
+			Action = "VoteMapNode",
+			Success = true,
+			Won = (won == true),
+			NodeId = targetNodeId,
+		})
 	end
 end)
 
