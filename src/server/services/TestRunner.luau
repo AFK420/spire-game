@@ -1784,9 +1784,9 @@ local function runSuite73()
 end
 
 local function runSuite74()
-	print("\n--- [Suite 74] ReactionService: OSU Rhythm Approach-Circle Timing, Dodge & Parry ---")
+	print("\n--- [Suite 74] ReactionService: 3D Enemy Attack Animations, Dodge & Parry Reaction System ---")
 
-	-- 74.1: GameConfig Rhythm Keybindings
+	-- 74.1: GameConfig Reaction Keybindings
 	assertTest(GameConfig.Reaction ~= nil and GameConfig.Reaction.Keybinds ~= nil, "[Suite 74.1] GameConfig.Reaction.Keybinds table exists")
 	assertTest(GameConfig.Reaction.Keybinds.Dodge == Enum.KeyCode.C, "[Suite 74.2] Dodge keybind is Enum.KeyCode.C")
 	assertTest(GameConfig.Reaction.Keybinds.Parry == Enum.KeyCode.V, "[Suite 74.3] Parry keybind is Enum.KeyCode.V")
@@ -1833,7 +1833,7 @@ local function runSuite74()
 	assertTest(profile.DodgePerfectTolerance == 0.15 and profile.ParryPerfectTolerance == 0.08,
 		"[Suite 74.21] Profile retains rhythm timing tolerances")
 
-	-- 74.4: Open Rhythm Reaction Window
+	-- 74.4: Open Reaction Window with Workspace:GetServerTimeNow()
 	local mockCombatState = {
 		CombatId = "test_combat_react",
 		ActiveReactionWindow = nil,
@@ -1851,7 +1851,9 @@ local function runSuite74()
 		"[Suite 74.26] Non-targeted player rejected from reaction submission")
 
 	-- 74.6: Perfect Dodge Submission (exact impact timing)
-	window.ImpactTime = os.clock() -- Simulate button press at exact impact moment (diff = 0)
+	local serverNow = ReactionService.getServerTime()
+	window.ImpactServerTime = serverNow
+	window.ImpactTime = serverNow -- Simulate button press at exact impact moment (diff = 0)
 	local dodgeOk, dodgeMsg, dodgeRes = ReactionService.submitReaction(74001, window.WindowId, "Dodge")
 	assertTest(dodgeOk == true and dodgeRes == "Perfect", "[Suite 74.27] Exact impact timing evaluates to Perfect Dodge")
 	assertTest(window.PerPlayerResult[74001].Judgement == "Perfect", "[Suite 74.28] Player record recorded Judgement == 'Perfect'")
@@ -1868,7 +1870,8 @@ local function runSuite74()
 			parryHookFired = true
 		end
 	end)
-	window.ImpactTime = os.clock() -- Exact impact moment for parry
+	window.ImpactServerTime = ReactionService.getServerTime()
+	window.ImpactTime = window.ImpactServerTime -- Exact impact moment for parry
 	local parryOk, parryMsg, parryRes = ReactionService.submitReaction(74002, window.WindowId, "Parry")
 	assertTest(parryOk == true and parryRes == "Perfect", "[Suite 74.30] Exact impact timing evaluates to Perfect Parry")
 	assertTest(parryHookFired == true, "[Suite 74.31] Parry hook fired on Perfect Parry")
@@ -1895,21 +1898,27 @@ local function runSuite74()
 	-- 74.11: Timing Judgements: Good Dodge, Early Dodge, Late Dodge
 	-- Good Dodge: within Good tolerance (e.g. 0.25s diff vs 0.35s GoodTol and 0.15s PerfTol)
 	local winGood = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74001 })
-	winGood.ImpactTime = os.clock() + 0.25
+	local sTimeGood = ReactionService.getServerTime()
+	winGood.ImpactServerTime = sTimeGood + 0.25
+	winGood.ImpactTime = winGood.ImpactServerTime
 	local goodDodgeOk, _, goodDodgeRes = ReactionService.submitReaction(74001, winGood.WindowId, "Dodge")
 	assertTest(goodDodgeOk == true and goodDodgeRes == "Good", "[Suite 74.43] Input within Good tolerance evaluates to Good Dodge")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winGood.WindowId)
 
 	-- Early Dodge: submitted too early (> Good tolerance before impact)
 	local winEarly = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74001 })
-	winEarly.ImpactTime = os.clock() + 0.50 -- 0.50s before impact > 0.35s Good tolerance
+	local sTimeEarly = ReactionService.getServerTime()
+	winEarly.ImpactServerTime = sTimeEarly + 0.50 -- 0.50s before impact > 0.35s Good tolerance
+	winEarly.ImpactTime = winEarly.ImpactServerTime
 	local earlyDodgeOk, _, earlyDodgeRes = ReactionService.submitReaction(74001, winEarly.WindowId, "Dodge")
 	assertTest(earlyDodgeOk == false and earlyDodgeRes == "Early", "[Suite 74.44] Input before Good window evaluates to Early Dodge")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winEarly.WindowId)
 
 	-- Late Dodge: submitted after impact (> Good tolerance after impact)
 	local winLate = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74001 })
-	winLate.ImpactTime = os.clock() - 0.50 -- 0.50s after impact > 0.35s Good tolerance
+	local sTimeLate = ReactionService.getServerTime()
+	winLate.ImpactServerTime = sTimeLate - 0.50 -- 0.50s after impact > 0.35s Good tolerance
+	winLate.ImpactTime = winLate.ImpactServerTime
 	local lateDodgeOk, _, lateDodgeRes = ReactionService.submitReaction(74001, winLate.WindowId, "Dodge")
 	assertTest(lateDodgeOk == false and lateDodgeRes == "Late", "[Suite 74.45] Input after Good window evaluates to Late Dodge")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winLate.WindowId)
@@ -1917,21 +1926,27 @@ local function runSuite74()
 	-- 74.12: Timing Judgements: Good Parry, Early Parry, Late Parry
 	-- Good Parry: within Good tolerance (e.g. 0.14s diff vs 0.20s GoodTol and 0.08s PerfTol)
 	local winGoodP = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74002 })
-	winGoodP.ImpactTime = os.clock() + 0.14
+	local sTimeGoodP = ReactionService.getServerTime()
+	winGoodP.ImpactServerTime = sTimeGoodP + 0.14
+	winGoodP.ImpactTime = winGoodP.ImpactServerTime
 	local goodParryOk, _, goodParryRes = ReactionService.submitReaction(74002, winGoodP.WindowId, "Parry")
 	assertTest(goodParryOk == true and goodParryRes == "Good", "[Suite 74.46] Input within Good tolerance evaluates to Good Parry")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winGoodP.WindowId)
 
 	-- Early Parry: submitted too early (> Good tolerance before impact)
 	local winEarlyP = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74002 })
-	winEarlyP.ImpactTime = os.clock() + 0.30 -- 0.30s before impact > 0.20s Good tolerance
+	local sTimeEarlyP = ReactionService.getServerTime()
+	winEarlyP.ImpactServerTime = sTimeEarlyP + 0.30 -- 0.30s before impact > 0.20s Good tolerance
+	winEarlyP.ImpactTime = winEarlyP.ImpactServerTime
 	local earlyParryOk, _, earlyParryRes = ReactionService.submitReaction(74002, winEarlyP.WindowId, "Parry")
 	assertTest(earlyParryOk == false and earlyParryRes == "Early", "[Suite 74.47] Input before Good window evaluates to Early Parry")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winEarlyP.WindowId)
 
 	-- Late Parry: submitted after impact (> Good tolerance after impact)
 	local winLateP = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74002 })
-	winLateP.ImpactTime = os.clock() - 0.30 -- 0.30s after impact > 0.20s Good tolerance
+	local sTimeLateP = ReactionService.getServerTime()
+	winLateP.ImpactServerTime = sTimeLateP - 0.30 -- 0.30s after impact > 0.20s Good tolerance
+	winLateP.ImpactTime = winLateP.ImpactServerTime
 	local lateParryOk, _, lateParryRes = ReactionService.submitReaction(74002, winLateP.WindowId, "Parry")
 	assertTest(lateParryOk == false and lateParryRes == "Late", "[Suite 74.48] Input after Good window evaluates to Late Parry")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winLateP.WindowId)
@@ -1958,9 +1973,72 @@ local function runSuite74()
 
 	-- 74.15: Arena Visualizer Attack Animation Integration
 	local animOk = pcall(function()
-		ArenaVisualizer.playEnemyAttackAnimation("enemy_test", 1.6, 1.45, 0.35)
+		ArenaVisualizer.playEnemyAttackAnimation("enemy_test", 1.6, 1.45, 0.35, "Melee")
 	end)
 	assertTest(animOk == true, "[Suite 74.52] ArenaVisualizer.playEnemyAttackAnimation executes safely")
+
+	-- 74.16: Jump Attack Profile & Animation Integration
+	local jumpPreset = ReactionData.getProfile("JumpAttack")
+	assertTest(jumpPreset ~= nil and jumpPreset.AttackType == "Jump" and jumpPreset.ImpactDelay == 1.10,
+		"[Suite 74.53] JumpAttack preset defines Jump attack profile with 1.10s ImpactDelay")
+	local jumpAnimOk = pcall(function()
+		ArenaVisualizer.playEnemyAttackAnimation("enemy_jump", 1.30, 1.10, 0.40, "Jump", Vector3.new(0, 5, 0))
+	end)
+	assertTest(jumpAnimOk == true, "[Suite 74.54] ArenaVisualizer executes Jump attack animation safely")
+
+	-- 74.17: Projectile Bolt Profile & Animation Integration
+	local projPreset = ReactionData.getProfile("ProjectileBolt")
+	assertTest(projPreset ~= nil and projPreset.AttackType == "Projectile" and projPreset.ProjectileSpeed == 30,
+		"[Suite 74.55] ProjectileBolt preset defines Projectile attack profile with ProjectileSpeed = 30")
+	local projAnimOk = pcall(function()
+		ArenaVisualizer.playEnemyAttackAnimation("enemy_caster", 1.35, 1.20, 0.30, "Projectile", Vector3.new(10, 2, -10))
+	end)
+	assertTest(projAnimOk == true, "[Suite 74.56] ArenaVisualizer executes Projectile attack animation safely")
+
+	-- 74.18: Unreactable AoE Profile & Animation Integration
+	local aoePreset = ReactionData.getProfile("UnreactableExplosion")
+	assertTest(aoePreset ~= nil and aoePreset.AttackType == "AoE" and aoePreset.CanDodge == false and aoePreset.CanParry == false,
+		"[Suite 74.57] UnreactableExplosion preset defines unreactable AoE attack")
+	local winAoe = ReactionService.openReactionWindow(mockCombatState :: any, aoePreset, "enemy_aoe", { 74001 })
+	local aoeDodgeOk, _, aoeDodgeRes = ReactionService.submitReaction(74001, winAoe.WindowId, "Dodge")
+	local aoeParryOk, _, aoeParryRes = ReactionService.submitReaction(74001, winAoe.WindowId, "Parry")
+	assertTest(aoeDodgeOk == false and aoeDodgeRes == "Unavailable" and aoeParryOk == false and aoeParryRes == "Unavailable",
+		"[Suite 74.58] Unreactable AoE strictly rejects both Dodge and Parry with Unavailable")
+	ReactionService.resolveReactionWindow(mockCombatState :: any, winAoe.WindowId)
+	local aoeAnimOk = pcall(function()
+		ArenaVisualizer.playEnemyAttackAnimation("enemy_aoe", 1.50, 1.25, 0.40, "AoE")
+	end)
+	assertTest(aoeAnimOk == true, "[Suite 74.59] ArenaVisualizer executes AoE attack animation safely")
+
+	-- 74.19: Workspace:GetServerTimeNow() Synchronization Timestamps
+	local winSync = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_sync", { 74001 })
+	assertTest(winSync.AttackStartServerTime ~= nil and winSync.ImpactServerTime ~= nil and winSync.ReactionCloseServerTime ~= nil,
+		"[Suite 74.60] ReactionWindowState includes authoritative ServerTime timestamps")
+	assertTest(winSync.ReactionCloseServerTime > winSync.ImpactServerTime and winSync.ImpactServerTime >= winSync.AttackStartServerTime,
+		"[Suite 74.61] ReactionCloseServerTime > ImpactServerTime >= AttackStartServerTime")
+	local viewSync = ReactionService.getReactionWindowView(winSync, "Boss Visual Sync")
+	assertTest(viewSync.AttackStartServerTime == winSync.AttackStartServerTime and viewSync.ImpactServerTime == winSync.ImpactServerTime,
+		"[Suite 74.62] ReactionWindowView synchronizes ServerTime timestamps to client")
+	ReactionService.resolveReactionWindow(mockCombatState :: any, winSync.WindowId)
+
+	-- 74.20: Multi-target Reaction Resolution
+	local multiProf = ReactionService.createProfileFromPreset("SlowHeavy")
+	local winMulti = ReactionService.openReactionWindow(mockCombatState :: any, multiProf, "enemy_multi", { 74001, 74002, 74003 })
+	local multiTime = ReactionService.getServerTime()
+	winMulti.ImpactServerTime = multiTime
+	winMulti.ImpactTime = multiTime
+	ReactionService.submitReaction(74001, winMulti.WindowId, "Dodge") -- 74001: Perfect Dodge
+	winMulti.ImpactServerTime = multiTime + 0.12
+	winMulti.ImpactTime = winMulti.ImpactServerTime
+	ReactionService.submitReaction(74002, winMulti.WindowId, "Parry") -- 74002: Good Parry
+	-- 74003: No submission -> Miss
+	local multiResults = ReactionService.resolveReactionWindow(mockCombatState :: any, winMulti.WindowId)
+	assertTest(multiResults[74001] ~= nil and multiResults[74001].Judgement == "Perfect",
+		"[Suite 74.63] Multi-target resolution preserves Player 1 Perfect Dodge")
+	assertTest(multiResults[74002] ~= nil and multiResults[74002].Judgement == "Good",
+		"[Suite 74.64] Multi-target resolution preserves Player 2 Good Parry")
+	assertTest(multiResults[74003] ~= nil and multiResults[74003].Judgement == "Miss",
+		"[Suite 74.65] Multi-target resolution marks unreacted Player 3 as Miss")
 
 	ReactionService.cleanup()
 	ReactionService.setParryHook(nil)
@@ -8241,7 +8319,7 @@ function TestRunner.runAllTests(): boolean
 	return true
 end
 
--- Developer helper to trigger manual rhythm reaction testing in Studio (e.g. TestRunner.triggerTestReaction("SlowHeavy", 1))
+-- Developer helper to trigger manual 3D reaction testing in Studio (e.g. TestRunner.triggerTestReaction("SlowHeavy", 1))
 function TestRunner.triggerTestReaction(profileName: string?, targetUserId: number?)
 	local profileId = profileName or "SlowHeavy"
 	local prof = ReactionService.createProfileFromPreset(profileId)
@@ -8256,7 +8334,19 @@ function TestRunner.triggerTestReaction(profileName: string?, targetUserId: numb
 	if net and net.broadcast then
 		net.broadcast("ReactionWindowStarted", view)
 	end
-	print(string.format("[TestRunner] Triggered manual test reaction window '%s' (%s) for player %d", win.WindowId, prof.AttackName, userId))
+
+	pcall(function()
+		ArenaVisualizer.playEnemyAttackAnimation(
+			"test_attacker",
+			prof.TelegraphDuration,
+			prof.ImpactDelay,
+			prof.RecoveryDuration,
+			prof.AttackType,
+			Vector3.new(0, 5, 0)
+		)
+	end)
+
+	print(string.format("[TestRunner] Triggered manual test reaction window '%s' (%s - %s) for player %d", win.WindowId, prof.AttackName, prof.AttackType or "Melee", userId))
 	task.delay(prof.TelegraphDuration + prof.ImpactDelay + prof.RecoveryDuration, function()
 		if dummyCombatState.ActiveReactionWindow then
 			local results = ReactionService.resolveReactionWindow(dummyCombatState, win.WindowId)

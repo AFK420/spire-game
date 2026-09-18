@@ -13,6 +13,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
@@ -25,7 +26,17 @@ local ReactionService = {}
 
 local activeWindowLive: StateTypes.ReactionWindowState? = nil
 local activeWindowTest: StateTypes.ReactionWindowState? = nil
-local onParryHook: ((targetUserId: number, attackProfile: StateTypes.AttackReactionProfile) -> ())? = nil
+local onParryHook: ((targetUserId: number, attackProfile: StateTypes.AttackReactionProfile, isPerfect: boolean) -> ())? = nil
+
+local function getServerTime(): number
+	local ok, t = pcall(function()
+		return Workspace:GetServerTimeNow()
+	end)
+	if ok and typeof(t) == "number" and t > 0 then
+		return t
+	end
+	return os.clock()
+end
 
 local function getRunManager(): any
 	local rm = servicesFolder:FindFirstChild("RunManager")
@@ -75,7 +86,9 @@ function ReactionService.createAttackProfile(
 	dodgePerfectTol: number?,
 	dodgeGoodTol: number?,
 	parryPerfectTol: number?,
-	parryGoodTol: number?
+	parryGoodTol: number?,
+	attackType: StateTypes.AttackType?,
+	projectileSpeed: number?
 ): StateTypes.AttackReactionProfile
 	local tDuration = telegraphDuration or GameConfig.Reaction.DefaultTelegraphDuration or 1.2
 	local iDelay = impactDelay or (tDuration * 0.85)
@@ -92,6 +105,7 @@ function ReactionService.createAttackProfile(
 	return {
 		AttackId = attackId,
 		AttackName = attackName,
+		AttackType = attackType or "Melee",
 		CanDodge = canDodge,
 		CanParry = canParry,
 		TelegraphDuration = tDuration,
@@ -108,6 +122,7 @@ function ReactionService.createAttackProfile(
 		DamageType = damageType,
 		RawDamage = rawDamage,
 		IsAoE = false,
+		ProjectileSpeed = projectileSpeed,
 	}
 end
 
@@ -140,11 +155,13 @@ function ReactionService.createProfileFromPreset(
 		preset.DodgePerfectTolerance,
 		preset.DodgeGoodTolerance,
 		preset.ParryPerfectTolerance,
-		preset.ParryGoodTolerance
+		preset.ParryGoodTolerance,
+		preset.AttackType,
+		preset.ProjectileSpeed
 	)
 end
 
-function ReactionService.setParryHook(fn: ((targetUserId: number, attackProfile: StateTypes.AttackReactionProfile) -> ())?)
+function ReactionService.setParryHook(fn: ((targetUserId: number, attackProfile: StateTypes.AttackReactionProfile, isPerfect: boolean) -> ())?)
 	onParryHook = fn
 end
 
@@ -166,7 +183,7 @@ function ReactionService.openReactionWindow(
 	enemyInstanceId: string,
 	targetUserIds: { number }
 ): StateTypes.ReactionWindowState
-	local now = os.clock()
+	local now = getServerTime()
 	local impactTime = now + attackProfile.ImpactDelay
 	local maxGrace = math.max(attackProfile.DodgeGoodTolerance, attackProfile.ParryGoodTolerance, 0.25)
 	local closeTime = impactTime + maxGrace
@@ -197,6 +214,9 @@ function ReactionService.openReactionWindow(
 		AttackProfile = attackProfile,
 		EnemyInstanceId = enemyInstanceId,
 		TargetUserIds = targetUserIds,
+		AttackStartServerTime = now,
+		ImpactServerTime = impactTime,
+		ReactionCloseServerTime = closeTime,
 		OpenTime = now,
 		ImpactTime = impactTime,
 		CloseTime = closeTime,
@@ -207,8 +227,8 @@ function ReactionService.openReactionWindow(
 	setActiveWindowInternal(windowState)
 	combatState.ActiveReactionWindow = windowState
 
-	print(string.format("[ReactionService] Opened rhythm reaction window %s for attack '%s' (impact in %.2fs, grace closes in %.2fs).",
-		windowId, attackProfile.AttackName, attackProfile.ImpactDelay, closeTime - now))
+	print(string.format("[ReactionService] Opened authoritative reaction window %s for '%s' (%s, impact in %.2fs, close in %.2fs).",
+		windowId, attackProfile.AttackName, attackProfile.AttackType or "Melee", attackProfile.ImpactDelay, closeTime - now))
 	return windowState
 end
 
@@ -246,8 +266,9 @@ function ReactionService.submitReaction(
 	end
 
 	local profile = activeWin.AttackProfile
-	local now = os.clock()
-	local timeDelta = now - activeWin.ImpactTime -- Negative = Early, Positive = Late
+	local now = getServerTime()
+	local impactTime = activeWin.ImpactServerTime or activeWin.ImpactTime
+	local timeDelta = now - impactTime -- Negative = Early, Positive = Late
 
 	playerRecord.Reaction = reactionType
 	playerRecord.SubmittedAt = now
@@ -304,7 +325,7 @@ function ReactionService.submitReaction(
 				userId, profile.AttackName, timeDelta, profile.ParryPerfectTolerance))
 			if onParryHook then
 				pcall(function()
-					onParryHook(userId, profile)
+					onParryHook(userId, profile, true)
 				end)
 			end
 			return true, "PERFECT PARRY!", "Perfect"
@@ -313,6 +334,11 @@ function ReactionService.submitReaction(
 			playerRecord.Judgement = "Good"
 			print(string.format("[ReactionService] Player %d GOOD PARRY against '%s' (delta: %+.3fs, tol: %.3fs)",
 				userId, profile.AttackName, timeDelta, profile.ParryGoodTolerance))
+			if onParryHook then
+				pcall(function()
+					onParryHook(userId, profile, false)
+				end)
+			end
 			return true, "GOOD PARRY!", "Good"
 		elseif timeDelta < -profile.ParryGoodTolerance then
 			playerRecord.Result = "Early"
@@ -368,7 +394,7 @@ function ReactionService.resolveReactionWindow(
 	combatState.ActiveReactionWindow = nil
 	setActiveWindowInternal(nil)
 
-	print(string.format("[ReactionService] Resolved rhythm reaction window %s.", windowId))
+	print(string.format("[ReactionService] Resolved authoritative reaction window %s.", windowId))
 	return results
 end
 
@@ -378,24 +404,32 @@ function ReactionService.getReactionWindowView(
 ): StateTypes.ReactionWindowView?
 	if not windowState or windowState.Resolved then return nil end
 
-	local now = os.clock()
-	local remaining = math.max(0, windowState.CloseTime - now)
-	local total = windowState.CloseTime - windowState.OpenTime
+	local now = getServerTime()
+	local remaining = math.max(0, windowState.ReactionCloseServerTime - now)
+	local total = windowState.ReactionCloseServerTime - windowState.AttackStartServerTime
 
 	return {
 		WindowId = windowState.WindowId,
 		AttackName = windowState.AttackProfile.AttackName,
 		EnemyName = enemyName or "Hostile Creature",
+		AttackType = windowState.AttackProfile.AttackType or "Melee",
 		DamageType = windowState.AttackProfile.DamageType,
 		RawDamage = windowState.AttackProfile.RawDamage,
 		CanDodge = windowState.AttackProfile.CanDodge,
 		CanParry = windowState.AttackProfile.CanParry,
+		AttackStartServerTime = windowState.AttackStartServerTime,
+		ImpactServerTime = windowState.ImpactServerTime,
+		ReactionCloseServerTime = windowState.ReactionCloseServerTime,
 		OpenTime = windowState.OpenTime,
 		ImpactTime = windowState.ImpactTime,
 		CloseTime = windowState.CloseTime,
 		TimeRemaining = math.round(remaining * 10) / 10,
 		TotalDuration = total,
 		TargetUserIds = windowState.TargetUserIds,
+		ImpactDelay = windowState.AttackProfile.ImpactDelay,
+		RecoveryDuration = windowState.AttackProfile.RecoveryDuration,
+		TelegraphDuration = windowState.AttackProfile.TelegraphDuration,
+		ProjectileSpeed = windowState.AttackProfile.ProjectileSpeed,
 		DodgePerfectTolerance = windowState.AttackProfile.DodgePerfectTolerance,
 		DodgeGoodTolerance = windowState.AttackProfile.DodgeGoodTolerance,
 		ParryPerfectTolerance = windowState.AttackProfile.ParryPerfectTolerance,
@@ -403,8 +437,12 @@ function ReactionService.getReactionWindowView(
 	}
 end
 
+function ReactionService.getServerTime(): number
+	return getServerTime()
+end
+
 function ReactionService.init()
-	print("[ReactionService] Initialized authoritative rhythm combat reaction service.")
+	print("[ReactionService] Initialized authoritative 3D combat reaction service.")
 end
 
 return ReactionService

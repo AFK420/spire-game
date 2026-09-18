@@ -337,7 +337,9 @@ function ArenaVisualizer.playEnemyAttackAnimation(
 	enemyInstanceId: string,
 	telegraphDuration: number?,
 	impactDelay: number?,
-	recoveryDuration: number?
+	recoveryDuration: number?,
+	attackType: StateTypes.AttackType?,
+	targetWorldPos: Vector3?
 )
 	local model = spawnedEnemyModels[enemyInstanceId]
 	if not model or not model.PrimaryPart then return end
@@ -345,36 +347,131 @@ function ArenaVisualizer.playEnemyAttackAnimation(
 	local tDur = telegraphDuration or 1.2
 	local iDelay = impactDelay or (tDur * 0.85)
 	local rDur = recoveryDuration or 0.35
+	local aType = attackType or "Melee"
+	local targetPos = targetWorldPos or PLAYER_STAND_POS
 
 	pcall(function()
 		local root = model.PrimaryPart
 		if not root or not root.Parent then return end
 		local origin = root.CFrame
-		local windup = origin * CFrame.new(0, 0.4, -1.2) * CFrame.Angles(math.rad(-10), 0, 0)
-		local strikeLunge = origin * CFrame.new(0, 0, 4.5) * CFrame.Angles(math.rad(15), 0, 0)
 
-		-- Stage 1: Anticipation / Wind-up
-		local windupTime = iDelay * 0.4
-		local windupInfo = TweenInfo.new(windupTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-		local t1 = TweenService:Create(root, windupInfo, { CFrame = windup })
-		t1:Play()
+		if aType == "Jump" then
+			-- JUMP ATTACK: Crouch -> High Leap Arc -> Slam down at Impact -> Return
+			local crouchTime = math.max(0.1, iDelay * 0.35)
+			local crouchCFrame = origin * CFrame.new(0, -1.2, 0.3) * CFrame.Angles(math.rad(15), 0, 0)
+			local tCrouch = TweenService:Create(root, TweenInfo.new(crouchTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = crouchCFrame })
+			tCrouch:Play()
 
-		-- Stage 2: Heavy Strike Lunge to peak extension right at impact
-		task.delay(windupTime, function()
-			if not root or not root.Parent then return end
-			local strikeTime = math.max(0.1, iDelay - windupTime)
-			local strikeInfo = TweenInfo.new(strikeTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In)
-			local t2 = TweenService:Create(root, strikeInfo, { CFrame = strikeLunge })
-			t2:Play()
-
-			-- Stage 3: Recovery back to idle origin
-			task.delay(strikeTime, function()
+			task.delay(crouchTime, function()
 				if not root or not root.Parent then return end
-				local recoverInfo = TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-				local t3 = TweenService:Create(root, recoverInfo, { CFrame = origin })
-				t3:Play()
+				local flightTime = math.max(0.1, iDelay - crouchTime)
+				local slamPos = CFrame.new(targetPos + Vector3.new(0, 1.5, 0)) * CFrame.Angles(math.rad(25), 0, 0)
+				local tSlam = TweenService:Create(root, TweenInfo.new(flightTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = slamPos })
+				tSlam:Play()
+
+				task.delay(flightTime, function()
+					if not root or not root.Parent then return end
+					local tRecover = TweenService:Create(root, TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = origin })
+					tRecover:Play()
+				end)
 			end)
-		end)
+
+		elseif aType == "Projectile" then
+			-- PROJECTILE: Cast windup -> Visible 3D projectile travels across arena -> Impact at iDelay -> Recover
+			local castTime = math.max(0.1, iDelay * 0.3)
+			local castCFrame = origin * CFrame.new(0, 0.6, -0.6) * CFrame.Angles(math.rad(-10), 0, 0)
+			local tCast = TweenService:Create(root, TweenInfo.new(castTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = castCFrame })
+			tCast:Play()
+
+			task.delay(castTime, function()
+				if not root or not root.Parent then return end
+				local travelTime = math.max(0.1, iDelay - castTime)
+
+				-- Spawn visible physical projectile in 3D arena
+				local arena = Workspace:FindFirstChild("CombatArena") or Workspace
+				local proj = Instance.new("Part")
+				proj.Name = "AttackProjectile_" .. enemyInstanceId
+				proj.Shape = Enum.PartType.Ball
+				proj.Size = Vector3.new(2, 2, 2)
+				proj.Material = Enum.Material.Neon
+				proj.Color = Color3.fromRGB(120, 210, 255)
+				proj.CanCollide = false
+				proj.Anchored = true
+				proj.CFrame = CFrame.new(origin.Position + Vector3.new(0, 3, 2))
+				proj.Parent = arena
+
+				local pLight = Instance.new("PointLight")
+				pLight.Brightness = 3
+				pLight.Range = 14
+				pLight.Color = Color3.fromRGB(120, 210, 255)
+				pLight.Parent = proj
+
+				local targetChest = CFrame.new(targetPos + Vector3.new(0, 3.5, 0))
+				local tProj = TweenService:Create(proj, TweenInfo.new(travelTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = targetChest })
+				tProj:Play()
+
+				task.delay(travelTime, function()
+					pcall(function()
+						if proj and proj.Parent then
+							proj:Destroy()
+						end
+					end)
+				end)
+
+				-- Enemy recovers back to idle origin
+				local tRecover = TweenService:Create(root, TweenInfo.new(rDur, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = origin })
+				tRecover:Play()
+			end)
+
+		elseif aType == "AoE" then
+			-- AOE: Charge pulse -> Expanding detonate -> Recover
+			local chargeTime = math.max(0.1, iDelay * 0.7)
+			local chargeCFrame = origin * CFrame.new(0, 0.8, 0) * CFrame.Angles(math.rad(-8), 0, 0)
+			local tCharge = TweenService:Create(root, TweenInfo.new(chargeTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { CFrame = chargeCFrame })
+			tCharge:Play()
+
+			task.delay(chargeTime, function()
+				if not root or not root.Parent then return end
+				local detonateTime = math.max(0.1, iDelay - chargeTime)
+				local slamCFrame = origin * CFrame.new(0, -0.4, 0)
+				local tDet = TweenService:Create(root, TweenInfo.new(detonateTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), { CFrame = slamCFrame })
+				tDet:Play()
+
+				task.delay(detonateTime, function()
+					if not root or not root.Parent then return end
+					local tRecover = TweenService:Create(root, TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = origin })
+					tRecover:Play()
+				end)
+			end)
+
+		else
+			-- MELEE: Anticipation windup -> Strike lunge to contact -> Recovery
+			local windup = origin * CFrame.new(0, 0.4, -1.2) * CFrame.Angles(math.rad(-10), 0, 0)
+			local strikeLunge = origin * CFrame.new(0, 0, 4.5) * CFrame.Angles(math.rad(15), 0, 0)
+
+			-- Stage 1: Anticipation / Wind-up
+			local windupTime = math.max(0.1, iDelay * 0.4)
+			local windupInfo = TweenInfo.new(windupTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+			local t1 = TweenService:Create(root, windupInfo, { CFrame = windup })
+			t1:Play()
+
+			-- Stage 2: Heavy Strike Lunge to peak extension right at impact
+			task.delay(windupTime, function()
+				if not root or not root.Parent then return end
+				local strikeTime = math.max(0.1, iDelay - windupTime)
+				local strikeInfo = TweenInfo.new(strikeTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In)
+				local t2 = TweenService:Create(root, strikeInfo, { CFrame = strikeLunge })
+				t2:Play()
+
+				-- Stage 3: Recovery back to idle origin
+				task.delay(strikeTime, function()
+					if not root or not root.Parent then return end
+					local recoverInfo = TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+					local t3 = TweenService:Create(root, recoverInfo, { CFrame = origin })
+					t3:Play()
+				end)
+			end)
+		end
 	end)
 end
 

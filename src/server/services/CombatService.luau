@@ -579,24 +579,32 @@ local function resolveTurn()
 							-- Select data-driven attack timing profile based on enemy type
 							local profilePreset = "SlowHeavy"
 							if enemy.DefinitionId == "GremlinNob" then
-								profilePreset = "SlowHeavy"
+								profilePreset = if (activeCombat.TurnNumber % 2 == 0) then "JumpAttack" else "SlowHeavy"
 							elseif enemy.DefinitionId == "SpireGuardian" then
-								profilePreset = "BossHeavyStrike"
+								profilePreset = if (activeCombat.TurnNumber % 3 == 0) then "UnreactableExplosion" else "BossHeavyStrike"
 							elseif enemy.DefinitionId == "Cultist" then
-								profilePreset = "FastDagger"
+								profilePreset = if (activeCombat.TurnNumber % 2 == 0) then "ProjectileBolt" else "FastDagger"
 							elseif enemy.DefinitionId == "SpireSentinel" then
 								profilePreset = if (activeCombat.TurnNumber % 2 == 0) then "FastDagger" else "SlowHeavy"
 							end
 
-							-- Open authoritative rhythm reaction window
+							-- Open authoritative 3D reaction window
 							local rs = getReactionService()
-							local reacted = false
-							local reactionType: StateTypes.ReactionType? = nil
-							local judgement: StateTypes.TimingJudgement = "Miss"
+							local windowResults: { [number]: any } = {}
 
 							if rs then
 								local profile = rs.createProfileFromPreset(profilePreset, enemy.Intent.Value, "Physical")
-								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, { target.UserId })
+								local targetUserIds: { number } = {}
+								local isAoE = (profile.AttackType == "AoE" or profile.IsAoE)
+								if isAoE then
+									for _, p in livingPlayers do
+										table.insert(targetUserIds, p.UserId)
+									end
+								else
+									table.insert(targetUserIds, target.UserId)
+								end
+
+								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, targetUserIds)
 
 								if not isCombatIsolation then
 									pcall(function()
@@ -604,76 +612,97 @@ local function resolveTurn()
 											enemyId,
 											profile.TelegraphDuration,
 											profile.ImpactDelay,
-											profile.RecoveryDuration
+											profile.RecoveryDuration,
+											profile.AttackType
 										)
 									end)
 								end
 
-								CombatService.broadcastSnapshots(string.format("⚠️ %s is attacking %s with %s!", enemy.Name, target.DisplayName, profile.AttackName))
+								CombatService.broadcastSnapshots(string.format("⚠️ %s is attacking %s with %s!", enemy.Name, if isAoE then "the entire party" else target.DisplayName, profile.AttackName))
 
-								-- Wait for reaction window in live play, skip in test isolation
+								-- Wait for reaction window in live play using synchronized server time, skip in test isolation
 								local rm = getRunManager()
 								local isIso = (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) or isCombatIsolation
 								if not isIso then
-									local waitTime = math.max(0.1, windowState.CloseTime - os.clock())
+									local now = (pcall(function() return Workspace:GetServerTimeNow() end) and Workspace:GetServerTimeNow()) or os.clock()
+									local waitTime = math.max(0.1, windowState.ReactionCloseServerTime - now)
 									task.wait(waitTime)
 								end
 
-								local windowResults = rs.resolveReactionWindow(activeCombat, windowState.WindowId)
-								local pResult = windowResults[target.UserId]
-								if pResult and (pResult.Result == "Success" or pResult.Result == "Perfect" or pResult.Result == "Good") then
-									reacted = true
-									reactionType = pResult.Reaction
-									judgement = pResult.Judgement or (pResult.Result :: any)
-								elseif pResult and pResult.Judgement then
-									judgement = pResult.Judgement
-								end
+								windowResults = rs.resolveReactionWindow(activeCombat, windowState.WindowId)
 							end
 
-							if reacted and reactionType == "Dodge" then
-								if judgement == "Perfect" then
-									logEvent("CombatReaction", tostring(target.UserId), enemyId, 0, string.format("⚡ %s executed a PERFECT DODGE against %s!", target.DisplayName, enemy.Name))
-									CombatService.broadcastSnapshots(string.format("✨ PERFECT DODGE! %s cleanly evaded %s!", target.DisplayName, enemy.Name))
-								else
-									logEvent("CombatReaction", tostring(target.UserId), enemyId, 0, string.format("💨 %s DODGED %s's attack!", target.DisplayName, enemy.Name))
-									CombatService.broadcastSnapshots(string.format("💨 %s dodged the attack!", target.DisplayName))
-								end
-							elseif reacted and reactionType == "Parry" then
-								if judgement == "Perfect" then
-									logEvent("CombatReaction", tostring(target.UserId), enemyId, 0, string.format("🛡️ %s executed a PERFECT PARRY against %s!", target.DisplayName, enemy.Name))
-									local parryCounterDmg = math.max(2, math.floor(enemy.Intent.Value * 0.6))
-									local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
-									logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Perfect Parry Riposte)", thornsRem))
-									CombatService.broadcastSnapshots(string.format("⚔️ PERFECT PARRY! %s riposted for %d damage!", target.DisplayName, parryCounterDmg))
-								else
-									logEvent("CombatReaction", tostring(target.UserId), enemyId, 0, string.format("⚔️ %s PARRIED %s's attack!", target.DisplayName, enemy.Name))
-									local parryCounterDmg = math.max(1, math.floor(enemy.Intent.Value * 0.3))
-									local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
-									logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Parry Counter)", thornsRem))
-									CombatService.broadcastSnapshots(string.format("⚔️ %s parried and countered for %d damage!", target.DisplayName, parryCounterDmg))
-								end
-							else
-								if judgement == "Early" then
-									CombatService.broadcastSnapshots(string.format("⚠️ %s reacted too early!", target.DisplayName))
-								elseif judgement == "Late" then
-									CombatService.broadcastSnapshots(string.format("⚠️ %s reacted too late!", target.DisplayName))
-								end
+							-- Resolve damage and reaction outcomes independently per targeted player
+							local effectiveTargetIds = if (rs and activeCombat.ActiveReactionWindow == nil and next(windowResults) ~= nil)
+								then (function()
+									local ids = {}
+									for uId in windowResults do table.insert(ids, uId) end
+									return ids
+								end)()
+								else { target.UserId }
 
-								local remDmg, _ = applyDamageToPlayer(target, enemy.Intent.Value)
-								logEvent("DamageDealt", enemy.Name, target.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
+							for _, tUserId in effectiveTargetIds do
+								local playerState = activeCombat.Party[tUserId]
+								if playerState and not playerState.IsDowned then
+									local pResult = windowResults[tUserId]
+									local reacted = false
+									local rType: StateTypes.ReactionType? = nil
+									local pJudgement: StateTypes.TimingJudgement = "Miss"
 
-								if remDmg > 0 then
-									local dmgRelic = RelicService.triggerEvent(target, activeCombat, "OnDamageTaken", {
-										Damage = remDmg,
-										Enemy = enemy,
-									})
-									if dmgRelic.BonusDamage > 0 then
-										local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
-										logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
+									if pResult and (pResult.Result == "Success" or pResult.Result == "Perfect" or pResult.Result == "Good") then
+										reacted = true
+										rType = pResult.Reaction
+										pJudgement = pResult.Judgement or (pResult.Result :: any)
+									elseif pResult and pResult.Judgement then
+										pJudgement = pResult.Judgement
 									end
-									if dmgRelic.BonusDraw > 0 then
-										CardService.drawCards(target, dmgRelic.BonusDraw)
-										logEvent("CardDrawn", "Relic", target.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+
+									if reacted and rType == "Dodge" then
+										if pJudgement == "Perfect" then
+											logEvent("CombatReaction", tostring(tUserId), enemyId, 0, string.format("⚡ %s executed a PERFECT DODGE against %s!", playerState.DisplayName, enemy.Name))
+											CombatService.broadcastSnapshots(string.format("✨ PERFECT DODGE! %s cleanly evaded %s!", playerState.DisplayName, enemy.Name))
+										else
+											logEvent("CombatReaction", tostring(tUserId), enemyId, 0, string.format("💨 %s DODGED %s's attack!", playerState.DisplayName, enemy.Name))
+											CombatService.broadcastSnapshots(string.format("💨 %s dodged the attack!", playerState.DisplayName))
+										end
+									elseif reacted and rType == "Parry" then
+										if pJudgement == "Perfect" then
+											logEvent("CombatReaction", tostring(tUserId), enemyId, 0, string.format("🛡️ %s executed a PERFECT PARRY against %s!", playerState.DisplayName, enemy.Name))
+											local parryCounterDmg = math.max(2, math.floor(enemy.Intent.Value * 0.6))
+											local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
+											logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Perfect Parry Riposte)", thornsRem))
+											CombatService.broadcastSnapshots(string.format("⚔️ PERFECT PARRY! %s riposted for %d damage!", playerState.DisplayName, parryCounterDmg))
+										else
+											logEvent("CombatReaction", tostring(tUserId), enemyId, 0, string.format("⚔️ %s PARRIED %s's attack!", playerState.DisplayName, enemy.Name))
+											local parryCounterDmg = math.max(1, math.floor(enemy.Intent.Value * 0.3))
+											local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
+											logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Parry Counter)", thornsRem))
+											CombatService.broadcastSnapshots(string.format("⚔️ %s parried and countered for %d damage!", playerState.DisplayName, parryCounterDmg))
+										end
+									else
+										if pJudgement == "Early" then
+											CombatService.broadcastSnapshots(string.format("⚠️ %s reacted too early!", playerState.DisplayName))
+										elseif pJudgement == "Late" then
+											CombatService.broadcastSnapshots(string.format("⚠️ %s reacted too late!", playerState.DisplayName))
+										end
+
+										local remDmg, _ = applyDamageToPlayer(playerState, enemy.Intent.Value)
+										logEvent("DamageDealt", enemy.Name, playerState.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
+
+										if remDmg > 0 then
+											local dmgRelic = RelicService.triggerEvent(playerState, activeCombat, "OnDamageTaken", {
+												Damage = remDmg,
+												Enemy = enemy,
+											})
+											if dmgRelic.BonusDamage > 0 then
+												local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
+												logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
+											end
+											if dmgRelic.BonusDraw > 0 then
+												CardService.drawCards(playerState, dmgRelic.BonusDraw)
+												logEvent("CardDrawn", "Relic", playerState.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+											end
+										end
 									end
 								end
 							end

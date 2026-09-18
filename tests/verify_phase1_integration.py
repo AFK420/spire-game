@@ -1680,8 +1680,8 @@ test("environmentBadge" in ui_ctrl_src, "UIController contains environmentBadge"
 test("eventChamberView" in ui_ctrl_src, "UIController contains eventChamberView")
 test("renderEventChamber" in ui_ctrl_src, "UIController implements renderEventChamber")
 
-# --- [Check 68] OSU-Style Rhythm Approach-Circle Reaction System & Event UI Hardening ---
-print("\n--- [Check 68] OSU-Style Rhythm Approach-Circle Reaction System & Event UI Hardening ---")
+# --- [Check 68] 3D Animation & Projectile Reaction System & Event UI Hardening ---
+print("\n--- [Check 68] 3D Animation & Projectile Reaction System & Event UI Hardening ---")
 reaction_data_src = (ROOT / "src/shared/ReactionData.luau").read_text(encoding="utf-8")
 game_config_src = (ROOT / "src/shared/GameConfig.luau").read_text(encoding="utf-8")
 state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
@@ -1695,6 +1695,8 @@ testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encodi
 # ReactionData presets & timing profiles
 test("SlowHeavy" in reaction_data_src, "ReactionData defines SlowHeavy preset")
 test("FastDagger" in reaction_data_src, "ReactionData defines FastDagger preset")
+test("JumpAttack" in reaction_data_src, "ReactionData defines JumpAttack preset")
+test("ProjectileBolt" in reaction_data_src, "ReactionData defines ProjectileBolt preset")
 test("BossHeavyStrike" in reaction_data_src, "ReactionData defines BossHeavyStrike preset")
 test("UnparryableCleave" in reaction_data_src, "ReactionData defines UnparryableCleave preset")
 test("UndodgeableImpale" in reaction_data_src, "ReactionData defines UndodgeableImpale preset")
@@ -1710,9 +1712,12 @@ test("Enum.KeyCode.Space" not in game_config_src, "GameConfig does not bind Spac
 # StateTypes
 test("TimingJudgement" in state_types_src, "StateTypes defines TimingJudgement enum")
 test('"Perfect" | "Good" | "Early" | "Late" | "Miss" | "Unavailable"' in state_types_src, "TimingJudgement includes all rhythm states")
+test('AttackType = "Melee" | "Jump" | "Projectile" | "AoE"' in state_types_src, "StateTypes defines AttackType enum")
+test("ImpactServerTime" in state_types_src and "ReactionCloseServerTime" in state_types_src, "StateTypes defines authoritative server timestamps")
 
-# ReactionService rhythm logic
-test("activeWin.ImpactTime" in reaction_svc_src, "ReactionService evaluates input against authoritative ImpactTime")
+# ReactionService 3D animation timing & server time sync
+test("activeWin.ImpactTime" in reaction_svc_src or "activeWin.ImpactServerTime" in reaction_svc_src, "ReactionService evaluates input against authoritative ImpactServerTime")
+test("Workspace:GetServerTimeNow" in reaction_svc_src, "ReactionService synchronizes with Workspace:GetServerTimeNow")
 test("activeWindowTest" in reaction_svc_src and "activeWindowLive" in reaction_svc_src, "ReactionService isolates test window from live players")
 test("onParryHook" in reaction_svc_src, "ReactionService invokes parry riposte hook")
 test("function ReactionService.createProfileFromPreset" in reaction_svc_src, "ReactionService provides createProfileFromPreset")
@@ -1722,12 +1727,18 @@ test("ArenaVisualizer.playEnemyAttackAnimation" in combat_svc_src, "CombatServic
 test("profile.ImpactDelay" in combat_svc_src and "profile.RecoveryDuration" in combat_svc_src, "CombatService passes timing parameters to visualizer")
 test("ParryCounter" in combat_svc_src, "CombatService executes parry counter-damage riposte")
 
-# ArenaVisualizer multi-phase animation
+# ArenaVisualizer multi-phase animation & projectile flight
 test("iDelay" in arena_vis_src and "strikeLunge" in arena_vis_src, "ArenaVisualizer lunges at exact ImpactDelay")
+test('aType == "Jump"' in arena_vis_src and 'aType == "Projectile"' in arena_vis_src and 'aType == "AoE"' in arena_vis_src, "ArenaVisualizer supports Melee, Jump, Projectile, and AoE attack animations")
+test("AttackProjectile_" in arena_vis_src, "ArenaVisualizer spawns 3D physical projectile for Projectile attacks")
 
-# Client UIController rhythm approach circle & C/V keybinds
-test("approachRing" in ui_ctrl_src and "hitCircle" in ui_ctrl_src, "UIController constructs approach ring and stationary hit circle")
-test("startApproachCircleAnimation" in ui_ctrl_src, "UIController implements startApproachCircleAnimation")
+# Client UIController: OSU approach circle completely removed, 3D visual sync & minimalist prompt
+test("approachRing" not in ui_ctrl_src and "hitCircle" not in ui_ctrl_src, "UIController completely removes OSU approach circle UI")
+test("startApproachCircleAnimation" not in ui_ctrl_src, "UIController removes startApproachCircleAnimation")
+test("synchronizeAttackVisual" in ui_ctrl_src, "UIController implements synchronizeAttackVisual to align 3D animations with ImpactServerTime")
+test("Workspace:GetServerTimeNow" in ui_ctrl_src, "UIController synchronizes timing via Workspace:GetServerTimeNow")
+test("reactionWidget" in ui_ctrl_src, "UIController displays minimalist reaction prompt widget")
+test("showJudgementFeedback" in ui_ctrl_src, "UIController renders brief floating judgement banner")
 test("Enum.KeyCode.C" in ui_ctrl_src and "Enum.KeyCode.V" in ui_ctrl_src, "UIController handles C (Dodge) and V (Parry) key inputs")
 test("eventCloseBtn" in ui_ctrl_src, "UIController provides event chamber close/dismiss button")
 test("isEventInteractPending" in ui_ctrl_src, "UIController debounces event interactions")
@@ -1737,7 +1748,8 @@ test("activeEventStateTest" in event_svc_src and "activeEventStateLive" in event
 test("Event is already resolved" in event_svc_src, "EventService handles idempotent interaction safely")
 
 # TestRunner Suite 74 & manual testing helper
-test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains all 52 rhythm reaction assertions")
+test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains original rhythm reaction assertions")
+test("[Suite 74.65]" in testrunner_src, "TestRunner Suite 74 contains comprehensive 3D attack animation and server time assertions")
 test("TestRunner.triggerTestReaction" in testrunner_src, "TestRunner provides triggerTestReaction manual test scenario helper")
 
 # Static Compilation of all Luau files with luau-compile

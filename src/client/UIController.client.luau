@@ -754,135 +754,108 @@ environmentLabel.TextSize = 13
 environmentLabel.TextXAlignment = Enum.TextXAlignment.Center
 environmentLabel.Parent = environmentBadge
 
--- Combat Reaction Rhythm Widget (OSU Approach Circle)
+-- Combat Reaction 3D Attack Presentation & Unobtrusive HUD
 local activeReactionWindowId: string? = nil
 local currentReactionWindowView: StateTypes.ReactionWindowView? = nil
-local approachRenderConn: RBXScriptConnection? = nil
+local activeLocalProjectile: Instance? = nil
 
+-- Small, unobtrusive reaction prompt bar positioned above hand
 local reactionWidget = Instance.new("Frame")
 reactionWidget.Name = "ReactionWidget"
-reactionWidget.Size = UDim2.new(0, 320, 0, 320)
-reactionWidget.Position = UDim2.new(0.5, -160, 0.44, -160)
-reactionWidget.BackgroundTransparency = 1
+reactionWidget.Size = UDim2.new(0, 310, 0, 78)
+reactionWidget.Position = UDim2.new(0.5, -155, 0.72, 0)
+reactionWidget.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
+reactionWidget.BackgroundTransparency = 0.25
 reactionWidget.BorderSizePixel = 0
 reactionWidget.Visible = false
 reactionWidget.ZIndex = 50
 reactionWidget.Parent = combatHudView
+UIFactory.createCorner(reactionWidget, 8)
+UIFactory.createStroke(reactionWidget, Color3.fromRGB(70, 90, 130), 1.5)
 local reactionPromptFrame = reactionWidget -- Backward-compatible reference
 
--- Stationary inner hit circle
-local hitCircle = Instance.new("Frame")
-hitCircle.Name = "HitCircle"
-hitCircle.Size = UDim2.new(0, 84, 0, 84)
-hitCircle.Position = UDim2.new(0.5, -42, 0.5, -42)
-hitCircle.BackgroundColor3 = Color3.fromRGB(16, 18, 28)
-hitCircle.BackgroundTransparency = 0.25
-hitCircle.BorderSizePixel = 0
-hitCircle.ZIndex = 52
-hitCircle.Parent = reactionWidget
-UIFactory.createCorner(hitCircle, 42)
-local hitCircleStroke = UIFactory.createStroke(hitCircle, Color3.fromRGB(80, 200, 255), 2.5)
-
-local centerDot = Instance.new("Frame")
-centerDot.Size = UDim2.new(0, 14, 0, 14)
-centerDot.Position = UDim2.new(0.5, -7, 0.5, -7)
-centerDot.BackgroundColor3 = Color3.fromRGB(200, 240, 255)
-centerDot.BorderSizePixel = 0
-centerDot.ZIndex = 53
-centerDot.Parent = hitCircle
-UIFactory.createCorner(centerDot, 7)
-
--- Contracting outer approach ring
-local approachRing = Instance.new("Frame")
-approachRing.Name = "ApproachRing"
-approachRing.Size = UDim2.new(0, 240, 0, 240)
-approachRing.Position = UDim2.new(0.5, -120, 0.5, -120)
-approachRing.BackgroundTransparency = 1
-approachRing.BorderSizePixel = 0
-approachRing.ZIndex = 54
-approachRing.Parent = reactionWidget
-local approachCorner = UIFactory.createCorner(approachRing, 120)
-local approachStroke = UIFactory.createStroke(approachRing, Color3.fromRGB(255, 255, 255), 3)
-
--- Attack label above circle
+-- Attack description label inside prompt bar
 local reactionAttackLabel = Instance.new("TextLabel")
-reactionAttackLabel.Size = UDim2.new(1, 0, 0, 26)
-reactionAttackLabel.Position = UDim2.new(0, 0, 0, 12)
+reactionAttackLabel.Name = "ReactionAttackLabel"
+reactionAttackLabel.Size = UDim2.new(1, -16, 0, 22)
+reactionAttackLabel.Position = UDim2.new(0, 8, 0, 6)
 reactionAttackLabel.BackgroundTransparency = 1
-reactionAttackLabel.Text = "⚔️ Hostile Attack"
-reactionAttackLabel.TextColor3 = Color3.fromRGB(255, 235, 180)
+reactionAttackLabel.Text = "⚔️ Incoming Hostile Strike"
+reactionAttackLabel.TextColor3 = Color3.fromRGB(255, 230, 170)
 reactionAttackLabel.Font = Enum.Font.GothamBold
-reactionAttackLabel.TextSize = 15
-reactionAttackLabel.ZIndex = 55
+reactionAttackLabel.TextSize = 13
+reactionAttackLabel.TextXAlignment = Enum.TextXAlignment.Center
+reactionAttackLabel.ZIndex = 52
 reactionAttackLabel.Parent = reactionWidget
 local reactionDetail = reactionAttackLabel -- Backward-compatible reference
 
--- Keybind badges below circle
+-- Keybind badges container
 local reactionButtonsContainer = Instance.new("Frame")
-reactionButtonsContainer.Size = UDim2.new(1, 0, 0, 42)
-reactionButtonsContainer.Position = UDim2.new(0, 0, 1, -48)
+reactionButtonsContainer.Name = "ReactionButtonsContainer"
+reactionButtonsContainer.Size = UDim2.new(1, -16, 0, 38)
+reactionButtonsContainer.Position = UDim2.new(0, 8, 0, 32)
 reactionButtonsContainer.BackgroundTransparency = 1
-reactionButtonsContainer.ZIndex = 55
+reactionButtonsContainer.ZIndex = 52
 reactionButtonsContainer.Parent = reactionWidget
 
 local reactionButtonsLayout = Instance.new("UIListLayout")
 reactionButtonsLayout.FillDirection = Enum.FillDirection.Horizontal
 reactionButtonsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-reactionButtonsLayout.Padding = UDim.new(0, 16)
+reactionButtonsLayout.Padding = UDim.new(0, 12)
 reactionButtonsLayout.Parent = reactionButtonsContainer
 
 local dodgeBtnFrame = Instance.new("Frame")
-dodgeBtnFrame.Size = UDim2.new(0, 126, 0, 38)
+dodgeBtnFrame.Name = "DodgeBtnFrame"
+dodgeBtnFrame.Size = UDim2.new(0, 134, 0, 34)
 dodgeBtnFrame.BackgroundTransparency = 1
-dodgeBtnFrame.ZIndex = 56
+dodgeBtnFrame.ZIndex = 53
 dodgeBtnFrame.Parent = reactionButtonsContainer
 
 local dodgeBtn = UIFactory.createButton(dodgeBtnFrame, "💨 [C] DODGE", Color3.fromRGB(35, 150, 75), function()
 	submitReactionAttempt("Dodge")
 end)
-dodgeBtn.ZIndex = 57
+dodgeBtn.ZIndex = 54
 
 local parryBtnFrame = Instance.new("Frame")
-parryBtnFrame.Size = UDim2.new(0, 126, 0, 38)
+parryBtnFrame.Name = "ParryBtnFrame"
+parryBtnFrame.Size = UDim2.new(0, 134, 0, 34)
 parryBtnFrame.BackgroundTransparency = 1
-parryBtnFrame.ZIndex = 56
+parryBtnFrame.ZIndex = 53
 parryBtnFrame.Parent = reactionButtonsContainer
 
 local parryBtn = UIFactory.createButton(parryBtnFrame, "⚔️ [V] PARRY", Color3.fromRGB(140, 55, 200), function()
 	submitReactionAttempt("Parry")
 end)
-parryBtn.ZIndex = 57
+parryBtn.ZIndex = 54
 
--- Flashing Judgement feedback banner
+-- Center Floating Judgement feedback banner (Fades out quickly)
 local reactionJudgementLabel = Instance.new("TextLabel")
-reactionJudgementLabel.Size = UDim2.new(1, 0, 0, 36)
-reactionJudgementLabel.Position = UDim2.new(0, 0, 0.5, -18)
+reactionJudgementLabel.Name = "ReactionJudgementLabel"
+reactionJudgementLabel.Size = UDim2.new(0, 340, 0, 44)
+reactionJudgementLabel.Position = UDim2.new(0.5, -170, 0.44, -22)
 reactionJudgementLabel.BackgroundTransparency = 1
 reactionJudgementLabel.Text = ""
 reactionJudgementLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 reactionJudgementLabel.Font = Enum.Font.GothamBlack
-reactionJudgementLabel.TextSize = 22
+reactionJudgementLabel.TextSize = 24
 reactionJudgementLabel.ZIndex = 60
 reactionJudgementLabel.Visible = false
-reactionJudgementLabel.Parent = reactionWidget
+reactionJudgementLabel.Parent = combatHudView
 
 local function showJudgementFeedback(text: string, color: Color3)
 	reactionJudgementLabel.Text = text
 	reactionJudgementLabel.TextColor3 = color
 	reactionJudgementLabel.Visible = true
 	reactionJudgementLabel.TextTransparency = 0
-	reactionJudgementLabel.TextSize = 22
+	reactionJudgementLabel.TextSize = 24
 
-	task.delay(1.1, function()
+	task.delay(0.85, function()
 		if reactionJudgementLabel.Text == text then
-			local tween = TweenService:Create(reactionJudgementLabel, TweenInfo.new(0.25), { TextTransparency = 1 })
+			local tween = TweenService:Create(reactionJudgementLabel, TweenInfo.new(0.2), { TextTransparency = 1 })
 			tween:Play()
 			tween.Completed:Connect(function()
 				if reactionJudgementLabel.Text == text then
 					reactionJudgementLabel.Visible = false
-					if not activeReactionWindowId then
-						reactionWidget.Visible = false
-					end
 				end
 			end)
 		end
@@ -898,10 +871,12 @@ function submitReactionAttempt(reactionType: "Dodge" | "Parry")
 	local winId = activeReactionWindowId
 	local winView = currentReactionWindowView
 	activeReactionWindowId = nil -- Prevent multiple local submissions
+	reactionWidget.Visible = false -- Dismiss prompt bar immediately on reaction
 
-	-- Client-side timing judgement prediction for instantaneous feedback
-	local now = os.clock()
-	local timeDelta = now - winView.ImpactTime
+	-- Synchronized server-time evaluation for client prediction feedback
+	local now = Workspace:GetServerTimeNow()
+	local impactTime = winView.ImpactServerTime or winView.ImpactTime
+	local timeDelta = now - impactTime
 	local absDelta = math.abs(timeDelta)
 
 	if reactionType == "Dodge" then
@@ -947,62 +922,103 @@ function submitReactionAttempt(reactionType: "Dodge" | "Parry")
 	end
 end
 
-local function startApproachCircleAnimation(win: StateTypes.ReactionWindowView)
-	if approachRenderConn then
-		approachRenderConn:Disconnect()
-		approachRenderConn = nil
-	end
+-- Client 3D Visual Synchronization:
+-- Matches attack animations and projectiles to the authoritative ImpactServerTime
+local function synchronizeAttackVisual(win: StateTypes.ReactionWindowView)
+	pcall(function()
+		local arena = Workspace:FindFirstChild("CombatArena") or Workspace
+		local enemyModel: Model? = nil
 
-	reactionWidget.Visible = true
-	reactionAttackLabel.Text = string.format("⚔️ %s: %s (%d %s)", win.EnemyName, win.AttackName, win.RawDamage, win.DamageType)
-	dodgeBtnFrame.Visible = win.CanDodge
-	parryBtnFrame.Visible = win.CanParry
-
-	local openTime = win.OpenTime
-	local impactTime = win.ImpactTime
-	local closeTime = win.CloseTime
-	local totalApproach = math.max(0.2, impactTime - openTime)
-
-	approachRenderConn = RunService.RenderStepped:Connect(function()
-		local now = os.clock()
-		if now > closeTime or not activeReactionWindowId then
-			if approachRenderConn then
-				approachRenderConn:Disconnect()
-				approachRenderConn = nil
+		-- Locate physical enemy model in 3D arena
+		for _, child in arena:GetChildren() do
+			if child:IsA("Model") and (child.Name == ("Enemy_" .. tostring(win.WindowId)) or string.find(child.Name, "Enemy_") ~= nil) then
+				enemyModel = child
+				break
 			end
-			approachRing.Visible = false
-			if now > closeTime and activeReactionWindowId then
-				activeReactionWindowId = nil
-				showJudgementFeedback("MISS", Color3.fromRGB(255, 60, 60))
-				bannerLabel.Text = "💀 Reaction Missed!"
-				bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
-			end
-			return
 		end
 
-		approachRing.Visible = true
-		local remaining = impactTime - now
-		local ratio = remaining / totalApproach
-		local targetDiam = 84
-		local currentDiam = targetDiam + math.max(0, ratio) * 160
+		local myChar = localPlayer.Character
+		local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local targetPos = (myRoot and myRoot.Position) or Vector3.new(0, 1.2, 16)
 
-		approachRing.Size = UDim2.new(0, currentDiam, 0, currentDiam)
-		approachRing.Position = UDim2.new(0.5, -currentDiam / 2, 0.5, -currentDiam / 2)
-		approachCorner.CornerRadius = UDim.new(0, currentDiam / 2)
+		local now = Workspace:GetServerTimeNow()
+		local impactTime = win.ImpactServerTime or win.ImpactTime
+		local startTime = win.AttackStartServerTime or win.OpenTime
+		local timeUntilImpact = math.max(0.05, impactTime - now)
 
-		local absDelta = math.abs(remaining)
-		local perfTol = win.ParryPerfectTolerance or 0.08
-		local goodTol = win.DodgeGoodTolerance or 0.35
+		if win.AttackType == "Projectile" then
+			-- Spawn physical 3D projectile traveling toward player
+			if activeLocalProjectile and activeLocalProjectile.Parent then
+				activeLocalProjectile:Destroy()
+			end
 
-		if absDelta <= perfTol then
-			approachStroke.Color = Color3.fromRGB(255, 220, 80)
-			approachStroke.Thickness = 3.5
-		elseif absDelta <= goodTol then
-			approachStroke.Color = Color3.fromRGB(80, 220, 255)
-			approachStroke.Thickness = 3
-		else
-			approachStroke.Color = Color3.fromRGB(220, 225, 240)
-			approachStroke.Thickness = 2.5
+			local enemyPos = (enemyModel and enemyModel.PrimaryPart and enemyModel.PrimaryPart.Position) or Vector3.new(0, 5, -16)
+			local proj = Instance.new("Part")
+			proj.Name = "ClientAttackProjectile"
+			proj.Shape = Enum.PartType.Ball
+			proj.Size = Vector3.new(2, 2, 2)
+			proj.Material = Enum.Material.Neon
+			proj.Color = Color3.fromRGB(120, 220, 255)
+			proj.Anchored = true
+			proj.CanCollide = false
+			proj.CFrame = CFrame.new(enemyPos + Vector3.new(0, 2, 2))
+			proj.Parent = arena
+			activeLocalProjectile = proj
+
+			local pLight = Instance.new("PointLight")
+			pLight.Brightness = 3
+			pLight.Range = 14
+			pLight.Color = Color3.fromRGB(120, 220, 255)
+			pLight.Parent = proj
+
+			local targetChest = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+			local tInfo = TweenInfo.new(timeUntilImpact, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			local tProj = TweenService:Create(proj, tInfo, { CFrame = targetChest })
+			tProj:Play()
+
+			task.delay(timeUntilImpact, function()
+				pcall(function()
+					if proj and proj.Parent then
+						proj:Destroy()
+					end
+				end)
+			end)
+		end
+	end)
+end
+
+local function startReactionOpportunity(win: StateTypes.ReactionWindowView)
+	reactionWidget.Visible = true
+
+	if not win.CanDodge and not win.CanParry then
+		reactionAttackLabel.Text = string.format("⚠️ %s: %s (UNREACTABLE)", win.EnemyName, win.AttackName)
+		dodgeBtnFrame.Visible = false
+		parryBtnFrame.Visible = false
+	else
+		local permText = if (win.CanDodge and win.CanParry) then ""
+			elseif win.CanDodge then " [Unparryable]"
+			else " [Undodgeable]"
+		reactionAttackLabel.Text = string.format("⚔️ %s: %s (%d %s)%s", win.EnemyName, win.AttackName, win.RawDamage, win.DamageType, permText)
+		dodgeBtnFrame.Visible = win.CanDodge
+		parryBtnFrame.Visible = win.CanParry
+	end
+
+	-- Synchronize local 3D visuals with authoritative server timeline
+	synchronizeAttackVisual(win)
+
+	-- Automatic timeout handler if player does not submit
+	local closeTime = win.ReactionCloseServerTime or win.CloseTime
+	local now = Workspace:GetServerTimeNow()
+	local waitDuration = math.max(0.1, closeTime - now)
+
+	task.delay(waitDuration, function()
+		if activeReactionWindowId == win.WindowId then
+			activeReactionWindowId = nil
+			currentReactionWindowView = nil
+			reactionWidget.Visible = false
+			showJudgementFeedback("MISS", Color3.fromRGB(255, 60, 60))
+			bannerLabel.Text = "💀 Reaction Missed!"
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
 		end
 	end)
 end
@@ -1715,21 +1731,21 @@ if CombatStateUpdateEvent then
 			environmentBadge.Visible = false
 		end
 
-		-- Active Reaction Window Update (Rhythm Approach Circle)
+		-- Active Reaction Window Update (3D Attack Timing & Reaction Prompt)
 		if snapshot.ActiveReactionWindow then
 			local win = snapshot.ActiveReactionWindow
 			if activeReactionWindowId ~= win.WindowId then
 				activeReactionWindowId = win.WindowId
 				currentReactionWindowView = win
-				startApproachCircleAnimation(win)
+				startReactionOpportunity(win)
 			end
 		else
 			activeReactionWindowId = nil
 			currentReactionWindowView = nil
 			reactionWidget.Visible = false
-			if approachRenderConn then
-				approachRenderConn:Disconnect()
-				approachRenderConn = nil
+			if activeLocalProjectile and activeLocalProjectile.Parent then
+				activeLocalProjectile:Destroy()
+				activeLocalProjectile = nil
 			end
 		end
 

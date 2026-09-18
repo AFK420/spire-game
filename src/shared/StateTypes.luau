@@ -153,10 +153,12 @@ export type CombatEvent = {
 export type ReactionType = "Dodge" | "Parry"
 export type TimingJudgement = "Perfect" | "Good" | "Early" | "Late" | "Miss" | "Unavailable" | "None"
 export type ReactionResult = "Success" | "Perfect" | "Good" | "Miss" | "Early" | "Late" | "Unavailable" | "None"
+export type AttackType = "Melee" | "Jump" | "Projectile" | "AoE"
 
 export type AttackReactionProfile = {
 	AttackId: string,
 	AttackName: string,
+	AttackType: AttackType,
 	CanDodge: boolean,
 	CanParry: boolean,
 	TelegraphDuration: number,
@@ -173,6 +175,9 @@ export type AttackReactionProfile = {
 	DamageType: DamageType,
 	RawDamage: number,
 	IsAoE: boolean?,
+	AnimationLength: number?,
+	ProjectileSpeed: number?,
+	ProjectileColor: Color3?,
 }
 
 export type ReactionWindowState = {
@@ -180,9 +185,12 @@ export type ReactionWindowState = {
 	AttackProfile: AttackReactionProfile,
 	EnemyInstanceId: string,
 	TargetUserIds: { number },
-	OpenTime: number,
-	ImpactTime: number,
-	CloseTime: number,
+	AttackStartServerTime: number,
+	ImpactServerTime: number,
+	ReactionCloseServerTime: number,
+	OpenTime: number,     -- Alias for AttackStartServerTime
+	ImpactTime: number,   -- Alias for ImpactServerTime
+	CloseTime: number,    -- Alias for ReactionCloseServerTime
 	Resolved: boolean,
 	PerPlayerResult: {
 		[number]: {
@@ -199,16 +207,24 @@ export type ReactionWindowView = {
 	WindowId: string,
 	AttackName: string,
 	EnemyName: string,
+	AttackType: AttackType,
 	DamageType: DamageType,
 	RawDamage: number,
 	CanDodge: boolean,
 	CanParry: boolean,
-	OpenTime: number,
-	ImpactTime: number,
-	CloseTime: number,
+	AttackStartServerTime: number,
+	ImpactServerTime: number,
+	ReactionCloseServerTime: number,
+	OpenTime: number,     -- Alias for AttackStartServerTime
+	ImpactTime: number,   -- Alias for ImpactServerTime
+	CloseTime: number,    -- Alias for ReactionCloseServerTime
 	TimeRemaining: number,
 	TotalDuration: number,
 	TargetUserIds: { number },
+	ImpactDelay: number,
+	RecoveryDuration: number,
+	TelegraphDuration: number,
+	ProjectileSpeed: number?,
 	DodgePerfectTolerance: number?,
 	DodgeGoodTolerance: number?,
 	ParryPerfectTolerance: number?,
