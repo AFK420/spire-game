@@ -757,7 +757,6 @@ environmentLabel.Parent = environmentBadge
 -- Combat Reaction 3D Attack Presentation & Unobtrusive HUD
 local activeReactionWindowId: string? = nil
 local currentReactionWindowView: StateTypes.ReactionWindowView? = nil
-local activeLocalProjectile: Instance? = nil
 
 -- Small, unobtrusive reaction prompt bar positioned above hand
 local reactionWidget = Instance.new("Frame")
@@ -874,9 +873,9 @@ function submitReactionAttempt(reactionType: "Dodge" | "Parry")
 	reactionWidget.Visible = false -- Dismiss prompt bar immediately on reaction
 
 	-- Synchronized server-time evaluation for client prediction feedback
-	local now = Workspace:GetServerTimeNow()
+	local clientServerTimestamp = Workspace:GetServerTimeNow()
 	local impactTime = winView.ImpactServerTime or winView.ImpactTime
-	local timeDelta = now - impactTime
+	local timeDelta = clientServerTimestamp - impactTime
 	local absDelta = math.abs(timeDelta)
 
 	if reactionType == "Dodge" then
@@ -918,76 +917,27 @@ function submitReactionAttempt(reactionType: "Dodge" | "Parry")
 	end
 
 	if SubmitCombatReactionEvent then
-		SubmitCombatReactionEvent:FireServer(winId, reactionType)
+		SubmitCombatReactionEvent:FireServer(winId, reactionType, clientServerTimestamp)
 	end
 end
 
--- Client 3D Visual Synchronization:
--- Matches attack animations and projectiles to the authoritative ImpactServerTime
-local function synchronizeAttackVisual(win: StateTypes.ReactionWindowView)
-	pcall(function()
-		local arena = Workspace:FindFirstChild("CombatArena") or Workspace
-		local enemyModel: Model? = nil
-
-		-- Locate physical enemy model in 3D arena
-		for _, child in arena:GetChildren() do
-			if child:IsA("Model") and (child.Name == ("Enemy_" .. tostring(win.WindowId)) or string.find(child.Name, "Enemy_") ~= nil) then
-				enemyModel = child
+local function startReactionOpportunity(win: StateTypes.ReactionWindowView)
+	-- Reaction prompt and C/V inputs are strictly reserved for targeted recipients
+	local isTargeted = false
+	if win.TargetUserIds then
+		for _, uid in win.TargetUserIds do
+			if uid == localPlayer.UserId then
+				isTargeted = true
 				break
 			end
 		end
+	end
 
-		local myChar = localPlayer.Character
-		local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart") :: BasePart?
-		local targetPos = (myRoot and myRoot.Position) or Vector3.new(0, 1.2, 16)
+	if not isTargeted then
+		reactionWidget.Visible = false
+		return
+	end
 
-		local now = Workspace:GetServerTimeNow()
-		local impactTime = win.ImpactServerTime or win.ImpactTime
-		local startTime = win.AttackStartServerTime or win.OpenTime
-		local timeUntilImpact = math.max(0.05, impactTime - now)
-
-		if win.AttackType == "Projectile" then
-			-- Spawn physical 3D projectile traveling toward player
-			if activeLocalProjectile and activeLocalProjectile.Parent then
-				activeLocalProjectile:Destroy()
-			end
-
-			local enemyPos = (enemyModel and enemyModel.PrimaryPart and enemyModel.PrimaryPart.Position) or Vector3.new(0, 5, -16)
-			local proj = Instance.new("Part")
-			proj.Name = "ClientAttackProjectile"
-			proj.Shape = Enum.PartType.Ball
-			proj.Size = Vector3.new(2, 2, 2)
-			proj.Material = Enum.Material.Neon
-			proj.Color = Color3.fromRGB(120, 220, 255)
-			proj.Anchored = true
-			proj.CanCollide = false
-			proj.CFrame = CFrame.new(enemyPos + Vector3.new(0, 2, 2))
-			proj.Parent = arena
-			activeLocalProjectile = proj
-
-			local pLight = Instance.new("PointLight")
-			pLight.Brightness = 3
-			pLight.Range = 14
-			pLight.Color = Color3.fromRGB(120, 220, 255)
-			pLight.Parent = proj
-
-			local targetChest = CFrame.new(targetPos + Vector3.new(0, 3, 0))
-			local tInfo = TweenInfo.new(timeUntilImpact, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-			local tProj = TweenService:Create(proj, tInfo, { CFrame = targetChest })
-			tProj:Play()
-
-			task.delay(timeUntilImpact, function()
-				pcall(function()
-					if proj and proj.Parent then
-						proj:Destroy()
-					end
-				end)
-			end)
-		end
-	end)
-end
-
-local function startReactionOpportunity(win: StateTypes.ReactionWindowView)
 	reactionWidget.Visible = true
 
 	if not win.CanDodge and not win.CanParry then
@@ -1002,9 +952,6 @@ local function startReactionOpportunity(win: StateTypes.ReactionWindowView)
 		dodgeBtnFrame.Visible = win.CanDodge
 		parryBtnFrame.Visible = win.CanParry
 	end
-
-	-- Synchronize local 3D visuals with authoritative server timeline
-	synchronizeAttackVisual(win)
 
 	-- Automatic timeout handler if player does not submit
 	local closeTime = win.ReactionCloseServerTime or win.CloseTime
@@ -1752,10 +1699,6 @@ if CombatStateUpdateEvent then
 			activeReactionWindowId = nil
 			currentReactionWindowView = nil
 			reactionWidget.Visible = false
-			if activeLocalProjectile and activeLocalProjectile.Parent then
-				activeLocalProjectile:Destroy()
-				activeLocalProjectile = nil
-			end
 		end
 
 		if snapshot.Message and snapshot.Message ~= "" then
@@ -1843,6 +1786,32 @@ if ActionResultEvent then
 					bannerLabel.Text = "Vote submitted — waiting for the party..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 				end
+			end
+		elseif res.Action == "SubmitCombatReaction" then
+			-- Reconcile displayed reaction judgement with authoritative server result
+			if res.Success then
+				local j = res.ReactionJudgement or res.ReactionResult
+				if j == "Perfect" then
+					showJudgementFeedback("PERFECT!", Color3.fromRGB(80, 240, 255))
+					bannerLabel.Text = string.format("⚡ Server: %s", tostring(res.Message or "PERFECT!"))
+					bannerLabel.TextColor3 = Color3.fromRGB(80, 240, 255)
+				elseif j == "Good" then
+					showJudgementFeedback("GOOD", Color3.fromRGB(80, 220, 120))
+					bannerLabel.Text = string.format("💨 Server: %s", tostring(res.Message or "GOOD!"))
+					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+				elseif j == "Early" then
+					showJudgementFeedback("EARLY", Color3.fromRGB(255, 160, 50))
+					bannerLabel.Text = string.format("⚠️ Server: %s", tostring(res.Message or "Early"))
+					bannerLabel.TextColor3 = Color3.fromRGB(255, 160, 50)
+				elseif j == "Late" then
+					showJudgementFeedback("LATE", Color3.fromRGB(255, 90, 90))
+					bannerLabel.Text = string.format("⚠️ Server: %s", tostring(res.Message or "Late"))
+					bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+				end
+			else
+				showJudgementFeedback(res.ReactionJudgement or "MISS", Color3.fromRGB(255, 90, 90))
+				bannerLabel.Text = string.format("⚠️ %s", tostring(res.Message or "Reaction missed"))
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
 			end
 		elseif res.Action == "ClaimRewardCard" then
 			isRewardClaimPending = false

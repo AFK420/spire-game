@@ -178,6 +178,8 @@ export type AttackReactionProfile = {
 	AnimationLength: number?,
 	ProjectileSpeed: number?,
 	ProjectileColor: Color3?,
+	TargetWorldPos: Vector3?,
+	AttackerWorldPos: Vector3?,
 }
 
 export type ReactionWindowState = {
@@ -192,6 +194,8 @@ export type ReactionWindowState = {
 	ImpactTime: number,   -- Alias for ImpactServerTime
 	CloseTime: number,    -- Alias for ReactionCloseServerTime
 	Resolved: boolean,
+	TargetWorldPos: Vector3?,
+	AttackerWorldPos: Vector3?,
 	PerPlayerResult: {
 		[number]: {
 			Reaction: ReactionType?,
@@ -207,6 +211,7 @@ export type ReactionWindowView = {
 	WindowId: string,
 	AttackName: string,
 	EnemyName: string,
+	EnemyInstanceId: string?,
 	AttackType: AttackType,
 	DamageType: DamageType,
 	RawDamage: number,
@@ -229,6 +234,8 @@ export type ReactionWindowView = {
 	DodgeGoodTolerance: number?,
 	ParryPerfectTolerance: number?,
 	ParryGoodTolerance: number?,
+	TargetWorldPos: Vector3?,
+	AttackerWorldPos: Vector3?,
 }
 
 export type EnvironmentId = "RainSoaked" | "LavaCavern" | "FrozenWastes" | "ToxicSwamp" | "ArcaneStorm" | "None"
@@ -616,6 +623,9 @@ export type ActionResult = {
 	Phase: RunPhase?,
 	StateRevision: number?,
 	CardDefId: string?,
+	ReactionResult: ReactionResult?,
+	ReactionJudgement: TimingJudgement?,
+	ReactionTimeDelta: number?,
 }
 
 export type RunSnapshot = {

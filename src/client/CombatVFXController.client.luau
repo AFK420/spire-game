@@ -1,0 +1,458 @@
+--!strict
+
+--[=[
+	CombatVFXController Client Script
+	Mapped to: StarterPlayer.StarterPlayerScripts.Client.CombatVFXController
+
+	Cosmetic 3D Attack Presentation & Combat Visual Effects:
+	1. Exclusively owns cosmetic 3D attack visuals (no server tweens or duplicate projectiles).
+	2. Synchronizes all attack movements and projectile flight to authoritative server timestamps
+	   (Workspace:GetServerTimeNow(), AttackStartServerTime, ImpactServerTime).
+	3. Renders attacks for all clients in co-op (spectators and targets alike).
+	4. Moves enemy visual models as coherent assemblies using Model:PivotTo().
+	5. Supports Melee lunges, Jump arcs, Projectiles, and AoE charge/detonations.
+]=]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+
+local CardRiftNetwork = ReplicatedStorage:WaitForChild("CardRiftNetwork")
+local CombatStateUpdateEvent = CardRiftNetwork:WaitForChild("CombatStateUpdate") :: RemoteEvent
+
+local localPlayer = Players.LocalPlayer
+
+--------------------------------------------------------------------------------
+-- Active Attack State Tracking
+--------------------------------------------------------------------------------
+
+local currentActiveWindowId: string? = nil
+local activeAnimations: { [string]: RBXScriptConnection } = {}
+local activeVfxInstances: { Instance } = {}
+local enemyOriginalPivots: { [Model]: CFrame } = {}
+
+local function getVfxContainer(): Instance
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
+	if activeRoom then
+		local effects = activeRoom:FindFirstChild("Effects")
+		if effects then return effects end
+		return activeRoom
+	end
+	local combatArena = Workspace:FindFirstChild("CombatArena")
+	if combatArena then return combatArena end
+	return Workspace
+end
+
+local function findEnemyModel(enemyInstanceId: string?): Model?
+	local container = getVfxContainer()
+	local searchRoots = { container, Workspace }
+
+	for _, root in searchRoots do
+		for _, child in root:GetChildren() do
+			if child:IsA("Model") then
+				if enemyInstanceId and child.Name == ("Enemy_" .. enemyInstanceId) then
+					return child
+				end
+			end
+		end
+	end
+
+	-- Fallback search by prefix
+	for _, root in searchRoots do
+		for _, child in root:GetChildren() do
+			if child:IsA("Model") and string.find(child.Name, "Enemy_") ~= nil then
+				return child
+			end
+		end
+	end
+
+	return nil
+end
+
+local function cleanupActiveAttack(windowId: string)
+	local conn = activeAnimations[windowId]
+	if conn then
+		conn:Disconnect()
+		activeAnimations[windowId] = nil
+	end
+
+	for i = #activeVfxInstances, 1, -1 do
+		local inst = activeVfxInstances[i]
+		if inst and inst.Parent then
+			inst:Destroy()
+		end
+		table.remove(activeVfxInstances, i)
+	end
+
+	for model, origPivot in enemyOriginalPivots do
+		if model and model.Parent then
+			pcall(function()
+				model:PivotTo(origPivot)
+			end)
+		end
+	end
+	table.clear(enemyOriginalPivots)
+end
+
+--------------------------------------------------------------------------------
+-- 3D Attack Animations Driven by Synchronized Server Timestamps
+--------------------------------------------------------------------------------
+
+-- A) MELEE ATTACK: Windup -> Lunge to Target at ImpactServerTime -> Recover
+local function playMeleeAttack(win: StateTypes.ReactionWindowView)
+	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+	if not enemyModel or not enemyModel.PrimaryPart then return end
+
+	local originPivot = enemyModel:GetPivot()
+	enemyOriginalPivots[enemyModel] = originPivot
+
+	local targetPos = win.TargetWorldPos or Vector3.new(0, 1.2, 16)
+	local dir = (targetPos - originPivot.Position)
+	local dist = dir.Magnitude
+	local unitDir = if dist > 0.1 then dir.Unit else Vector3.new(0, 0, 1)
+
+	-- Lunge stops ~3.5 studs in front of target, facing target
+	local lungePos = targetPos - (unitDir * 3.5) + Vector3.new(0, 0.4, 0)
+	local lungeCFrame = CFrame.lookAt(lungePos, targetPos)
+	local windupCFrame = originPivot * CFrame.new(0, 0.5, -1.6) * CFrame.Angles(math.rad(-14), 0, 0)
+
+	local startTime = win.AttackStartServerTime
+	local impactTime = win.ImpactServerTime
+	local totalWindupTime = math.max(0.1, (impactTime - startTime) * 0.40)
+	local lungeStartTime = startTime + totalWindupTime
+	local recoveryDuration = win.RecoveryDuration or 0.35
+	local endTime = impactTime + recoveryDuration
+
+	local windowId = win.WindowId
+	local connection: RBXScriptConnection? = nil
+
+	connection = RunService.Heartbeat:Connect(function()
+		if not enemyModel or not enemyModel.Parent then
+			if connection then connection:Disconnect() end
+			return
+		end
+
+		local now = Workspace:GetServerTimeNow()
+
+		if now < lungeStartTime then
+			-- Phase 1: Anticipation Wind-up
+			local alpha = math.clamp((now - startTime) / math.max(0.01, totalWindupTime), 0, 1)
+			local smoothAlpha = math.sin(alpha * math.pi * 0.5)
+			enemyModel:PivotTo(originPivot:Lerp(windupCFrame, smoothAlpha))
+		elseif now <= impactTime then
+			-- Phase 2: Rapid Strike Lunge reaching target at exact ImpactServerTime
+			local lungeDur = math.max(0.01, impactTime - lungeStartTime)
+			local alpha = math.clamp((now - lungeStartTime) / lungeDur, 0, 1)
+			local strikeAlpha = alpha * alpha * alpha -- Exponential snap
+			enemyModel:PivotTo(windupCFrame:Lerp(lungeCFrame, strikeAlpha))
+		elseif now <= endTime then
+			-- Phase 3: Recovery back to idle origin
+			local alpha = math.clamp((now - impactTime) / math.max(0.01, recoveryDuration), 0, 1)
+			local recoverAlpha = 1 - math.cos(alpha * math.pi * 0.5)
+			enemyModel:PivotTo(lungeCFrame:Lerp(originPivot, recoverAlpha))
+		else
+			-- Finished: return cleanly to origin
+			enemyModel:PivotTo(originPivot)
+			if connection then
+				connection:Disconnect()
+				activeAnimations[windowId] = nil
+			end
+		end
+	end)
+
+	if connection then
+		activeAnimations[windowId] = connection
+	end
+end
+
+-- B) JUMP ATTACK: Crouch -> High Leap Arc -> Slam onto Target at ImpactServerTime -> Recover
+local function playJumpAttack(win: StateTypes.ReactionWindowView)
+	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+	if not enemyModel or not enemyModel.PrimaryPart then return end
+
+	local originPivot = enemyModel:GetPivot()
+	enemyOriginalPivots[enemyModel] = originPivot
+
+	local targetPos = win.TargetWorldPos or Vector3.new(0, 1.2, 16)
+	local crouchPivot = originPivot * CFrame.new(0, -1.2, 0.4) * CFrame.Angles(math.rad(18), 0, 0)
+	local slamPivot = CFrame.new(targetPos + Vector3.new(0, 1.0, 0)) * CFrame.Angles(math.rad(25), 0, 0)
+
+	local startTime = win.AttackStartServerTime
+	local impactTime = win.ImpactServerTime
+	local crouchTime = math.max(0.1, (impactTime - startTime) * 0.30)
+	local leapStartTime = startTime + crouchTime
+	local recoveryDuration = win.RecoveryDuration or 0.45
+	local endTime = impactTime + recoveryDuration
+
+	local windowId = win.WindowId
+	local connection: RBXScriptConnection? = nil
+	local hasCreatedImpactVFX = false
+
+	connection = RunService.Heartbeat:Connect(function()
+		if not enemyModel or not enemyModel.Parent then
+			if connection then connection:Disconnect() end
+			return
+		end
+
+		local now = Workspace:GetServerTimeNow()
+
+		if now < leapStartTime then
+			-- Phase 1: Crouch down anticipation
+			local alpha = math.clamp((now - startTime) / math.max(0.01, crouchTime), 0, 1)
+			enemyModel:PivotTo(originPivot:Lerp(crouchPivot, alpha))
+		elseif now <= impactTime then
+			-- Phase 2: High parabolic leap through 3D world arriving at impact
+			local flightDur = math.max(0.01, impactTime - leapStartTime)
+			local alpha = math.clamp((now - leapStartTime) / flightDur, 0, 1)
+
+			local arcHeight = 14 * 4 * alpha * (1 - alpha) -- 14 studs parabolic arc height
+			local currentPos = crouchPivot.Position:Lerp(targetPos, alpha) + Vector3.new(0, arcHeight, 0)
+			local pitchAngle = math.rad(15 - 35 * alpha)
+			local flightCFrame = CFrame.lookAt(currentPos, targetPos + Vector3.new(0, 1, 0)) * CFrame.Angles(pitchAngle, 0, 0)
+			enemyModel:PivotTo(flightCFrame)
+		elseif now <= endTime then
+			-- Phase 3: Slam landing and recovery back to origin
+			if not hasCreatedImpactVFX then
+				hasCreatedImpactVFX = true
+				-- Brief landing shockwave ring on ground
+				local container = getVfxContainer()
+				local ring = Instance.new("Part")
+				ring.Name = "JumpImpactRing"
+				ring.Shape = Enum.PartType.Cylinder
+				ring.Size = Vector3.new(0.3, 10, 10)
+				ring.CFrame = CFrame.new(targetPos + Vector3.new(0, 0.2, 0)) * CFrame.Angles(0, 0, math.rad(90))
+				ring.Material = Enum.Material.Neon
+				ring.Color = Color3.fromRGB(255, 140, 40)
+				ring.Anchored = true
+				ring.CanCollide = false
+				ring.Parent = container
+				table.insert(activeVfxInstances, ring)
+
+				local tRing = TweenService:Create(ring, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(0.1, 18, 18),
+					Transparency = 1,
+				})
+				tRing:Play()
+				task.delay(0.35, function()
+					if ring and ring.Parent then ring:Destroy() end
+				end)
+			end
+
+			local alpha = math.clamp((now - impactTime) / math.max(0.01, recoveryDuration), 0, 1)
+			local recoverAlpha = 1 - math.cos(alpha * math.pi * 0.5)
+			enemyModel:PivotTo(slamPivot:Lerp(originPivot, recoverAlpha))
+		else
+			enemyModel:PivotTo(originPivot)
+			if connection then
+				connection:Disconnect()
+				activeAnimations[windowId] = nil
+			end
+		end
+	end)
+
+	if connection then
+		activeAnimations[windowId] = connection
+	end
+end
+
+-- C) PROJECTILE ATTACK: Cast Windup -> Single 3D Projectile Flights to Target -> Impact at ImpactServerTime
+local function playProjectileAttack(win: StateTypes.ReactionWindowView)
+	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+	local originPivot = (enemyModel and enemyModel:GetPivot()) or CFrame.new(0, 4, -16)
+	if enemyModel then
+		enemyOriginalPivots[enemyModel] = originPivot
+	end
+
+	local spawnPos = win.AttackerWorldPos or originPivot.Position + Vector3.new(0, 2.5, 2)
+	local targetPos = (win.TargetWorldPos or Vector3.new(0, 1.2, 16)) + Vector3.new(0, 2.8, 0)
+
+	local startTime = win.AttackStartServerTime
+	local impactTime = win.ImpactServerTime
+	local castWindup = math.max(0.15, (impactTime - startTime) * 0.25)
+	local flightStartTime = startTime + castWindup
+	local flightDuration = math.max(0.05, impactTime - flightStartTime)
+	local recoveryDuration = win.RecoveryDuration or 0.30
+
+	local container = getVfxContainer()
+
+	-- Caster wind-up pose
+	if enemyModel and enemyModel.PrimaryPart then
+		local castCFrame = originPivot * CFrame.new(0, 0.6, -0.8) * CFrame.Angles(math.rad(-12), 0, 0)
+		local tCast = TweenService:Create(enemyModel.PrimaryPart :: BasePart, TweenInfo.new(castWindup, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = castCFrame })
+		tCast:Play()
+	end
+
+	-- Spawn single physical 3D projectile at flightStartTime
+	local windowId = win.WindowId
+	local proj: Part? = nil
+
+	task.delay(math.max(0, flightStartTime - Workspace:GetServerTimeNow()), function()
+		if currentActiveWindowId ~= windowId then return end
+
+		proj = Instance.new("Part")
+		proj.Name = "AttackProjectile_" .. windowId
+		proj.Shape = Enum.PartType.Ball
+		proj.Size = Vector3.new(2.2, 2.2, 2.2)
+		proj.Material = Enum.Material.Neon
+		proj.Color = Color3.fromRGB(130, 210, 255)
+		proj.Anchored = true
+		proj.CanCollide = false
+		proj.CFrame = CFrame.new(spawnPos)
+		proj.Parent = container
+		table.insert(activeVfxInstances, proj)
+
+		local light = Instance.new("PointLight")
+		light.Color = Color3.fromRGB(140, 220, 255)
+		light.Brightness = 3.5
+		light.Range = 16
+		light.Parent = proj
+
+		-- RenderStepped Heartbeat flight loop for exact impact arrival
+		local flightConnection: RBXScriptConnection? = nil
+		flightConnection = RunService.Heartbeat:Connect(function()
+			if not proj or not proj.Parent then
+				if flightConnection then flightConnection:Disconnect() end
+				return
+			end
+
+			local now = Workspace:GetServerTimeNow()
+			local progress = math.clamp((now - flightStartTime) / flightDuration, 0, 1)
+			local smoothProgress = progress * progress -- Accelerating into impact
+			local currentPos = spawnPos:Lerp(targetPos, smoothProgress)
+			proj.CFrame = CFrame.new(currentPos)
+
+			if progress >= 1 or now >= impactTime then
+				if flightConnection then flightConnection:Disconnect() end
+				-- Impact burst
+				local burstTween = TweenService:Create(proj, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(4.5, 4.5, 4.5),
+					Transparency = 1,
+				})
+				burstTween:Play()
+				task.delay(0.18, function()
+					if proj and proj.Parent then proj:Destroy() end
+				end)
+
+				-- Enemy recovery
+				if enemyModel and enemyModel.PrimaryPart then
+					local tRecover = TweenService:Create(enemyModel.PrimaryPart, TweenInfo.new(recoveryDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = originPivot })
+					tRecover:Play()
+				end
+			end
+		end)
+
+		if flightConnection then
+			activeAnimations[windowId .. "_proj"] = flightConnection
+		end
+	end)
+end
+
+-- D) AOE ATTACK: Ground Charge Expansion -> Detonation at ImpactServerTime -> Fade
+local function playAoEAttack(win: StateTypes.ReactionWindowView)
+	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+	local originPivot = (enemyModel and enemyModel:GetPivot()) or CFrame.new(0, 4, -16)
+	if enemyModel then
+		enemyOriginalPivots[enemyModel] = originPivot
+	end
+
+	local startTime = win.AttackStartServerTime
+	local impactTime = win.ImpactServerTime
+	local totalChargeTime = math.max(0.1, impactTime - startTime)
+
+	local container = getVfxContainer()
+
+	-- Ground telegraph expanding circle
+	local aoeZone = Instance.new("Part")
+	aoeZone.Name = "CombatVFX_AoETelegraph"
+	aoeZone.Shape = Enum.PartType.Cylinder
+	aoeZone.Size = Vector3.new(0.2, 4, 4)
+	aoeZone.CFrame = CFrame.new(0, 0.4, 0) * CFrame.Angles(0, 0, math.rad(90))
+	aoeZone.Material = Enum.Material.Neon
+	aoeZone.Color = Color3.fromRGB(240, 50, 50)
+	aoeZone.Transparency = 0.65
+	aoeZone.Anchored = true
+	aoeZone.CanCollide = false
+	aoeZone.Parent = container
+	table.insert(activeVfxInstances, aoeZone)
+
+	local tExpand = TweenService:Create(aoeZone, TweenInfo.new(totalChargeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Size = Vector3.new(0.2, 45, 45),
+		Transparency = 0.35,
+	})
+	tExpand:Play()
+
+	-- Detonation at impact moment
+	local windowId = win.WindowId
+	local delayUntilImpact = math.max(0, impactTime - Workspace:GetServerTimeNow())
+	task.delay(delayUntilImpact, function()
+		if currentActiveWindowId ~= windowId then return end
+
+		-- Flash explosion
+		local tDetonate = TweenService:Create(aoeZone, TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+			Size = Vector3.new(0.8, 55, 55),
+			Color = Color3.fromRGB(255, 220, 100),
+			Transparency = 1,
+		})
+		tDetonate:Play()
+		task.delay(0.25, function()
+			if aoeZone and aoeZone.Parent then aoeZone:Destroy() end
+		end)
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Reaction Window Synchronization
+--------------------------------------------------------------------------------
+
+local function onReactionWindowChanged(win: StateTypes.ReactionWindowView?)
+	if not win then
+		if currentActiveWindowId then
+			cleanupActiveAttack(currentActiveWindowId)
+			currentActiveWindowId = nil
+		end
+		return
+	end
+
+	if currentActiveWindowId == win.WindowId then
+		return
+	end
+
+	-- Clean up prior attack visual if active
+	if currentActiveWindowId then
+		cleanupActiveAttack(currentActiveWindowId)
+	end
+
+	currentActiveWindowId = win.WindowId
+
+	-- Dispatch 3D presentation based on authoritative attack type
+	local aType = win.AttackType
+	if aType == "Jump" then
+		playJumpAttack(win)
+	elseif aType == "Projectile" then
+		playProjectileAttack(win)
+	elseif aType == "AoE" then
+		playAoEAttack(win)
+	elseif aType == "Melee" or true then
+		-- Default to Melee
+		playMeleeAttack(win)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Event Listener
+--------------------------------------------------------------------------------
+
+if CombatStateUpdateEvent then
+	CombatStateUpdateEvent.OnClientEvent:Connect(function(snapshot: StateTypes.CombatSnapshot)
+		if not snapshot then return end
+		onReactionWindowChanged(snapshot.ActiveReactionWindow)
+	end)
+end
+
+print("[CombatVFXController] Initialized client 3D combat attack presentation controller.")

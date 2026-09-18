@@ -221,6 +221,8 @@ function ReactionService.openReactionWindow(
 		ImpactTime = impactTime,
 		CloseTime = closeTime,
 		Resolved = false,
+		TargetWorldPos = attackProfile.TargetWorldPos,
+		AttackerWorldPos = attackProfile.AttackerWorldPos,
 		PerPlayerResult = perPlayerMap,
 	}
 
@@ -241,45 +243,83 @@ function ReactionService.submitReaction(
 	windowId: string,
 	reactionType: StateTypes.ReactionType,
 	clientTimestamp: number?
-): (boolean, string?, StateTypes.ReactionResult?)
+): (boolean, string?, StateTypes.ReactionResult?, StateTypes.TimingJudgement?, number?)
 	local activeWin = getActiveWindowInternal()
 	if not activeWin or activeWin.Resolved then
-		return false, "No active reaction window.", "None"
+		return false, "No active reaction window.", "None", "None", nil
 	end
 
 	if activeWin.WindowId ~= windowId then
-		return false, "Invalid or expired reaction window ID.", "None"
+		return false, "Invalid or expired reaction window ID.", "None", "None", nil
 	end
 
 	local userId = (typeof(player) == "number") and player or (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId)
 	if not userId then
-		return false, "Invalid player identity.", "None"
+		return false, "Invalid player identity.", "None", "None", nil
 	end
 
 	local playerRecord = activeWin.PerPlayerResult[userId]
 	if not playerRecord then
-		return false, "Player is not a targeted recipient of this incoming attack.", "None"
+		return false, "Player is not a targeted recipient of this incoming attack.", "None", "None", nil
 	end
 
 	if playerRecord.Reaction ~= nil then
-		return false, "Reaction already submitted for this window.", playerRecord.Result
+		return false, "Reaction already submitted for this window.", playerRecord.Result, playerRecord.Judgement, playerRecord.TimeDelta
 	end
 
 	local profile = activeWin.AttackProfile
 	local now = getServerTime()
+	local closeTime = activeWin.ReactionCloseServerTime or activeWin.CloseTime
 	local impactTime = activeWin.ImpactServerTime or activeWin.ImpactTime
-	local timeDelta = now - impactTime -- Negative = Early, Positive = Late
 
+	-- 1. Explicit Reaction Close Time Validation
+	if now > closeTime then
+		playerRecord.Reaction = reactionType
+		playerRecord.Result = "Late"
+		playerRecord.Judgement = "Late"
+		playerRecord.SubmittedAt = now
+		local lateDelta = now - impactTime
+		playerRecord.TimeDelta = lateDelta
+		return false, "Reaction window closed.", "Late", "Late", lateDelta
+	end
+
+	-- 2. Client Latency Compensation with Bounds Checking
+	local maxFutureSkew = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampFutureSkew) or 0.15
+	local maxPastLag = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampPastLag) or 0.60
+
+	local evalTimestamp = now
+	if typeof(clientTimestamp) == "number" and not (clientTimestamp ~= clientTimestamp) then
+		-- Reject timestamps excessively far in the future
+		if clientTimestamp > (now + maxFutureSkew) then
+			return false, "Timestamp rejected: client time is too far in the future.", "None", "None", nil
+		end
+
+		-- Reject submissions whose client timestamp occurred after reaction window close
+		if clientTimestamp > closeTime then
+			playerRecord.Reaction = reactionType
+			playerRecord.Result = "Late"
+			playerRecord.Judgement = "Late"
+			playerRecord.SubmittedAt = clientTimestamp
+			local lateDelta = clientTimestamp - impactTime
+			playerRecord.TimeDelta = lateDelta
+			return false, "Reaction submitted after window closed.", "Late", "Late", lateDelta
+		end
+
+		-- Bound client timestamp within past lag threshold
+		evalTimestamp = math.clamp(clientTimestamp, now - maxPastLag, now + maxFutureSkew)
+	end
+
+	local timeDelta = evalTimestamp - impactTime -- Negative = Early, Positive = Late
 	playerRecord.Reaction = reactionType
-	playerRecord.SubmittedAt = now
+	playerRecord.SubmittedAt = evalTimestamp
 	playerRecord.TimeDelta = timeDelta
 
-	-- 1. Evaluate Dodge Timing
+	-- 3. Evaluate Dodge Timing
 	if reactionType == "Dodge" then
 		if not profile.CanDodge then
 			playerRecord.Result = "Unavailable"
 			playerRecord.Judgement = "Unavailable"
-			return false, "This attack cannot be dodged!", "Unavailable"
+			return false, "This attack cannot be dodged!", "Unavailable", "Unavailable", timeDelta
 		end
 
 		local absDelta = math.abs(timeDelta)
@@ -288,33 +328,33 @@ function ReactionService.submitReaction(
 			playerRecord.Judgement = "Perfect"
 			print(string.format("[ReactionService] Player %d PERFECT DODGE against '%s' (delta: %+.3fs, tol: %.3fs)",
 				userId, profile.AttackName, timeDelta, profile.DodgePerfectTolerance))
-			return true, "PERFECT DODGE!", "Perfect"
+			return true, "PERFECT DODGE!", "Perfect", "Perfect", timeDelta
 		elseif absDelta <= profile.DodgeGoodTolerance then
 			playerRecord.Result = "Good"
 			playerRecord.Judgement = "Good"
 			print(string.format("[ReactionService] Player %d GOOD DODGE against '%s' (delta: %+.3fs, tol: %.3fs)",
 				userId, profile.AttackName, timeDelta, profile.DodgeGoodTolerance))
-			return true, "GOOD DODGE!", "Good"
+			return true, "GOOD DODGE!", "Good", "Good", timeDelta
 		elseif timeDelta < -profile.DodgeGoodTolerance then
 			playerRecord.Result = "Early"
 			playerRecord.Judgement = "Early"
 			print(string.format("[ReactionService] Player %d DODGE EARLY against '%s' (delta: %+.3fs)",
 				userId, profile.AttackName, timeDelta))
-			return false, "Dodged too early!", "Early"
+			return false, "Dodged too early!", "Early", "Early", timeDelta
 		else
 			playerRecord.Result = "Late"
 			playerRecord.Judgement = "Late"
 			print(string.format("[ReactionService] Player %d DODGE LATE against '%s' (delta: %+.3fs)",
 				userId, profile.AttackName, timeDelta))
-			return false, "Dodged too late!", "Late"
+			return false, "Dodged too late!", "Late", "Late", timeDelta
 		end
 
-	-- 2. Evaluate Parry Timing
+	-- 4. Evaluate Parry Timing
 	elseif reactionType == "Parry" then
 		if not profile.CanParry then
 			playerRecord.Result = "Unavailable"
 			playerRecord.Judgement = "Unavailable"
-			return false, "This attack cannot be parried!", "Unavailable"
+			return false, "This attack cannot be parried!", "Unavailable", "Unavailable", timeDelta
 		end
 
 		local absDelta = math.abs(timeDelta)
@@ -328,7 +368,7 @@ function ReactionService.submitReaction(
 					onParryHook(userId, profile, true)
 				end)
 			end
-			return true, "PERFECT PARRY!", "Perfect"
+			return true, "PERFECT PARRY!", "Perfect", "Perfect", timeDelta
 		elseif absDelta <= profile.ParryGoodTolerance then
 			playerRecord.Result = "Good"
 			playerRecord.Judgement = "Good"
@@ -339,25 +379,25 @@ function ReactionService.submitReaction(
 					onParryHook(userId, profile, false)
 				end)
 			end
-			return true, "GOOD PARRY!", "Good"
+			return true, "GOOD PARRY!", "Good", "Good", timeDelta
 		elseif timeDelta < -profile.ParryGoodTolerance then
 			playerRecord.Result = "Early"
 			playerRecord.Judgement = "Early"
 			print(string.format("[ReactionService] Player %d PARRY EARLY against '%s' (delta: %+.3fs)",
 				userId, profile.AttackName, timeDelta))
-			return false, "Parried too early!", "Early"
+			return false, "Parried too early!", "Early", "Early", timeDelta
 		else
 			playerRecord.Result = "Late"
 			playerRecord.Judgement = "Late"
 			print(string.format("[ReactionService] Player %d PARRY LATE against '%s' (delta: %+.3fs)",
 				userId, profile.AttackName, timeDelta))
-			return false, "Parried too late!", "Late"
+			return false, "Parried too late!", "Late", "Late", timeDelta
 		end
 	end
 
 	playerRecord.Result = "Miss"
 	playerRecord.Judgement = "Miss"
-	return false, "Unknown reaction type.", "Miss"
+	return false, "Unknown reaction type.", "Miss", "Miss", 0
 end
 
 --------------------------------------------------------------------------------
@@ -412,6 +452,7 @@ function ReactionService.getReactionWindowView(
 		WindowId = windowState.WindowId,
 		AttackName = windowState.AttackProfile.AttackName,
 		EnemyName = enemyName or "Hostile Creature",
+		EnemyInstanceId = windowState.EnemyInstanceId,
 		AttackType = windowState.AttackProfile.AttackType or "Melee",
 		DamageType = windowState.AttackProfile.DamageType,
 		RawDamage = windowState.AttackProfile.RawDamage,
@@ -434,6 +475,8 @@ function ReactionService.getReactionWindowView(
 		DodgeGoodTolerance = windowState.AttackProfile.DodgeGoodTolerance,
 		ParryPerfectTolerance = windowState.AttackProfile.ParryPerfectTolerance,
 		ParryGoodTolerance = windowState.AttackProfile.ParryGoodTolerance,
+		TargetWorldPos = windowState.TargetWorldPos or windowState.AttackProfile.TargetWorldPos,
+		AttackerWorldPos = windowState.AttackerWorldPos or windowState.AttackProfile.AttackerWorldPos,
 	}
 end
 

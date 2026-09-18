@@ -791,7 +791,7 @@ NetworkService.ReturnToLobbyEvent.OnServerEvent:Connect(function(player: Player)
 end)
 
 -- 26. Submit Combat Reaction (Dodge / Parry)
-NetworkService.SubmitCombatReactionEvent.OnServerEvent:Connect(function(player: Player, windowId: any, reactionType: any)
+NetworkService.SubmitCombatReactionEvent.OnServerEvent:Connect(function(player: Player, windowId: any, reactionType: any, clientTimestamp: any)
 	if not NetworkService.checkRateLimit(player, "Combat") then
 		return
 	end
@@ -802,11 +802,20 @@ NetworkService.SubmitCombatReactionEvent.OnServerEvent:Connect(function(player: 
 		return
 	end
 
-	local success, message, result = ReactionService.submitReaction(player, windowId, reactionType :: StateTypes.ReactionType)
+	local validClientTimestamp = if typeof(clientTimestamp) == "number" then clientTimestamp else nil
+	local success, message, result, judgement, timeDelta = ReactionService.submitReaction(
+		player,
+		windowId,
+		reactionType :: StateTypes.ReactionType,
+		validClientTimestamp
+	)
 	NetworkService.sendActionResult(player, {
 		Action = "SubmitCombatReaction",
 		Success = success,
 		Message = message,
+		ReactionResult = result,
+		ReactionJudgement = judgement,
+		ReactionTimeDelta = timeDelta,
 	})
 end)
 

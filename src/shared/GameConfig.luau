@@ -76,6 +76,9 @@ GameConfig.Reaction = {
 	DefaultDodgeWindow = 1.35,
 	DefaultParryStart = 0.85,
 	DefaultParryDuration = 0.30,
+	-- Network latency validation tolerances
+	MaxClientTimestampFutureSkew = 0.15,
+	MaxClientTimestampPastLag = 0.60,
 }
 
 --------------------------------------------------------------------------------

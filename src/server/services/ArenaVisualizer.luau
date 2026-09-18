@@ -185,9 +185,22 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	visor.Size = Vector3.new(1.5, 0.4, 0.3)
 	visor.CFrame = head.CFrame * CFrame.new(0, 0.1, -0.9)
 	visor.Anchored = true
+	visor.CanCollide = false
 	visor.Material = Enum.Material.Neon
 	visor.Color = Color3.fromRGB(255, 60, 60)
 	visor.Parent = model
+
+	-- Weld subparts to torso root so Model:PivotTo() moves the entire coherent assembly
+	local function weldToTorso(subPart: BasePart)
+		local weld = Instance.new("WeldConstraint")
+		weld.Name = subPart.Name .. "_Weld"
+		weld.Part0 = torso
+		weld.Part1 = subPart
+		weld.Parent = torso
+	end
+	weldToTorso(chestCore)
+	weldToTorso(head)
+	weldToTorso(visor)
 
 	-- Overhead BillboardGui
 	local billboard = Instance.new("BillboardGui")
@@ -258,7 +271,10 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	statusBar.Parent = container
 
 	billboard.Parent = model
-	model.Parent = Workspace
+
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
+	model.Parent = activeRoom or Workspace
 	return model
 end
 
@@ -333,6 +349,10 @@ function ArenaVisualizer.syncEnemies(enemies: { [string]: StateTypes.EnemyState 
 	end
 end
 
+function ArenaVisualizer.getEnemyModel(enemyInstanceId: string): Model?
+	return spawnedEnemyModels[enemyInstanceId]
+end
+
 function ArenaVisualizer.playEnemyAttackAnimation(
 	enemyInstanceId: string,
 	telegraphDuration: number?,
@@ -341,138 +361,12 @@ function ArenaVisualizer.playEnemyAttackAnimation(
 	attackType: StateTypes.AttackType?,
 	targetWorldPos: Vector3?
 )
+	-- Single Source of Truth for 3D Visuals:
+	-- The server does NOT run competing cosmetic attack tweens or spawn duplicate projectiles.
+	-- All cosmetic attack motions (melee lunges, jump arcs, projectile flight, AoE telegraphs)
+	-- are exclusively rendered by CombatVFXController on the client driven by synchronized server timestamps.
 	local model = spawnedEnemyModels[enemyInstanceId]
 	if not model or not model.PrimaryPart then return end
-
-	local tDur = telegraphDuration or 1.2
-	local iDelay = impactDelay or (tDur * 0.85)
-	local rDur = recoveryDuration or 0.35
-	local aType = attackType or "Melee"
-	local targetPos = targetWorldPos or PLAYER_STAND_POS
-
-	pcall(function()
-		local root = model.PrimaryPart
-		if not root or not root.Parent then return end
-		local origin = root.CFrame
-
-		if aType == "Jump" then
-			-- JUMP ATTACK: Crouch -> High Leap Arc -> Slam down at Impact -> Return
-			local crouchTime = math.max(0.1, iDelay * 0.35)
-			local crouchCFrame = origin * CFrame.new(0, -1.2, 0.3) * CFrame.Angles(math.rad(15), 0, 0)
-			local tCrouch = TweenService:Create(root, TweenInfo.new(crouchTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = crouchCFrame })
-			tCrouch:Play()
-
-			task.delay(crouchTime, function()
-				if not root or not root.Parent then return end
-				local flightTime = math.max(0.1, iDelay - crouchTime)
-				local slamPos = CFrame.new(targetPos + Vector3.new(0, 1.5, 0)) * CFrame.Angles(math.rad(25), 0, 0)
-				local tSlam = TweenService:Create(root, TweenInfo.new(flightTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = slamPos })
-				tSlam:Play()
-
-				task.delay(flightTime, function()
-					if not root or not root.Parent then return end
-					local tRecover = TweenService:Create(root, TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = origin })
-					tRecover:Play()
-				end)
-			end)
-
-		elseif aType == "Projectile" then
-			-- PROJECTILE: Cast windup -> Visible 3D projectile travels across arena -> Impact at iDelay -> Recover
-			local castTime = math.max(0.1, iDelay * 0.3)
-			local castCFrame = origin * CFrame.new(0, 0.6, -0.6) * CFrame.Angles(math.rad(-10), 0, 0)
-			local tCast = TweenService:Create(root, TweenInfo.new(castTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = castCFrame })
-			tCast:Play()
-
-			task.delay(castTime, function()
-				if not root or not root.Parent then return end
-				local travelTime = math.max(0.1, iDelay - castTime)
-
-				-- Spawn visible physical projectile in 3D arena
-				local arena = Workspace:FindFirstChild("CombatArena") or Workspace
-				local proj = Instance.new("Part")
-				proj.Name = "AttackProjectile_" .. enemyInstanceId
-				proj.Shape = Enum.PartType.Ball
-				proj.Size = Vector3.new(2, 2, 2)
-				proj.Material = Enum.Material.Neon
-				proj.Color = Color3.fromRGB(120, 210, 255)
-				proj.CanCollide = false
-				proj.Anchored = true
-				proj.CFrame = CFrame.new(origin.Position + Vector3.new(0, 3, 2))
-				proj.Parent = arena
-
-				local pLight = Instance.new("PointLight")
-				pLight.Brightness = 3
-				pLight.Range = 14
-				pLight.Color = Color3.fromRGB(120, 210, 255)
-				pLight.Parent = proj
-
-				local targetChest = CFrame.new(targetPos + Vector3.new(0, 3.5, 0))
-				local tProj = TweenService:Create(proj, TweenInfo.new(travelTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = targetChest })
-				tProj:Play()
-
-				task.delay(travelTime, function()
-					pcall(function()
-						if proj and proj.Parent then
-							proj:Destroy()
-						end
-					end)
-				end)
-
-				-- Enemy recovers back to idle origin
-				local tRecover = TweenService:Create(root, TweenInfo.new(rDur, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = origin })
-				tRecover:Play()
-			end)
-
-		elseif aType == "AoE" then
-			-- AOE: Charge pulse -> Expanding detonate -> Recover
-			local chargeTime = math.max(0.1, iDelay * 0.7)
-			local chargeCFrame = origin * CFrame.new(0, 0.8, 0) * CFrame.Angles(math.rad(-8), 0, 0)
-			local tCharge = TweenService:Create(root, TweenInfo.new(chargeTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { CFrame = chargeCFrame })
-			tCharge:Play()
-
-			task.delay(chargeTime, function()
-				if not root or not root.Parent then return end
-				local detonateTime = math.max(0.1, iDelay - chargeTime)
-				local slamCFrame = origin * CFrame.new(0, -0.4, 0)
-				local tDet = TweenService:Create(root, TweenInfo.new(detonateTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), { CFrame = slamCFrame })
-				tDet:Play()
-
-				task.delay(detonateTime, function()
-					if not root or not root.Parent then return end
-					local tRecover = TweenService:Create(root, TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = origin })
-					tRecover:Play()
-				end)
-			end)
-
-		else
-			-- MELEE: Anticipation windup -> Strike lunge to contact -> Recovery
-			local windup = origin * CFrame.new(0, 0.4, -1.2) * CFrame.Angles(math.rad(-10), 0, 0)
-			local strikeLunge = origin * CFrame.new(0, 0, 4.5) * CFrame.Angles(math.rad(15), 0, 0)
-
-			-- Stage 1: Anticipation / Wind-up
-			local windupTime = math.max(0.1, iDelay * 0.4)
-			local windupInfo = TweenInfo.new(windupTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-			local t1 = TweenService:Create(root, windupInfo, { CFrame = windup })
-			t1:Play()
-
-			-- Stage 2: Heavy Strike Lunge to peak extension right at impact
-			task.delay(windupTime, function()
-				if not root or not root.Parent then return end
-				local strikeTime = math.max(0.1, iDelay - windupTime)
-				local strikeInfo = TweenInfo.new(strikeTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In)
-				local t2 = TweenService:Create(root, strikeInfo, { CFrame = strikeLunge })
-				t2:Play()
-
-				-- Stage 3: Recovery back to idle origin
-				task.delay(strikeTime, function()
-					if not root or not root.Parent then return end
-					local recoverInfo = TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-					local t3 = TweenService:Create(root, recoverInfo, { CFrame = origin })
-					t3:Play()
-				end)
-			end)
-		end
-	end)
 end
 
 function ArenaVisualizer.teleportPlayersToPedestal()
@@ -506,8 +400,8 @@ function ArenaVisualizer.cleanup()
 end
 
 function ArenaVisualizer.init()
-	ArenaVisualizer.buildArena()
-	ArenaVisualizer.teleportPlayersToPedestal()
+	-- WorldRoomService is the canonical room geometry and player positioning system.
+	-- Redundant CombatArena construction and independent player teleportation at startup are eliminated.
 	print("[ArenaVisualizer] Initialized reactive 3D arena visualizer.")
 end
 

@@ -74,6 +74,7 @@ required_files = [
     "src/client/UIController.client.luau",
     "src/client/ClassSelectUI.client.luau",
     "src/client/RelicUI.client.luau",
+    "src/client/CombatVFXController.client.luau",
     "src/client/init.client.luau",
 ]
 
@@ -1691,6 +1692,7 @@ combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(enc
 event_svc_src = (ROOT / "src/server/services/EventService.luau").read_text(encoding="utf-8")
 arena_vis_src = (ROOT / "src/server/services/ArenaVisualizer.luau").read_text(encoding="utf-8")
 ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+combat_vfx_src = (ROOT / "src/client/CombatVFXController.client.luau").read_text(encoding="utf-8")
 testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
 
 # ReactionData presets & timing profiles
@@ -1728,21 +1730,34 @@ test("ArenaVisualizer.playEnemyAttackAnimation" in combat_svc_src, "CombatServic
 test("profile.ImpactDelay" in combat_svc_src and "profile.RecoveryDuration" in combat_svc_src, "CombatService passes timing parameters to visualizer")
 test("ParryCounter" in combat_svc_src, "CombatService executes parry counter-damage riposte")
 
-# ArenaVisualizer multi-phase animation & projectile flight
-test("iDelay" in arena_vis_src and "strikeLunge" in arena_vis_src, "ArenaVisualizer lunges at exact ImpactDelay")
-test('aType == "Jump"' in arena_vis_src and 'aType == "Projectile"' in arena_vis_src and 'aType == "AoE"' in arena_vis_src, "ArenaVisualizer supports Melee, Jump, Projectile, and AoE attack animations")
-test("AttackProjectile_" in arena_vis_src, "ArenaVisualizer spawns 3D physical projectile for Projectile attacks")
+# CombatVFXController dedicated 3D attack presentation & projectile flight
+test('aType == "Jump"' in combat_vfx_src and 'aType == "Projectile"' in combat_vfx_src and 'aType == "AoE"' in combat_vfx_src and 'aType == "Melee"' in combat_vfx_src, "CombatVFXController supports Melee, Jump, Projectile, and AoE attack presentations")
+test("AttackProjectile_" in combat_vfx_src, "CombatVFXController renders cosmetic attack projectile arriving at ImpactServerTime")
+test("Workspace:GetServerTimeNow" in combat_vfx_src, "CombatVFXController synchronizes attack motion to Workspace:GetServerTimeNow")
+test("PivotTo" in combat_vfx_src, "CombatVFXController manipulates enemy model via PivotTo")
 
-# Client UIController: OSU approach circle completely removed, 3D visual sync & minimalist prompt
+# ArenaVisualizer Single Source of Truth & Part Welds
+test("WeldConstraint" in arena_vis_src, "ArenaVisualizer welds enemy model subparts to Torso for coherent PivotTo movement")
+test("getEnemyModel" in arena_vis_src, "ArenaVisualizer provides getEnemyModel for target acquisition")
+test("WorldRoomService is the canonical room" in arena_vis_src or "Redundant CombatArena construction" in arena_vis_src, "ArenaVisualizer defers arena construction to WorldRoomService")
+
+# Client UIController: OSU approach circle completely removed, targeted prompt & latency compensation
 test("approachRing" not in ui_ctrl_src and "hitCircle" not in ui_ctrl_src, "UIController completely removes OSU approach circle UI")
 test("startApproachCircleAnimation" not in ui_ctrl_src, "UIController removes startApproachCircleAnimation")
-test("synchronizeAttackVisual" in ui_ctrl_src, "UIController implements synchronizeAttackVisual to align 3D animations with ImpactServerTime")
+test("synchronizeAttackVisual" not in ui_ctrl_src, "UIController delegates 3D attack presentation to CombatVFXController")
 test("Workspace:GetServerTimeNow" in ui_ctrl_src, "UIController synchronizes timing via Workspace:GetServerTimeNow")
 test("reactionWidget" in ui_ctrl_src, "UIController displays minimalist reaction prompt widget")
+test("TargetUserIds" in ui_ctrl_src, "UIController restricts Dodge/Parry reaction widget to targeted players")
+test("clientServerTimestamp" in ui_ctrl_src, "UIController sends client timestamp for latency compensation")
 test("showJudgementFeedback" in ui_ctrl_src, "UIController renders brief floating judgement banner")
 test("Enum.KeyCode.C" in ui_ctrl_src and "Enum.KeyCode.V" in ui_ctrl_src, "UIController handles C (Dodge) and V (Parry) key inputs")
 test("eventCloseBtn" in ui_ctrl_src, "UIController provides event chamber close/dismiss button")
 test("isEventInteractPending" in ui_ctrl_src, "UIController debounces event interactions")
+
+# ReactionService & GameConfig Latency Compensation
+test("MaxClientTimestampFutureSkew" in game_config_src and "MaxClientTimestampPastLag" in game_config_src, "GameConfig defines latency compensation skew and lag tolerances")
+test("ReactionCloseServerTime" in reaction_svc_src, "ReactionService validates reaction submissions against ReactionCloseServerTime")
+test("futureSkew" in reaction_svc_src or "evalTimestamp" in reaction_svc_src, "ReactionService compensates client timestamp with bounded validation")
 
 # EventService test isolation, party preservation & riddle clarity
 event_data_src = (ROOT / "src/shared/EventData.luau").read_text(encoding="utf-8")
@@ -1757,6 +1772,7 @@ test("clickDetector.MouseClick" in world_room_src, "WorldRoomService wires physi
 # TestRunner Suite 74 & manual testing helper
 test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains original rhythm reaction assertions")
 test("[Suite 74.65]" in testrunner_src, "TestRunner Suite 74 contains comprehensive 3D attack animation and server time assertions")
+test("[Suite 74.80]" in testrunner_src, "TestRunner Suite 74 contains all 15 Reaction V2 regression invariants up to [Suite 74.80]")
 test("TestRunner.triggerTestReaction" in testrunner_src, "TestRunner provides triggerTestReaction manual test scenario helper")
 
 # Static Compilation of all Luau files with luau-compile

@@ -25,6 +25,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
@@ -593,7 +594,8 @@ local function resolveTurn()
 							local windowResults: { [number]: any } = {}
 
 							if rs then
-								local profile = rs.createProfileFromPreset(profilePreset, enemy.Intent.Value, "Physical")
+								-- Preserve data-driven DamageType from preset (pass nil for damageType override)
+								local profile = rs.createProfileFromPreset(profilePreset, enemy.Intent.Value, nil)
 								local targetUserIds: { number } = {}
 								local isAoE = (profile.AttackType == "AoE" or profile.IsAoE)
 								if isAoE then
@@ -602,6 +604,44 @@ local function resolveTurn()
 									end
 								else
 									table.insert(targetUserIds, target.UserId)
+								end
+
+								-- Resolve authoritative 3D target world position
+								local targetWorldPos: Vector3? = nil
+								local targetPlayerInstance = Players:GetPlayerByUserId(target.UserId)
+								if targetPlayerInstance and targetPlayerInstance.Character then
+									local hrp = targetPlayerInstance.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+									if hrp then
+										targetWorldPos = hrp.Position
+									end
+								end
+								if not targetWorldPos then
+									targetWorldPos = Vector3.new(0, 1.2, 16)
+								end
+
+								-- Resolve authoritative 3D attacker world position
+								local attackerWorldPos: Vector3? = nil
+								local enemyModel = ArenaVisualizer.getEnemyModel(enemyId)
+								if enemyModel then
+									local root = enemyModel.PrimaryPart or (enemyModel:FindFirstChild("HumanoidRootPart") :: BasePart?)
+									if root then
+										attackerWorldPos = root.Position
+									end
+								end
+								if not attackerWorldPos then
+									attackerWorldPos = Vector3.new(0, 1.2, -16)
+								end
+
+								profile.TargetWorldPos = targetWorldPos
+								profile.AttackerWorldPos = attackerWorldPos
+
+								-- Dynamic projectile travel time based on distance and configured ProjectileSpeed
+								if profile.AttackType == "Projectile" and profile.ProjectileSpeed and profile.ProjectileSpeed > 0 then
+									local dist = (targetWorldPos - attackerWorldPos).Magnitude
+									local travelTime = math.clamp(dist / profile.ProjectileSpeed, 0.4, 2.5)
+									local castWindup = math.max(0.2, profile.TelegraphDuration * 0.3)
+									profile.ImpactDelay = math.round((castWindup + travelTime) * 100) / 100
+									profile.TelegraphDuration = math.max(profile.TelegraphDuration, profile.ImpactDelay + 0.15)
 								end
 
 								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, targetUserIds)
@@ -613,7 +653,8 @@ local function resolveTurn()
 											profile.TelegraphDuration,
 											profile.ImpactDelay,
 											profile.RecoveryDuration,
-											profile.AttackType
+											profile.AttackType,
+											targetWorldPos
 										)
 									end)
 								end
