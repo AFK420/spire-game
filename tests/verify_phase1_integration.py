@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "18918ad5-mapflow-handshake-v2"' in build_info_src, "BuildInfo declares BUILD_ID = 18918ad5-mapflow-handshake-v2")
-test('BUILD_NAME = "MapFlow Handshake & StateSync Recovery"' in build_info_src, "BuildInfo declares BUILD_NAME = MapFlow Handshake & StateSync Recovery")
+test('BUILD_ID = "reaction_v2_20260918"' in build_info_src, "BuildInfo declares BUILD_ID = reaction_v2_20260918")
+test('BUILD_NAME = "Reaction V2 3D Attack & Timing Hardening"' in build_info_src, "BuildInfo declares BUILD_NAME = Reaction V2 3D Attack & Timing Hardening")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")

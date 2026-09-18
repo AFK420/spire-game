@@ -164,7 +164,8 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	chestCore.Name = "ChestCore"
 	chestCore.Size = Vector3.new(1.8, 2, 0.5)
 	chestCore.CFrame = torso.CFrame * CFrame.new(0, 0.3, -1.1)
-	chestCore.Anchored = true
+	chestCore.Anchored = false
+	chestCore.CanCollide = false
 	chestCore.Material = Enum.Material.Neon
 	chestCore.Color = Color3.fromRGB(220, 40, 40)
 	chestCore.Parent = model
@@ -174,7 +175,8 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	head.Name = "Head"
 	head.Size = Vector3.new(2, 2, 2)
 	head.CFrame = torso.CFrame * CFrame.new(0, 3.2, 0)
-	head.Anchored = true
+	head.Anchored = false
+	head.CanCollide = false
 	head.Material = Enum.Material.Basalt
 	head.Color = Color3.fromRGB(20, 20, 25)
 	head.Parent = model
@@ -184,7 +186,7 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	visor.Name = "Visor"
 	visor.Size = Vector3.new(1.5, 0.4, 0.3)
 	visor.CFrame = head.CFrame * CFrame.new(0, 0.1, -0.9)
-	visor.Anchored = true
+	visor.Anchored = false
 	visor.CanCollide = false
 	visor.Material = Enum.Material.Neon
 	visor.Color = Color3.fromRGB(255, 60, 60)
@@ -370,6 +372,14 @@ function ArenaVisualizer.playEnemyAttackAnimation(
 end
 
 function ArenaVisualizer.teleportPlayersToPedestal()
+	-- WorldRoomService is the canonical player positioning and room teleport system.
+	-- If an ActiveRoom exists in Workspace.CardRiftWorld, skip duplicate pedestal teleport.
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
+	if activeRoom then
+		return
+	end
+
 	for _, player in Players:GetPlayers() do
 		task.spawn(function()
 			local char = player.Character

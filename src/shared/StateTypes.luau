@@ -179,6 +179,7 @@ export type AttackReactionProfile = {
 	ProjectileSpeed: number?,
 	ProjectileColor: Color3?,
 	TargetWorldPos: Vector3?,
+	TargetWorldPosition: Vector3?,
 	AttackerWorldPos: Vector3?,
 }
 
@@ -195,6 +196,7 @@ export type ReactionWindowState = {
 	CloseTime: number,    -- Alias for ReactionCloseServerTime
 	Resolved: boolean,
 	TargetWorldPos: Vector3?,
+	TargetWorldPosition: Vector3?,
 	AttackerWorldPos: Vector3?,
 	PerPlayerResult: {
 		[number]: {
@@ -235,6 +237,7 @@ export type ReactionWindowView = {
 	ParryPerfectTolerance: number?,
 	ParryGoodTolerance: number?,
 	TargetWorldPos: Vector3?,
+	TargetWorldPosition: Vector3?,
 	AttackerWorldPos: Vector3?,
 }
 

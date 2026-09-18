@@ -221,7 +221,8 @@ function ReactionService.openReactionWindow(
 		ImpactTime = impactTime,
 		CloseTime = closeTime,
 		Resolved = false,
-		TargetWorldPos = attackProfile.TargetWorldPos,
+		TargetWorldPos = attackProfile.TargetWorldPos or attackProfile.TargetWorldPosition,
+		TargetWorldPosition = attackProfile.TargetWorldPosition or attackProfile.TargetWorldPos,
 		AttackerWorldPos = attackProfile.AttackerWorldPos,
 		PerPlayerResult = perPlayerMap,
 	}
@@ -292,6 +293,12 @@ function ReactionService.submitReaction(
 		-- Reject timestamps excessively far in the future
 		if clientTimestamp > (now + maxFutureSkew) then
 			return false, "Timestamp rejected: client time is too far in the future.", "None", "None", nil
+		end
+
+		-- Reject timestamps excessively old / before attack started
+		local minAllowedTimestamp = math.max(activeWin.AttackStartServerTime - 0.5, now - maxPastLag * 2)
+		if clientTimestamp < minAllowedTimestamp then
+			return false, "Timestamp rejected: client timestamp is too old.", "None", "None", nil
 		end
 
 		-- Reject submissions whose client timestamp occurred after reaction window close
@@ -476,6 +483,7 @@ function ReactionService.getReactionWindowView(
 		ParryPerfectTolerance = windowState.AttackProfile.ParryPerfectTolerance,
 		ParryGoodTolerance = windowState.AttackProfile.ParryGoodTolerance,
 		TargetWorldPos = windowState.TargetWorldPos or windowState.AttackProfile.TargetWorldPos,
+		TargetWorldPosition = windowState.TargetWorldPosition or windowState.TargetWorldPos or windowState.AttackProfile.TargetWorldPosition,
 		AttackerWorldPos = windowState.AttackerWorldPos or windowState.AttackProfile.AttackerWorldPos,
 	}
 end

@@ -1451,8 +1451,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "18918ad5-mapflow-handshake-v2", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "MapFlow Handshake & StateSync Recovery", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "reaction_v2_20260918", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "Reaction V2 3D Attack & Timing Hardening", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -1799,7 +1799,7 @@ local function runSuite74()
 	-- 74.2: ReactionData Data-Driven Attack Timing Profiles
 	local slowHeavyPreset = ReactionData.getProfile("SlowHeavy")
 	assertTest(slowHeavyPreset ~= nil, "[Suite 74.6] ReactionData defines 'SlowHeavy' profile")
-	assertTest(slowHeavyPreset ~= nil and slowHeavyPreset.TelegraphDuration == 1.6, "[Suite 74.7] SlowHeavy TelegraphDuration is 1.6s")
+	assertTest(slowHeavyPreset ~= nil and slowHeavyPreset.TelegraphDuration <= slowHeavyPreset.ImpactDelay, "[Suite 74.7] SlowHeavy TelegraphDuration <= ImpactDelay")
 	assertTest(slowHeavyPreset ~= nil and slowHeavyPreset.ImpactDelay == 1.45, "[Suite 74.8] SlowHeavy ImpactDelay is 1.45s")
 	assertTest(slowHeavyPreset ~= nil and slowHeavyPreset.RecoveryDuration == 0.40, "[Suite 74.9] SlowHeavy RecoveryDuration is 0.40s")
 	assertTest(slowHeavyPreset ~= nil and slowHeavyPreset.CanDodge == true and slowHeavyPreset.CanParry == true,

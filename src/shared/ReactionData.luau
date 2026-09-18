@@ -39,7 +39,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "SlowHeavy",
 		AttackName = "Heavy Cleave",
 		AttackType = "Melee",
-		TelegraphDuration = 1.6,
+		TelegraphDuration = 1.0,
 		ImpactDelay = 1.45,
 		RecoveryDuration = 0.40,
 		CanDodge = true,
@@ -57,7 +57,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "FastDagger",
 		AttackName = "Shadow Thrust",
 		AttackType = "Melee",
-		TelegraphDuration = 0.65,
+		TelegraphDuration = 0.30,
 		ImpactDelay = 0.55,
 		RecoveryDuration = 0.25,
 		CanDodge = true,
@@ -75,7 +75,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "JumpAttack",
 		AttackName = "Leaping Smash",
 		AttackType = "Jump",
-		TelegraphDuration = 1.4,
+		TelegraphDuration = 0.50,
 		ImpactDelay = 1.25,
 		RecoveryDuration = 0.45,
 		CanDodge = true,
@@ -93,7 +93,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "ProjectileBolt",
 		AttackName = "Arcane Missile",
 		AttackType = "Projectile",
-		TelegraphDuration = 1.3,
+		TelegraphDuration = 0.40,
 		ImpactDelay = 1.10,
 		RecoveryDuration = 0.30,
 		CanDodge = true,
@@ -111,7 +111,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "BossHeavyStrike",
 		AttackName = "Cataclysmic Slam",
 		AttackType = "Melee",
-		TelegraphDuration = 2.2,
+		TelegraphDuration = 1.40,
 		ImpactDelay = 2.0,
 		RecoveryDuration = 0.40,
 		CanDodge = true,
@@ -129,7 +129,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "UnparryableCleave",
 		AttackName = "Sweeping Torrent",
 		AttackType = "Melee",
-		TelegraphDuration = 1.2,
+		TelegraphDuration = 0.60,
 		ImpactDelay = 1.0,
 		RecoveryDuration = 0.30,
 		CanDodge = true,
@@ -147,7 +147,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "UndodgeableImpale",
 		AttackName = "Piercing Spire",
 		AttackType = "Melee",
-		TelegraphDuration = 1.1,
+		TelegraphDuration = 0.50,
 		ImpactDelay = 0.95,
 		RecoveryDuration = 0.30,
 		CanDodge = false,
@@ -165,7 +165,7 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		AttackId = "UnreactableExplosion",
 		AttackName = "Volatile Detonation",
 		AttackType = "AoE",
-		TelegraphDuration = 1.0,
+		TelegraphDuration = 0.80,
 		ImpactDelay = 1.0,
 		RecoveryDuration = 0.30,
 		CanDodge = false,
@@ -223,8 +223,11 @@ function ReactionData.createCustomProfile(
 	attackType: StateTypes.AttackType?,
 	projectileSpeed: number?
 ): AttackTimingProfile
-	local tDur = telegraphDuration or 1.2
-	local iDelay = impactDelay or (tDur * 0.9)
+	local iDelay = impactDelay or 1.2
+	local tDur = telegraphDuration or math.min(iDelay * 0.75, iDelay)
+	if tDur > iDelay then
+		tDur = iDelay
+	end
 	local rDur = recoveryDuration or 0.3
 
 	return {

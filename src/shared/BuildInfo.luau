@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "18918ad5-mapflow-handshake-v2",
-	BUILD_NAME = "MapFlow Handshake & StateSync Recovery",
+	BUILD_ID = "reaction_v2_20260918",
+	BUILD_NAME = "Reaction V2 3D Attack & Timing Hardening",
 }
 
 return BuildInfo

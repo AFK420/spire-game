@@ -632,16 +632,22 @@ local function resolveTurn()
 									attackerWorldPos = Vector3.new(0, 1.2, -16)
 								end
 
-								profile.TargetWorldPos = targetWorldPos
+								if isAoE then
+									profile.TargetWorldPos = nil
+									profile.TargetWorldPosition = nil
+								else
+									profile.TargetWorldPos = targetWorldPos
+									profile.TargetWorldPosition = targetWorldPos
+								end
 								profile.AttackerWorldPos = attackerWorldPos
 
 								-- Dynamic projectile travel time based on distance and configured ProjectileSpeed
 								if profile.AttackType == "Projectile" and profile.ProjectileSpeed and profile.ProjectileSpeed > 0 then
 									local dist = (targetWorldPos - attackerWorldPos).Magnitude
-									local travelTime = math.clamp(dist / profile.ProjectileSpeed, 0.4, 2.5)
-									local castWindup = math.max(0.2, profile.TelegraphDuration * 0.3)
+									local travelTime = math.clamp(dist / math.max(1, profile.ProjectileSpeed), 0.25, 3.0)
+									local castWindup = math.max(0.15, profile.TelegraphDuration or 0.35)
+									profile.TelegraphDuration = castWindup
 									profile.ImpactDelay = math.round((castWindup + travelTime) * 100) / 100
-									profile.TelegraphDuration = math.max(profile.TelegraphDuration, profile.ImpactDelay + 0.15)
 								end
 
 								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, targetUserIds)

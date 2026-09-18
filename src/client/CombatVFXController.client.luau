@@ -112,7 +112,7 @@ local function playMeleeAttack(win: StateTypes.ReactionWindowView)
 	local originPivot = enemyModel:GetPivot()
 	enemyOriginalPivots[enemyModel] = originPivot
 
-	local targetPos = win.TargetWorldPos or Vector3.new(0, 1.2, 16)
+	local targetPos = win.TargetWorldPosition or win.TargetWorldPos or Vector3.new(0, 1.2, 16)
 	local dir = (targetPos - originPivot.Position)
 	local dist = dir.Magnitude
 	local unitDir = if dist > 0.1 then dir.Unit else Vector3.new(0, 0, 1)
@@ -179,7 +179,7 @@ local function playJumpAttack(win: StateTypes.ReactionWindowView)
 	local originPivot = enemyModel:GetPivot()
 	enemyOriginalPivots[enemyModel] = originPivot
 
-	local targetPos = win.TargetWorldPos or Vector3.new(0, 1.2, 16)
+	local targetPos = win.TargetWorldPosition or win.TargetWorldPos or Vector3.new(0, 1.2, 16)
 	local crouchPivot = originPivot * CFrame.new(0, -1.2, 0.4) * CFrame.Angles(math.rad(18), 0, 0)
 	local slamPivot = CFrame.new(targetPos + Vector3.new(0, 1.0, 0)) * CFrame.Angles(math.rad(25), 0, 0)
 
@@ -270,7 +270,7 @@ local function playProjectileAttack(win: StateTypes.ReactionWindowView)
 	end
 
 	local spawnPos = win.AttackerWorldPos or originPivot.Position + Vector3.new(0, 2.5, 2)
-	local targetPos = (win.TargetWorldPos or Vector3.new(0, 1.2, 16)) + Vector3.new(0, 2.8, 0)
+	local targetPos = (win.TargetWorldPosition or win.TargetWorldPos or Vector3.new(0, 1.2, 16)) + Vector3.new(0, 2.8, 0)
 
 	local startTime = win.AttackStartServerTime
 	local impactTime = win.ImpactServerTime
