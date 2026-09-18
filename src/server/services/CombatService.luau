@@ -255,17 +255,18 @@ end
 local function generateEnemyIntent(enemy: StateTypes.EnemyState): StateTypes.EnemyIntent
 	local rng = Random.new()
 	local roll = rng:NextInteger(1, 100)
+	local atkPower = enemy.AttackPower or 10
 
 	if roll <= 65 then
 		local variance = rng:NextInteger(-2, 3)
-		local dmg = math.max(4, enemy.AttackPower + variance)
+		local dmg = math.max(4, atkPower + variance)
 		return {
 			Type = "Attack",
 			Value = dmg,
 			Description = string.format("Striking for %d damage", dmg),
 		}
 	elseif roll <= 85 then
-		local shieldVal = math.max(6, math.floor(enemy.AttackPower * 0.8))
+		local shieldVal = math.max(6, math.floor(atkPower * 0.8))
 		return {
 			Type = "Defend",
 			Value = shieldVal,
@@ -415,10 +416,15 @@ local function endCombat(outcome: "Victory" | "Defeat")
 		else
 			task.delay(1.5, function()
 				if not isCombatIsolation then
-					ArenaVisualizer.cleanup()
+					pcall(function()
+						ArenaVisualizer.cleanup()
+					end)
 				end
 				activeCombat = nil
-				cb(outcome)
+				local cbOk, cbErr = pcall(cb, outcome)
+				if not cbOk then
+					warn(string.format("[CombatService] onCombatEndCallback error: %s", tostring(cbErr)))
+				end
 			end)
 		end
 	end
@@ -428,7 +434,6 @@ local function resolveTurn()
 	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then return end
 
 	activeCombat.Phase = "ResolutionPhase"
-	CombatService.broadcastSnapshots("Enemies are counterattacking...")
 
 	-- 1. End of Turn Class Gimmicks & Relic Triggers
 	for userId, playerState in partyRef do
@@ -438,177 +443,195 @@ local function resolveTurn()
 				if enemy.HP > 0 then dummyTarget = enemy break end
 			end
 
-			local relicResult = RelicService.triggerEvent(playerState, activeCombat, "OnTurnEnd", {
-				UnspentEnergy = playerState.Resources.Energy,
-				Enemy = dummyTarget,
-			})
+			pcall(function()
+				local relicResult = RelicService.triggerEvent(playerState, activeCombat, "OnTurnEnd", {
+					UnspentEnergy = playerState.Resources.Energy,
+					Enemy = dummyTarget,
+				})
 
-			if not relicResult.RetainShield then
-				playerState.Resources.Shield = 0
-			else
-				playerState.Resources.Shield = math.min(15, playerState.Resources.Shield)
-			end
+				if not relicResult.RetainShield then
+					playerState.Resources.Shield = 0
+				else
+					playerState.Resources.Shield = math.min(15, playerState.Resources.Shield)
+				end
 
-			if relicResult.BonusShield > 0 then
-				playerState.Resources.Shield += relicResult.BonusShield
-				logEvent("ShieldGained", "Relic", tostring(userId), relicResult.BonusShield, string.format("+%d Shield (Relic)", relicResult.BonusShield))
-			end
+				if relicResult.BonusShield > 0 then
+					playerState.Resources.Shield += relicResult.BonusShield
+					logEvent("ShieldGained", "Relic", tostring(userId), relicResult.BonusShield, string.format("+%d Shield (Relic)", relicResult.BonusShield))
+				end
+			end)
 
-			local gimmickEnd = ClassService.processGimmickOnTurnEnd(playerState, activeCombat.Enemies)
-			if gimmickEnd.EndTurnShield > 0 then
-				playerState.Resources.Shield += gimmickEnd.EndTurnShield
-				logEvent("ShieldGained", "Gimmick", tostring(userId), gimmickEnd.EndTurnShield, string.format("+%d Shield (Gimmick)", gimmickEnd.EndTurnShield))
-			end
-			if gimmickEnd.EndTurnHeal > 0 then
-				playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + gimmickEnd.EndTurnHeal)
-				logEvent("Healed", "Gimmick", tostring(userId), gimmickEnd.EndTurnHeal, string.format("+%d HP (Gimmick)", gimmickEnd.EndTurnHeal))
-			end
-			if gimmickEnd.EndTurnDamage > 0 then
-				for _, enemy in activeCombat.Enemies do
-					if enemy.HP > 0 then
-						local remDmg, _ = applyDamageToEnemy(enemy, gimmickEnd.EndTurnDamage)
-						logEvent("DamageDealt", "Gimmick", enemy.Name, gimmickEnd.EndTurnDamage, string.format("-%d HP (Gimmick)", remDmg))
-						if enemy.HP <= 0 then
-							logEvent("EnemyDefeated", "Gimmick", enemy.InstanceId, nil, string.format("%s was defeated by gimmick damage!", enemy.Name))
+			pcall(function()
+				local gimmickEnd = ClassService.processGimmickOnTurnEnd(playerState, activeCombat.Enemies)
+				if gimmickEnd.EndTurnShield > 0 then
+					playerState.Resources.Shield += gimmickEnd.EndTurnShield
+					logEvent("ShieldGained", "Gimmick", tostring(userId), gimmickEnd.EndTurnShield, string.format("+%d Shield (Gimmick)", gimmickEnd.EndTurnShield))
+				end
+				if gimmickEnd.EndTurnHeal > 0 then
+					playerState.Resources.HP = math.min(playerState.Resources.MaxHP, playerState.Resources.HP + gimmickEnd.EndTurnHeal)
+					logEvent("Healed", "Gimmick", tostring(userId), gimmickEnd.EndTurnHeal, string.format("+%d HP (Gimmick)", gimmickEnd.EndTurnHeal))
+				end
+				if gimmickEnd.EndTurnDamage > 0 then
+					for _, enemy in activeCombat.Enemies do
+						if enemy.HP > 0 then
+							local remDmg, _ = applyDamageToEnemy(enemy, gimmickEnd.EndTurnDamage)
+							logEvent("DamageDealt", "Gimmick", enemy.Name, gimmickEnd.EndTurnDamage, string.format("-%d HP (Gimmick)", remDmg))
+							if enemy.HP <= 0 then
+								logEvent("EnemyDefeated", "Gimmick", enemy.InstanceId, nil, string.format("%s was defeated by gimmick damage!", enemy.Name))
+							end
+							break
 						end
-						break
 					end
 				end
-			end
+			end)
 
+			-- Discard hand BEFORE broadcasting ResolutionPhase so client renders empty hand during enemy turn
 			CardService.discardHand(playerState)
 		end
 	end
 
+	-- Broadcast snapshot now that hands are discarded and Phase is ResolutionPhase
+	CombatService.broadcastSnapshots("Enemies are counterattacking...")
+
 	-- 2. Enemy Poison & Attacks
 	task.spawn(function()
-		for enemyId, enemy in activeCombat.Enemies do
-			if enemy.HP > 0 then
-				local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
-				local statusKiller: string? = nil
-				for _, tick in statusTicks do
-					if tick.DamageDealt > 0 then
-						logEvent("DamageDealt", tick.DefinitionId, enemy.Name, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
-					end
-					if tick.Defeated then
-						statusKiller = tick.DefinitionId
-					end
-				end
-
-				if enemy.HP <= 0 then
-					local killer = statusKiller or "Poison"
-					logEvent("EnemyDefeated", killer, enemyId, nil, string.format("%s collapsed from %s!", enemy.Name, killer:lower()))
-					continue
-				end
-
-				local rm = getRunManager()
-				if not (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) then
-					task.wait(0.3)
-				end
-				if enemy.Intent.Type == "Attack" then
-					if not isCombatIsolation then
-						ArenaVisualizer.playEnemyAttackAnimation(enemyId)
-					end
-					local livingPlayers: { StateTypes.PlayerState } = {}
-					for _, pState in partyRef do
-						if not pState.IsDowned and pState.IsConnected ~= false then
-							table.insert(livingPlayers, pState)
+		local resolveOk, resolveErr = pcall(function()
+			for enemyId, enemy in activeCombat.Enemies do
+				if enemy.HP > 0 then
+					local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
+					local statusKiller: string? = nil
+					for _, tick in statusTicks do
+						if tick.DamageDealt > 0 then
+							logEvent("DamageDealt", tick.DefinitionId, enemy.Name, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
+						end
+						if tick.Defeated then
+							statusKiller = tick.DefinitionId
 						end
 					end
 
-					if #livingPlayers > 0 then
-						local target = livingPlayers[math.random(1, #livingPlayers)]
-						local remDmg, _ = applyDamageToPlayer(target, enemy.Intent.Value)
-						logEvent("DamageDealt", enemy.Name, target.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
+					if enemy.HP <= 0 then
+						local killer = statusKiller or "Poison"
+						logEvent("EnemyDefeated", killer, enemyId, nil, string.format("%s collapsed from %s!", enemy.Name, killer:lower()))
+						continue
+					end
 
-						if remDmg > 0 then
-							local dmgRelic = RelicService.triggerEvent(target, activeCombat, "OnDamageTaken", {
-								Damage = remDmg,
-								Enemy = enemy,
-							})
-							if dmgRelic.BonusDamage > 0 then
-								local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
-								logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
-							end
-							if dmgRelic.BonusDraw > 0 then
-								CardService.drawCards(target, dmgRelic.BonusDraw)
-								logEvent("CardDrawn", "Relic", target.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+					local rm = getRunManager()
+					if not (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) then
+						task.wait(0.3)
+					end
+					if enemy.Intent.Type == "Attack" then
+						if not isCombatIsolation then
+							pcall(function()
+								ArenaVisualizer.playEnemyAttackAnimation(enemyId)
+							end)
+						end
+						local livingPlayers: { StateTypes.PlayerState } = {}
+						for _, pState in partyRef do
+							if not pState.IsDowned and pState.IsConnected ~= false then
+								table.insert(livingPlayers, pState)
 							end
 						end
-					end
 
-				elseif enemy.Intent.Type == "Defend" then
-					enemy.Shield += enemy.Intent.Value
-					logEvent("ShieldGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Shield", enemy.Intent.Value))
+						if #livingPlayers > 0 then
+							local target = livingPlayers[math.random(1, #livingPlayers)]
+							local remDmg, _ = applyDamageToPlayer(target, enemy.Intent.Value)
+							logEvent("DamageDealt", enemy.Name, target.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
 
-				elseif enemy.Intent.Type == "Debuff" then
-					for _, pState in partyRef do
-						if not pState.IsDowned and pState.IsConnected ~= false then
-							StatusService.applyStatus(tostring(pState.UserId), "Poison", enemy.Intent.Value, nil, enemy.InstanceId, pState)
-							logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, "Debuffed with Poison")
+							if remDmg > 0 then
+								local dmgRelic = RelicService.triggerEvent(target, activeCombat, "OnDamageTaken", {
+									Damage = remDmg,
+									Enemy = enemy,
+								})
+								if dmgRelic.BonusDamage > 0 then
+									local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
+									logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
+								end
+								if dmgRelic.BonusDraw > 0 then
+									CardService.drawCards(target, dmgRelic.BonusDraw)
+									logEvent("CardDrawn", "Relic", target.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+								end
+							end
 						end
-					end
 
-				elseif enemy.Intent.Type == "Buff" then
-					enemy.AttackPower = (enemy.AttackPower or 10) + enemy.Intent.Value
-					logEvent("BuffGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Attack Power", enemy.Intent.Value))
-				end
+					elseif enemy.Intent.Type == "Defend" then
+						enemy.Shield += enemy.Intent.Value
+						logEvent("ShieldGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Shield", enemy.Intent.Value))
 
-				enemy.Intent = generateEnemyIntent(enemy)
-			end
-		end
-
-		-- Check Post-Resolution Status
-		if areAllEnemiesDead() then
-			endCombat("Victory")
-			return
-		end
-
-		if areAllPlayersDowned() then
-			endCombat("Defeat")
-			return
-		end
-
-		-- Process living player TurnStart statuses before advancing TurnNumber or entering PlayerPhase
-		for _, playerState in partyRef do
-			playerState.IsReady = false
-
-			if not playerState.IsDowned and playerState.IsConnected ~= false then
-				-- Tick player turn-start statuses (Poison, Burn, etc.)
-				-- Note: StatusService via DamagePipeline authoritatively applies the damage directly to HP.
-				local pTargetId = tostring(playerState.UserId)
-				local pTicks = StatusService.tickStatuses(pTargetId, "TurnStart", playerState, false)
-				for _, tick in pTicks do
-					if tick.DamageDealt > 0 then
-						logEvent("DamageDealt", tick.DefinitionId, playerState.DisplayName, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
-					end
-					if tick.Defeated or playerState.Resources.HP <= 0 then
-						if not playerState.IsDowned then
-							playerState.IsDowned = true
-							playerState.Resources.HP = 0
-							playerState.Resources.Shield = 0
-							logEvent("PlayerDowned", tick.DefinitionId, playerState.DisplayName, nil, string.format("%s was downed by %s!", playerState.DisplayName, tick.DefinitionId))
+					elseif enemy.Intent.Type == "Debuff" then
+						for _, pState in partyRef do
+							if not pState.IsDowned and pState.IsConnected ~= false then
+								StatusService.applyStatus(tostring(pState.UserId), "Poison", enemy.Intent.Value, nil, enemy.InstanceId, pState)
+								logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, "Debuffed with Poison")
+							end
 						end
+
+					elseif enemy.Intent.Type == "Buff" then
+						enemy.AttackPower = (enemy.AttackPower or 10) + enemy.Intent.Value
+						logEvent("BuffGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Attack Power", enemy.Intent.Value))
 					end
+
+					enemy.Intent = generateEnemyIntent(enemy)
 				end
 			end
+
+			-- Check Post-Resolution Status
+			if areAllEnemiesDead() then
+				endCombat("Victory")
+				return
+			end
+
+			if areAllPlayersDowned() then
+				endCombat("Defeat")
+				return
+			end
+
+			-- Process living player TurnStart statuses before advancing TurnNumber or entering PlayerPhase
+			for _, playerState in partyRef do
+				playerState.IsReady = false
+
+				if not playerState.IsDowned and playerState.IsConnected ~= false then
+					-- Tick player turn-start statuses (Poison, Burn, etc.)
+					-- Note: StatusService via DamagePipeline authoritatively applies the damage directly to HP.
+					local pTargetId = tostring(playerState.UserId)
+					local pTicks = StatusService.tickStatuses(pTargetId, "TurnStart", playerState, false)
+					for _, tick in pTicks do
+						if tick.DamageDealt > 0 then
+							logEvent("DamageDealt", tick.DefinitionId, playerState.DisplayName, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
+						end
+						if tick.Defeated or playerState.Resources.HP <= 0 then
+							if not playerState.IsDowned then
+								playerState.IsDowned = true
+								playerState.Resources.HP = 0
+								playerState.Resources.Shield = 0
+								logEvent("PlayerDowned", tick.DefinitionId, playerState.DisplayName, nil, string.format("%s was downed by %s!", playerState.DisplayName, tick.DefinitionId))
+							end
+						end
+					end
+				end
+			end
+
+			if areAllPlayersDowned() then
+				endCombat("Defeat")
+				return
+			end
+		end)
+
+		if not resolveOk then
+			warn(string.format("[CombatService] Error during turn resolution: %s", tostring(resolveErr)))
 		end
 
-		-- STATUS-INDUCED TOTAL DEFEAT:
-		-- If all players were downed by turn-start statuses, immediately trigger Defeat
-		-- without advancing TurnNumber, entering PlayerPhase, refreshing energy, or drawing cards.
-		if areAllPlayersDowned() then
-			endCombat("Defeat")
+		if not activeCombat or activeCombat.Phase == "Victory" or activeCombat.Phase == "Defeat" then
 			return
 		end
 
-		-- Living players remain: advance turn number and start next player phase
+		-- GUARANTEED RECOVERY: Always advance turn number and restore PlayerPhase!
 		activeCombat.TurnNumber += 1
 		activeCombat.Phase = "PlayerPhase"
 		activeCombat.TurnStartTime = os.clock()
 
 		for _, playerState in partyRef do
 			if not playerState.IsDowned and playerState.IsConnected ~= false then
+				playerState.IsReady = false
 				playerState.Resources.Energy = playerState.Resources.MaxEnergy
 				local startRelic = RelicService.triggerEvent(playerState, activeCombat, "OnTurnStart")
 				playerState.Resources.Energy += startRelic.BonusEnergy
@@ -772,7 +795,10 @@ end
 
 -- Plays a card by its stable CardInstanceId targeting a specific entity (Enemy InstanceId, Ally UserId, or Self)
 function CombatService.playCard(player: any, cardInstanceId: string, targetParam: any?): (boolean, string?)
-	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
+	if not activeCombat then
+		return false, "No active combat encounter."
+	end
+	if activeCombat.Phase ~= "PlayerPhase" then
 		return false, "Combat is not in PlayerPhase."
 	end
 
@@ -993,7 +1019,10 @@ end
 
 -- Executes an equipped active skill server-authoritatively
 function CombatService.useSkill(player: any, slot: StateTypes.SkillSlot, targetParam: any?): (boolean, string?)
-	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
+	if not activeCombat then
+		return false, "No active combat encounter."
+	end
+	if activeCombat.Phase ~= "PlayerPhase" then
 		return false, "Combat is not in PlayerPhase."
 	end
 
@@ -1019,8 +1048,11 @@ end
 
 -- Toggles player ready status; resolves turn if all living players are ready
 function CombatService.voteReady(player: any): (boolean, string?)
-	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then
-		return false, "Cannot vote ready outside PlayerPhase."
+	if not activeCombat then
+		return false, "No active combat encounter."
+	end
+	if activeCombat.Phase ~= "PlayerPhase" then
+		return false, "Combat is not in PlayerPhase."
 	end
 
 	local playerState = partyRef[player.UserId]

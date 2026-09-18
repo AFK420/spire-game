@@ -1477,6 +1477,48 @@ test("[REWARDFLOW][SERVER][1]" in init_server_src, "init.server.luau implements 
 test("[REWARDFLOW][SERVER][3]" in init_server_src, "init.server.luau implements REWARDFLOW logging on ContinueFromRewards")
 test("activeCombat = nil" in combat_svc_src, "CombatService cleans up activeCombat on victory callback")
 
+# Check 65: Suite 70 Turn Resolution Lifecycle & Fail-Safe Phase Recovery Invariants
+print("\n--- [Check 65] Suite 70 Turn Resolution Lifecycle & Fail-Safe Phase Recovery Invariants ---")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+arena_vis_src = (ROOT / "src/server/services/ArenaVisualizer.luau").read_text(encoding="utf-8")
+
+test("local function runSuite70()" in testrunner_src, "TestRunner includes Suite 70 definition")
+test("runSuite70()" in testrunner_src, "TestRunner invokes Suite 70 in runAllTests")
+test("[Suite 70.1]" in testrunner_src, "Suite 70 tests playCard rejects with 'No active combat encounter.' when activeCombat is nil")
+test("[Suite 70.2]" in testrunner_src, "Suite 70 tests voteReady rejects with 'No active combat encounter.' when activeCombat is nil")
+test("[Suite 70.3]" in testrunner_src, "Suite 70 tests useSkill rejects with 'No active combat encounter.' when activeCombat is nil")
+test("[Suite 70.5]" in testrunner_src, "Suite 70 tests combat begins in PlayerPhase")
+test("[Suite 70.9]" in testrunner_src, "Suite 70 tests playCard strictly rejected during ResolutionPhase")
+test("[Suite 70.10]" in testrunner_src, "Suite 70 tests voteReady strictly rejected during ResolutionPhase")
+test("[Suite 70.11]" in testrunner_src, "Suite 70 tests useSkill strictly rejected during ResolutionPhase")
+test("[Suite 70.12]" in testrunner_src, "Suite 70 tests snapshot Phase reflects ResolutionPhase")
+test("[Suite 70.13]" in testrunner_src, "Suite 70 tests snapshot LocalHand is empty during ResolutionPhase")
+test("[Suite 70.14]" in testrunner_src, "Suite 70 tests TurnNumber advanced to 2 after successful resolution")
+test("[Suite 70.16]" in testrunner_src, "Suite 70 tests Enemy AttackPower survived nil fallback in intent generation")
+test("[Suite 70.19]" in testrunner_src, "Suite 70 tests TurnNumber advanced to 3 despite error in turn resolution (Guaranteed Recovery)")
+test("[Suite 70.20]" in testrunner_src, "Suite 70 tests Phase guaranteed restored to PlayerPhase after error")
+test("[Suite 70.23]" in testrunner_src, "Suite 70 tests ArenaVisualizer.cleanup executes cleanly with pcall protection")
+
+# Server Turn Resolution Invariants
+test('CardService.discardHand(playerState)' in combat_svc_src, "CombatService discards hand during turn resolution")
+test('CombatService.broadcastSnapshots("Enemies are counterattacking...")' in combat_svc_src, "CombatService broadcasts resolution snapshot after discard")
+test('local atkPower = enemy.AttackPower or 10' in combat_svc_src, "CombatService protects against nil enemy AttackPower")
+test('activeCombat.TurnNumber += 1' in combat_svc_src, "CombatService advances TurnNumber in guaranteed recovery")
+test('activeCombat.Phase = "PlayerPhase"' in combat_svc_src, "CombatService restores PlayerPhase in guaranteed recovery")
+test('ArenaVisualizer.cleanup()' in combat_svc_src, "CombatService calls ArenaVisualizer.cleanup")
+test('ArenaVisualizer.playEnemyAttackAnimation' in combat_svc_src, "CombatService invokes ArenaVisualizer.playEnemyAttackAnimation")
+test('model:Destroy()' in arena_vis_src, "ArenaVisualizer destroys models on cleanup")
+
+# Client UI Turn Resolution & Debounce Invariants
+test('local currentCombatPhase: string = "PlayerPhase"' in ui_ctrl_src, "UIController tracks currentCombatPhase")
+test('local isPlayCardPending: boolean = false' in ui_ctrl_src, "UIController tracks isPlayCardPending debounce")
+test('local isReadyVotePending: boolean = false' in ui_ctrl_src, "UIController tracks isReadyVotePending debounce")
+test('currentCombatPhase ~= "PlayerPhase"' in ui_ctrl_src, "UIController guards ready click and card play outside PlayerPhase")
+test('readyBtn.Text = "⏳ RESOLVING..."' in ui_ctrl_src, "UIController displays RESOLVING label during ResolutionPhase")
+test('res.Action == "PlayCard"' in ui_ctrl_src, "UIController clears isPlayCardPending on PlayCard action result")
+
 # Static Compilation of all Luau files with luau-compile
 import subprocess
 print("\n--- [Check 60] Static Compilation of All Luau Files ---")

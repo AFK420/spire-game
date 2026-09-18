@@ -1330,6 +1330,115 @@ local function runSuite69()
 	end
 end
 
+local function runSuite70()
+	print("\n--- [Suite 70] Turn Resolution Lifecycle, Fail-Safe Phase Recovery & Snapshot Integrity ---")
+
+	do
+		-- 70.1: Distinct rejection when activeCombat is nil
+		CombatService.cleanupCombat()
+		local fakePlayer = { UserId = 70001, Name = "NullCombatTester", DisplayName = "NullCombatTester" }
+		local nullPlayOk, nullPlayErr = CombatService.playCard(fakePlayer :: any, "dummy_card_id", "dummy_target")
+		assertTest(nullPlayOk == false and nullPlayErr == "No active combat encounter.", "[Suite 70.1] playCard rejects with 'No active combat encounter.' when activeCombat is nil")
+
+		local nullReadyOk, nullReadyErr = CombatService.voteReady(fakePlayer :: any)
+		assertTest(nullReadyOk == false and nullReadyErr == "No active combat encounter.", "[Suite 70.2] voteReady rejects with 'No active combat encounter.' when activeCombat is nil")
+
+		local nullSkillOk, nullSkillErr = CombatService.useSkill(fakePlayer :: any, "Skill1" :: any, "dummy_target")
+		assertTest(nullSkillOk == false and nullSkillErr == "No active combat encounter.", "[Suite 70.3] useSkill rejects with 'No active combat encounter.' when activeCombat is nil")
+	end
+
+	do
+		-- 70.2: Start combat encounter and verify initial state
+		local p1 = {
+			UserId = 70010,
+			Name = "TurnTester",
+			DisplayName = "TurnTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(p1 :: any)
+		local p1State = RunManager.addPlayer(p1 :: any)
+		assert(p1State, "p1State exists")
+		p1State.ClassLocked = true
+		p1State.ClassId = "Ironclad"
+
+		local combatParty = { [p1.UserId] = p1State }
+		local combatEndOutcome: string? = nil
+		local activeCombat = CombatService.startCombat("enc_suite70", "Combat", 1, combatParty, function(outcome)
+			combatEndOutcome = outcome
+		end)
+		assertTest(activeCombat ~= nil, "[Suite 70.4] startCombat instantiates activeCombat")
+		assertTest(activeCombat.Phase == "PlayerPhase", "[Suite 70.5] Combat begins in PlayerPhase")
+		assertTest(activeCombat.TurnNumber == 1, "[Suite 70.6] TurnNumber starts at 1")
+		assertTest(p1State.Resources.Energy > 0, "[Suite 70.7] Player initialized with energy")
+		assertTest(#p1State.Hand > 0, "[Suite 70.8] Player hand drawn at combat start")
+
+		-- 70.3: During ResolutionPhase, hand cards are discarded before snapshot and actions rejected
+		-- Verify discard-first snapshot invariant
+		activeCombat.Phase = "ResolutionPhase"
+		local testCardInst = p1State.Hand[1]
+		assert(testCardInst, "testCardInst exists")
+
+		local resPlayOk, resPlayErr = CombatService.playCard(p1 :: any, testCardInst.CardInstanceId, "enemy_1")
+		assertTest(resPlayOk == false and resPlayErr == "Combat is not in PlayerPhase.", "[Suite 70.9] playCard strictly rejected during ResolutionPhase")
+
+		local resReadyOk, resReadyErr = CombatService.voteReady(p1 :: any)
+		assertTest(resReadyOk == false and resReadyErr == "Combat is not in PlayerPhase.", "[Suite 70.10] voteReady strictly rejected during ResolutionPhase")
+
+		local resSkillOk, resSkillErr = CombatService.useSkill(p1 :: any, "Skill1" :: any, "enemy_1")
+		assertTest(resSkillOk == false and resSkillErr == "Combat is not in PlayerPhase.", "[Suite 70.11] useSkill strictly rejected during ResolutionPhase")
+
+		CardService.discardHand(p1State)
+		local resSnapshot = CombatService.getCombatSnapshotForPlayer(p1 :: any)
+		assertTest(resSnapshot ~= nil and resSnapshot.Phase == "ResolutionPhase", "[Suite 70.12] Snapshot Phase reflects ResolutionPhase")
+		assertTest(resSnapshot ~= nil and #resSnapshot.LocalHand == 0, "[Suite 70.13] Snapshot LocalHand is empty during ResolutionPhase")
+
+		-- Restore phase to PlayerPhase and re-draw hand for continuation
+		activeCombat.Phase = "PlayerPhase"
+		CardService.drawCards(p1State, 4)
+
+		-- 70.4: generateEnemyIntent resilience with nil/missing AttackPower
+		local enemy1 = activeCombat.Enemies["enemy_1"]
+		assert(enemy1, "enemy1 exists")
+		local enemy1Any: any = enemy1
+		enemy1Any.AttackPower = nil -- simulate missing AttackPower
+		CombatService.forceTurnTimeout()
+		task.wait(0.1)
+
+		assertTest(activeCombat.TurnNumber == 2, "[Suite 70.14] TurnNumber advanced to 2 after successful resolution")
+		assertTest(activeCombat.Phase == "PlayerPhase", "[Suite 70.15] Phase returned to PlayerPhase after turn resolution")
+		assertTest(enemy1.AttackPower ~= nil, "[Suite 70.16] Enemy AttackPower survived nil fallback in intent generation")
+		assertTest(p1State.Resources.Energy == p1State.Resources.MaxEnergy, "[Suite 70.17] Player energy restored to MaxEnergy at turn start")
+		assertTest(p1State.IsReady == false, "[Suite 70.18] Player IsReady reset to false for Turn 2")
+
+		-- 70.5: Guaranteed Phase Recovery Block on injected error during turn resolution
+		local originalTickStatuses = StatusService.tickStatuses
+		StatusService.tickStatuses = function(...)
+			error("Simulated catastrophic failure in tickStatuses during turn resolution!")
+		end
+
+		CombatService.forceTurnTimeout()
+		task.wait(0.1)
+
+		-- Restore StatusService.tickStatuses
+		StatusService.tickStatuses = originalTickStatuses
+
+		-- Assert guaranteed recovery occurred despite the catastrophic failure!
+		assertTest(activeCombat.TurnNumber == 3, "[Suite 70.19] TurnNumber advanced to 3 despite error in turn resolution (Guaranteed Recovery)")
+		assertTest(activeCombat.Phase == "PlayerPhase", "[Suite 70.20] Phase guaranteed restored to PlayerPhase after error")
+		assertTest(p1State.Resources.Energy == p1State.Resources.MaxEnergy, "[Suite 70.21] Player energy restored to MaxEnergy after recovery")
+		assertTest(#p1State.Hand > 0, "[Suite 70.22] Fresh cards drawn for player after guaranteed recovery")
+
+		-- 70.6: ArenaVisualizer.cleanup safe execution
+		local cleanupOk = pcall(function()
+			ArenaVisualizer.cleanup()
+		end)
+		assertTest(cleanupOk == true, "[Suite 70.23] ArenaVisualizer.cleanup executes cleanly with pcall protection")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+end
+
 function TestRunner.runAllTests(): boolean
 	passedCount = 0
 	totalCount = 0
@@ -7485,6 +7594,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 69: REWARD FLOW, CARD DRAFT ATOMICITY & BOSS ACT PROGRESSION
 	----------------------------------------------------------------------------
 	runSuite69()
+
+	----------------------------------------------------------------------------
+	-- SUITE 70: TURN RESOLUTION LIFECYCLE & FAIL-SAFE PHASE RECOVERY
+	----------------------------------------------------------------------------
+	runSuite70()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

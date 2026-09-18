@@ -541,6 +541,9 @@ enemiesLayout.Padding = UDim.new(0, 20)
 enemiesLayout.Parent = enemiesContainer
 
 local selectedEnemyId: string? = nil
+local currentCombatPhase: string = "PlayerPhase"
+local isPlayCardPending: boolean = false
+local isReadyVotePending: boolean = false
 
 local function renderEnemyCard(enemy: StateTypes.EnemyView): Frame
 	local card = Instance.new("Frame")
@@ -695,6 +698,12 @@ UIFactory.createCorner(readyBtn, 12)
 UIFactory.createStroke(readyBtn, Color3.fromRGB(255, 190, 60), 2)
 
 readyBtn.MouseButton1Click:Connect(function()
+	if currentCombatPhase ~= "PlayerPhase" then return end
+	if isReadyVotePending then return end
+	isReadyVotePending = true
+	task.delay(2.0, function()
+		isReadyVotePending = false
+	end)
 	if PlayerVoteReadyEvent then
 		PlayerVoteReadyEvent:FireServer()
 	end
@@ -808,6 +817,16 @@ local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (
 		clickBtn.MouseButton1Click:Connect(customClickHandler)
 	else
 		clickBtn.MouseButton1Click:Connect(function()
+			if currentCombatPhase ~= "PlayerPhase" then
+				bannerLabel.Text = "⏳ Please wait: Enemies are taking their turn..."
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+				return
+			end
+			if isPlayCardPending then return end
+			isPlayCardPending = true
+			task.delay(2.0, function()
+				isPlayCardPending = false
+			end)
 			if PlayCardEvent then
 				local targetParam: any = nil
 				if card.Target == "Enemy" then
@@ -1135,6 +1154,10 @@ if CombatStateUpdateEvent then
 	CombatStateUpdateEvent.OnClientEvent:Connect(function(snapshot: StateTypes.CombatSnapshot)
 		if not snapshot then return end
 
+		currentCombatPhase = snapshot.Phase or "PlayerPhase"
+		isPlayCardPending = false
+		isReadyVotePending = false
+
 		-- Render Multi-Enemies
 		for _, child in enemiesContainer:GetChildren() do
 			if child:IsA("Frame") then
@@ -1165,10 +1188,16 @@ if CombatStateUpdateEvent then
 		local localUserId = tostring(localPlayer.UserId)
 		local myView = snapshot.Party[localUserId]
 		if myView then
-			if myView.IsReady then
+			if snapshot.Phase == "ResolutionPhase" then
+				readyBtn.Text = "⏳ RESOLVING..."
+				readyBtn.BackgroundColor3 = Color3.fromRGB(70, 75, 90)
+				readyBtn.Active = false
+			elseif myView.IsReady then
+				readyBtn.Active = true
 				readyBtn.Text = "✓ READY"
 				readyBtn.BackgroundColor3 = Color3.fromRGB(45, 180, 80)
 			else
+				readyBtn.Active = true
 				readyBtn.Text = "VOTE READY ➔"
 				readyBtn.BackgroundColor3 = Color3.fromRGB(210, 140, 30)
 			end
@@ -1290,6 +1319,12 @@ if ActionResultEvent then
 			else
 				print(string.format("[REWARDFLOW][CLIENT][4] ContinueFromRewards rejected: %s", tostring(res.Message)))
 				bannerLabel.Text = string.format("⚠️ Cannot continue: %s", tostring(res.Message or "Unknown error."))
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+			end
+		elseif res.Action == "PlayCard" then
+			isPlayCardPending = false
+			if res.Success == false then
+				bannerLabel.Text = string.format("⚠️ %s", tostring(res.Message or "Cannot play card."))
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
 			end
 		elseif res.Success == false then

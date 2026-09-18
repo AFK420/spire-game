@@ -929,8 +929,10 @@ end
 
 function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: DungeonMap.DungeonNode)
 	if outcome == "Defeat" then
-		currentRun.StateRevision = (currentRun.StateRevision or 0) + 1
-		currentRun.Phase = "RunDefeat"
+		local runToMutate = if (isIsolatedTesting and liveRun.Phase == "ActiveRoom") then liveRun else currentRun
+		runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
+		runToMutate.Phase = "RunDefeat"
+		runToMutate.ActiveCombat = nil
 		RunManager.broadcastRunSnapshots("DEFEAT! The party has fallen.")
 		NetworkService.broadcastAnnouncement("EXPEDITION FAILED", "Your party was overwhelmed by the rift.", Color3.fromRGB(255, 60, 60))
 		return

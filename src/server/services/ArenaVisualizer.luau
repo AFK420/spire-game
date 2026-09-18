@@ -337,13 +337,16 @@ function ArenaVisualizer.playEnemyAttackAnimation(enemyInstanceId: string)
 	local model = spawnedEnemyModels[enemyInstanceId]
 	if not model or not model.PrimaryPart then return end
 
-	local root = model.PrimaryPart
-	local origin = root.CFrame
-	local lunge = origin * CFrame.new(0, 0, 3)
+	pcall(function()
+		local root = model.PrimaryPart
+		if not root or not root.Parent then return end
+		local origin = root.CFrame
+		local lunge = origin * CFrame.new(0, 0, 3)
 
-	local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true)
-	local tween = TweenService:Create(root, tweenInfo, { CFrame = lunge })
-	tween:Play()
+		local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true)
+		local tween = TweenService:Create(root, tweenInfo, { CFrame = lunge })
+		tween:Play()
+	end)
 end
 
 function ArenaVisualizer.teleportPlayersToPedestal()
@@ -369,7 +372,9 @@ end
 
 function ArenaVisualizer.cleanup()
 	for _, model in spawnedEnemyModels do
-		model:Destroy()
+		pcall(function()
+			model:Destroy()
+		end)
 	end
 	table.clear(spawnedEnemyModels)
 end
