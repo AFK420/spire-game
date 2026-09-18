@@ -42,6 +42,7 @@ required_files = [
     "src/shared/BuildInfo.luau",
     "src/shared/GameConfig.luau",
     "src/shared/CardData.luau",
+    "src/shared/ReactionData.luau",
     "src/shared/ClassData.luau",
     "src/shared/RelicData.luau",
     "src/shared/DungeonMap.luau",
@@ -1665,7 +1666,7 @@ test("EnvironmentService.init()" in init_server_src, "Server init initializes En
 test("RunManager.onEventCompleted" in run_mgr_src, "RunManager implements onEventCompleted")
 test("wrs.loadRoom" in run_mgr_src, "RunManager loads 3D world room via WorldRoomService")
 test("wrs.teleportPlayers" in run_mgr_src, "RunManager teleports players via WorldRoomService")
-test("ReactionService.createAttackProfile" in combat_svc_src or "rs.createAttackProfile" in combat_svc_src, "CombatService creates attack reaction profiles")
+test("ReactionService.createAttackProfile" in combat_svc_src or "rs.createAttackProfile" in combat_svc_src or "rs.createProfileFromPreset" in combat_svc_src, "CombatService creates attack reaction profiles")
 test("rs.openReactionWindow" in combat_svc_src, "CombatService opens authoritative reaction window")
 test("rs.resolveReactionWindow" in combat_svc_src, "CombatService resolves reaction window")
 test("EnvironmentServiceModule.modifyDamage" in damage_pipeline_src, "DamagePipeline routes elemental damage through EnvironmentService")
@@ -1678,6 +1679,66 @@ test("parryBtn" in ui_ctrl_src, "UIController contains Parry button")
 test("environmentBadge" in ui_ctrl_src, "UIController contains environmentBadge")
 test("eventChamberView" in ui_ctrl_src, "UIController contains eventChamberView")
 test("renderEventChamber" in ui_ctrl_src, "UIController implements renderEventChamber")
+
+# --- [Check 68] OSU-Style Rhythm Approach-Circle Reaction System & Event UI Hardening ---
+print("\n--- [Check 68] OSU-Style Rhythm Approach-Circle Reaction System & Event UI Hardening ---")
+reaction_data_src = (ROOT / "src/shared/ReactionData.luau").read_text(encoding="utf-8")
+game_config_src = (ROOT / "src/shared/GameConfig.luau").read_text(encoding="utf-8")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+reaction_svc_src = (ROOT / "src/server/services/ReactionService.luau").read_text(encoding="utf-8")
+combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+event_svc_src = (ROOT / "src/server/services/EventService.luau").read_text(encoding="utf-8")
+arena_vis_src = (ROOT / "src/server/services/ArenaVisualizer.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+
+# ReactionData presets & timing profiles
+test("SlowHeavy" in reaction_data_src, "ReactionData defines SlowHeavy preset")
+test("FastDagger" in reaction_data_src, "ReactionData defines FastDagger preset")
+test("BossHeavyStrike" in reaction_data_src, "ReactionData defines BossHeavyStrike preset")
+test("UnparryableCleave" in reaction_data_src, "ReactionData defines UnparryableCleave preset")
+test("UndodgeableImpale" in reaction_data_src, "ReactionData defines UndodgeableImpale preset")
+test("UnreactableExplosion" in reaction_data_src, "ReactionData defines UnreactableExplosion preset")
+test("TelegraphDuration" in reaction_data_src and "ImpactDelay" in reaction_data_src and "RecoveryDuration" in reaction_data_src, "ReactionData defines data-driven timing parameters")
+test("DodgePerfectTolerance" in reaction_data_src and "ParryPerfectTolerance" in reaction_data_src, "ReactionData defines tight Perfect and Good tolerances")
+
+# GameConfig Keybinds
+test("Enum.KeyCode.C" in game_config_src, "GameConfig binds Dodge to C")
+test("Enum.KeyCode.V" in game_config_src, "GameConfig binds Parry to V")
+test("Enum.KeyCode.Space" not in game_config_src, "GameConfig does not bind Space to Dodge")
+
+# StateTypes
+test("TimingJudgement" in state_types_src, "StateTypes defines TimingJudgement enum")
+test('"Perfect" | "Good" | "Early" | "Late" | "Miss" | "Unavailable"' in state_types_src, "TimingJudgement includes all rhythm states")
+
+# ReactionService rhythm logic
+test("activeWin.ImpactTime" in reaction_svc_src, "ReactionService evaluates input against authoritative ImpactTime")
+test("activeWindowTest" in reaction_svc_src and "activeWindowLive" in reaction_svc_src, "ReactionService isolates test window from live players")
+test("onParryHook" in reaction_svc_src, "ReactionService invokes parry riposte hook")
+test("function ReactionService.createProfileFromPreset" in reaction_svc_src, "ReactionService provides createProfileFromPreset")
+
+# CombatService & Visualizer synchronization
+test("ArenaVisualizer.playEnemyAttackAnimation" in combat_svc_src, "CombatService invokes synchronized attack animation")
+test("profile.ImpactDelay" in combat_svc_src and "profile.RecoveryDuration" in combat_svc_src, "CombatService passes timing parameters to visualizer")
+test("ParryCounter" in combat_svc_src, "CombatService executes parry counter-damage riposte")
+
+# ArenaVisualizer multi-phase animation
+test("iDelay" in arena_vis_src and "strikeLunge" in arena_vis_src, "ArenaVisualizer lunges at exact ImpactDelay")
+
+# Client UIController rhythm approach circle & C/V keybinds
+test("approachRing" in ui_ctrl_src and "hitCircle" in ui_ctrl_src, "UIController constructs approach ring and stationary hit circle")
+test("startApproachCircleAnimation" in ui_ctrl_src, "UIController implements startApproachCircleAnimation")
+test("Enum.KeyCode.C" in ui_ctrl_src and "Enum.KeyCode.V" in ui_ctrl_src, "UIController handles C (Dodge) and V (Parry) key inputs")
+test("eventCloseBtn" in ui_ctrl_src, "UIController provides event chamber close/dismiss button")
+test("isEventInteractPending" in ui_ctrl_src, "UIController debounces event interactions")
+
+# EventService test isolation & idempotent interactions
+test("activeEventStateTest" in event_svc_src and "activeEventStateLive" in event_svc_src, "EventService isolates test event from live players")
+test("Event is already resolved" in event_svc_src, "EventService handles idempotent interaction safely")
+
+# TestRunner Suite 74 & manual testing helper
+test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains all 52 rhythm reaction assertions")
+test("TestRunner.triggerTestReaction" in testrunner_src, "TestRunner provides triggerTestReaction manual test scenario helper")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

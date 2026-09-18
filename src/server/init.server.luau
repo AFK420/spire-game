@@ -827,6 +827,11 @@ NetworkService.InteractEventObjectEvent.OnServerEvent:Connect(function(player: P
 			Message = message,
 		})
 	else
+		NetworkService.sendActionResult(player, {
+			Action = "InteractEventObject",
+			Success = true,
+			Message = message,
+		})
 		RunManager.broadcastRunSnapshots(message, true)
 	end
 end)

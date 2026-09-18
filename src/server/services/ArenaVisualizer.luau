@@ -333,19 +333,48 @@ function ArenaVisualizer.syncEnemies(enemies: { [string]: StateTypes.EnemyState 
 	end
 end
 
-function ArenaVisualizer.playEnemyAttackAnimation(enemyInstanceId: string)
+function ArenaVisualizer.playEnemyAttackAnimation(
+	enemyInstanceId: string,
+	telegraphDuration: number?,
+	impactDelay: number?,
+	recoveryDuration: number?
+)
 	local model = spawnedEnemyModels[enemyInstanceId]
 	if not model or not model.PrimaryPart then return end
+
+	local tDur = telegraphDuration or 1.2
+	local iDelay = impactDelay or (tDur * 0.85)
+	local rDur = recoveryDuration or 0.35
 
 	pcall(function()
 		local root = model.PrimaryPart
 		if not root or not root.Parent then return end
 		local origin = root.CFrame
-		local lunge = origin * CFrame.new(0, 0, 3)
+		local windup = origin * CFrame.new(0, 0.4, -1.2) * CFrame.Angles(math.rad(-10), 0, 0)
+		local strikeLunge = origin * CFrame.new(0, 0, 4.5) * CFrame.Angles(math.rad(15), 0, 0)
 
-		local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true)
-		local tween = TweenService:Create(root, tweenInfo, { CFrame = lunge })
-		tween:Play()
+		-- Stage 1: Anticipation / Wind-up
+		local windupTime = iDelay * 0.4
+		local windupInfo = TweenInfo.new(windupTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+		local t1 = TweenService:Create(root, windupInfo, { CFrame = windup })
+		t1:Play()
+
+		-- Stage 2: Heavy Strike Lunge to peak extension right at impact
+		task.delay(windupTime, function()
+			if not root or not root.Parent then return end
+			local strikeTime = math.max(0.1, iDelay - windupTime)
+			local strikeInfo = TweenInfo.new(strikeTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In)
+			local t2 = TweenService:Create(root, strikeInfo, { CFrame = strikeLunge })
+			t2:Play()
+
+			-- Stage 3: Recovery back to idle origin
+			task.delay(strikeTime, function()
+				if not root or not root.Parent then return end
+				local recoverInfo = TweenInfo.new(rDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+				local t3 = TweenService:Create(root, recoverInfo, { CFrame = origin })
+				t3:Play()
+			end)
+		end)
 	end)
 end
 

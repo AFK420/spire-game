@@ -754,113 +754,271 @@ environmentLabel.TextSize = 13
 environmentLabel.TextXAlignment = Enum.TextXAlignment.Center
 environmentLabel.Parent = environmentBadge
 
--- Combat Reaction Prompt Overlay (Center)
+-- Combat Reaction Rhythm Widget (OSU Approach Circle)
 local activeReactionWindowId: string? = nil
+local currentReactionWindowView: StateTypes.ReactionWindowView? = nil
+local approachRenderConn: RBXScriptConnection? = nil
 
-local reactionPromptFrame = Instance.new("Frame")
-reactionPromptFrame.Name = "ReactionPromptFrame"
-reactionPromptFrame.Size = UDim2.new(0, 440, 0, 180)
-reactionPromptFrame.Position = UDim2.new(0.5, -220, 0.42, -90)
-reactionPromptFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 30)
-reactionPromptFrame.BackgroundTransparency = 0.05
-reactionPromptFrame.BorderSizePixel = 0
-reactionPromptFrame.Visible = false
-reactionPromptFrame.ZIndex = 50
-reactionPromptFrame.Parent = combatHudView
-UIFactory.createCorner(reactionPromptFrame, 14)
-UIFactory.createStroke(reactionPromptFrame, Color3.fromRGB(255, 80, 80), 2.5)
+local reactionWidget = Instance.new("Frame")
+reactionWidget.Name = "ReactionWidget"
+reactionWidget.Size = UDim2.new(0, 320, 0, 320)
+reactionWidget.Position = UDim2.new(0.5, -160, 0.44, -160)
+reactionWidget.BackgroundTransparency = 1
+reactionWidget.BorderSizePixel = 0
+reactionWidget.Visible = false
+reactionWidget.ZIndex = 50
+reactionWidget.Parent = combatHudView
+local reactionPromptFrame = reactionWidget -- Backward-compatible reference
 
-local reactionHeader = Instance.new("TextLabel")
-reactionHeader.Size = UDim2.new(1, 0, 0, 28)
-reactionHeader.Position = UDim2.new(0, 0, 0, 10)
-reactionHeader.BackgroundTransparency = 1
-reactionHeader.Text = "⚠️ INCOMING ATTACK TELEGRAPH!"
-reactionHeader.TextColor3 = Color3.fromRGB(255, 80, 80)
-reactionHeader.Font = Enum.Font.GothamBold
-reactionHeader.TextSize = 15
-reactionHeader.ZIndex = 51
-reactionHeader.Parent = reactionPromptFrame
+-- Stationary inner hit circle
+local hitCircle = Instance.new("Frame")
+hitCircle.Name = "HitCircle"
+hitCircle.Size = UDim2.new(0, 84, 0, 84)
+hitCircle.Position = UDim2.new(0.5, -42, 0.5, -42)
+hitCircle.BackgroundColor3 = Color3.fromRGB(16, 18, 28)
+hitCircle.BackgroundTransparency = 0.25
+hitCircle.BorderSizePixel = 0
+hitCircle.ZIndex = 52
+hitCircle.Parent = reactionWidget
+UIFactory.createCorner(hitCircle, 42)
+local hitCircleStroke = UIFactory.createStroke(hitCircle, Color3.fromRGB(80, 200, 255), 2.5)
 
-local reactionDetail = Instance.new("TextLabel")
-reactionDetail.Size = UDim2.new(1, -20, 0, 36)
-reactionDetail.Position = UDim2.new(0, 10, 0, 38)
-reactionDetail.BackgroundTransparency = 1
-reactionDetail.Text = "Enemy Strike"
-reactionDetail.TextColor3 = Color3.fromRGB(255, 235, 180)
-reactionDetail.Font = Enum.Font.GothamBold
-reactionDetail.TextSize = 16
-reactionDetail.ZIndex = 51
-reactionDetail.Parent = reactionPromptFrame
+local centerDot = Instance.new("Frame")
+centerDot.Size = UDim2.new(0, 14, 0, 14)
+centerDot.Position = UDim2.new(0.5, -7, 0.5, -7)
+centerDot.BackgroundColor3 = Color3.fromRGB(200, 240, 255)
+centerDot.BorderSizePixel = 0
+centerDot.ZIndex = 53
+centerDot.Parent = hitCircle
+UIFactory.createCorner(centerDot, 7)
 
-local reactionTimerLabel = Instance.new("TextLabel")
-reactionTimerLabel.Size = UDim2.new(1, 0, 0, 20)
-reactionTimerLabel.Position = UDim2.new(0, 0, 0, 74)
-reactionTimerLabel.BackgroundTransparency = 1
-reactionTimerLabel.Text = "React now: 1.0s"
-reactionTimerLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
-reactionTimerLabel.Font = Enum.Font.GothamMedium
-reactionTimerLabel.TextSize = 13
-reactionTimerLabel.ZIndex = 51
-reactionTimerLabel.Parent = reactionPromptFrame
+-- Contracting outer approach ring
+local approachRing = Instance.new("Frame")
+approachRing.Name = "ApproachRing"
+approachRing.Size = UDim2.new(0, 240, 0, 240)
+approachRing.Position = UDim2.new(0.5, -120, 0.5, -120)
+approachRing.BackgroundTransparency = 1
+approachRing.BorderSizePixel = 0
+approachRing.ZIndex = 54
+approachRing.Parent = reactionWidget
+local approachCorner = UIFactory.createCorner(approachRing, 120)
+local approachStroke = UIFactory.createStroke(approachRing, Color3.fromRGB(255, 255, 255), 3)
 
+-- Attack label above circle
+local reactionAttackLabel = Instance.new("TextLabel")
+reactionAttackLabel.Size = UDim2.new(1, 0, 0, 26)
+reactionAttackLabel.Position = UDim2.new(0, 0, 0, 12)
+reactionAttackLabel.BackgroundTransparency = 1
+reactionAttackLabel.Text = "⚔️ Hostile Attack"
+reactionAttackLabel.TextColor3 = Color3.fromRGB(255, 235, 180)
+reactionAttackLabel.Font = Enum.Font.GothamBold
+reactionAttackLabel.TextSize = 15
+reactionAttackLabel.ZIndex = 55
+reactionAttackLabel.Parent = reactionWidget
+local reactionDetail = reactionAttackLabel -- Backward-compatible reference
+
+-- Keybind badges below circle
 local reactionButtonsContainer = Instance.new("Frame")
-reactionButtonsContainer.Size = UDim2.new(1, -40, 0, 50)
-reactionButtonsContainer.Position = UDim2.new(0, 20, 0, 105)
+reactionButtonsContainer.Size = UDim2.new(1, 0, 0, 42)
+reactionButtonsContainer.Position = UDim2.new(0, 0, 1, -48)
 reactionButtonsContainer.BackgroundTransparency = 1
-reactionButtonsContainer.ZIndex = 51
-reactionButtonsContainer.Parent = reactionPromptFrame
+reactionButtonsContainer.ZIndex = 55
+reactionButtonsContainer.Parent = reactionWidget
 
 local reactionButtonsLayout = Instance.new("UIListLayout")
 reactionButtonsLayout.FillDirection = Enum.FillDirection.Horizontal
 reactionButtonsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-reactionButtonsLayout.Padding = UDim.new(0, 20)
+reactionButtonsLayout.Padding = UDim.new(0, 16)
 reactionButtonsLayout.Parent = reactionButtonsContainer
 
 local dodgeBtnFrame = Instance.new("Frame")
-dodgeBtnFrame.Size = UDim2.new(0, 180, 0, 48)
+dodgeBtnFrame.Size = UDim2.new(0, 126, 0, 38)
 dodgeBtnFrame.BackgroundTransparency = 1
-dodgeBtnFrame.ZIndex = 52
+dodgeBtnFrame.ZIndex = 56
 dodgeBtnFrame.Parent = reactionButtonsContainer
 
-local dodgeBtn = UIFactory.createButton(dodgeBtnFrame, "💨 DODGE [SPACE]", Color3.fromRGB(40, 160, 80), function()
-	if activeReactionWindowId and SubmitCombatReactionEvent then
-		SubmitCombatReactionEvent:FireServer(activeReactionWindowId, "Dodge")
-		reactionPromptFrame.Visible = false
-		bannerLabel.Text = "💨 Dodge reaction submitted!"
-	end
+local dodgeBtn = UIFactory.createButton(dodgeBtnFrame, "💨 [C] DODGE", Color3.fromRGB(35, 150, 75), function()
+	submitReactionAttempt("Dodge")
 end)
-dodgeBtn.ZIndex = 53
+dodgeBtn.ZIndex = 57
 
 local parryBtnFrame = Instance.new("Frame")
-parryBtnFrame.Size = UDim2.new(0, 180, 0, 48)
+parryBtnFrame.Size = UDim2.new(0, 126, 0, 38)
 parryBtnFrame.BackgroundTransparency = 1
-parryBtnFrame.ZIndex = 52
+parryBtnFrame.ZIndex = 56
 parryBtnFrame.Parent = reactionButtonsContainer
 
-local parryBtn = UIFactory.createButton(parryBtnFrame, "⚔️ PARRY [V]", Color3.fromRGB(150, 60, 210), function()
-	if activeReactionWindowId and SubmitCombatReactionEvent then
-		SubmitCombatReactionEvent:FireServer(activeReactionWindowId, "Parry")
-		reactionPromptFrame.Visible = false
-		bannerLabel.Text = "⚔️ Parry reaction submitted!"
-	end
+local parryBtn = UIFactory.createButton(parryBtnFrame, "⚔️ [V] PARRY", Color3.fromRGB(140, 55, 200), function()
+	submitReactionAttempt("Parry")
 end)
-parryBtn.ZIndex = 53
+parryBtn.ZIndex = 57
+
+-- Flashing Judgement feedback banner
+local reactionJudgementLabel = Instance.new("TextLabel")
+reactionJudgementLabel.Size = UDim2.new(1, 0, 0, 36)
+reactionJudgementLabel.Position = UDim2.new(0, 0, 0.5, -18)
+reactionJudgementLabel.BackgroundTransparency = 1
+reactionJudgementLabel.Text = ""
+reactionJudgementLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+reactionJudgementLabel.Font = Enum.Font.GothamBlack
+reactionJudgementLabel.TextSize = 22
+reactionJudgementLabel.ZIndex = 60
+reactionJudgementLabel.Visible = false
+reactionJudgementLabel.Parent = reactionWidget
+
+local function showJudgementFeedback(text: string, color: Color3)
+	reactionJudgementLabel.Text = text
+	reactionJudgementLabel.TextColor3 = color
+	reactionJudgementLabel.Visible = true
+	reactionJudgementLabel.TextTransparency = 0
+	reactionJudgementLabel.TextSize = 22
+
+	task.delay(1.1, function()
+		if reactionJudgementLabel.Text == text then
+			local tween = TweenService:Create(reactionJudgementLabel, TweenInfo.new(0.25), { TextTransparency = 1 })
+			tween:Play()
+			tween.Completed:Connect(function()
+				if reactionJudgementLabel.Text == text then
+					reactionJudgementLabel.Visible = false
+					if not activeReactionWindowId then
+						reactionWidget.Visible = false
+					end
+				end
+			end)
+		end
+	end)
+end
+
+function submitReactionAttempt(reactionType: "Dodge" | "Parry")
+	if not activeReactionWindowId or not currentReactionWindowView then return end
+
+	if reactionType == "Dodge" and not currentReactionWindowView.CanDodge then return end
+	if reactionType == "Parry" and not currentReactionWindowView.CanParry then return end
+
+	local winId = activeReactionWindowId
+	local winView = currentReactionWindowView
+	activeReactionWindowId = nil -- Prevent multiple local submissions
+
+	-- Client-side timing judgement prediction for instantaneous feedback
+	local now = os.clock()
+	local timeDelta = now - winView.ImpactTime
+	local absDelta = math.abs(timeDelta)
+
+	if reactionType == "Dodge" then
+		if absDelta <= (winView.DodgePerfectTolerance or 0.15) then
+			showJudgementFeedback("PERFECT DODGE!", Color3.fromRGB(80, 240, 255))
+			bannerLabel.Text = "⚡ PERFECT DODGE!"
+			bannerLabel.TextColor3 = Color3.fromRGB(80, 240, 255)
+		elseif absDelta <= (winView.DodgeGoodTolerance or 0.35) then
+			showJudgementFeedback("GOOD DODGE", Color3.fromRGB(80, 220, 120))
+			bannerLabel.Text = "💨 GOOD DODGE!"
+			bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+		elseif timeDelta < -(winView.DodgeGoodTolerance or 0.35) then
+			showJudgementFeedback("EARLY", Color3.fromRGB(255, 160, 50))
+			bannerLabel.Text = "⚠️ Dodged Too Early!"
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 160, 50)
+		else
+			showJudgementFeedback("LATE", Color3.fromRGB(255, 90, 90))
+			bannerLabel.Text = "⚠️ Dodged Too Late!"
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+		end
+	elseif reactionType == "Parry" then
+		if absDelta <= (winView.ParryPerfectTolerance or 0.08) then
+			showJudgementFeedback("PERFECT PARRY!", Color3.fromRGB(255, 215, 60))
+			bannerLabel.Text = "🛡️ PERFECT PARRY!"
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 215, 60)
+		elseif absDelta <= (winView.ParryGoodTolerance or 0.18) then
+			showJudgementFeedback("GOOD PARRY", Color3.fromRGB(190, 100, 255))
+			bannerLabel.Text = "⚔️ GOOD PARRY!"
+			bannerLabel.TextColor3 = Color3.fromRGB(190, 100, 255)
+		elseif timeDelta < -(winView.ParryGoodTolerance or 0.18) then
+			showJudgementFeedback("EARLY", Color3.fromRGB(255, 160, 50))
+			bannerLabel.Text = "⚠️ Parried Too Early!"
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 160, 50)
+		else
+			showJudgementFeedback("LATE", Color3.fromRGB(255, 90, 90))
+			bannerLabel.Text = "⚠️ Parried Too Late!"
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+		end
+	end
+
+	if SubmitCombatReactionEvent then
+		SubmitCombatReactionEvent:FireServer(winId, reactionType)
+	end
+end
+
+local function startApproachCircleAnimation(win: StateTypes.ReactionWindowView)
+	if approachRenderConn then
+		approachRenderConn:Disconnect()
+		approachRenderConn = nil
+	end
+
+	reactionWidget.Visible = true
+	reactionAttackLabel.Text = string.format("⚔️ %s: %s (%d %s)", win.EnemyName, win.AttackName, win.RawDamage, win.DamageType)
+	dodgeBtnFrame.Visible = win.CanDodge
+	parryBtnFrame.Visible = win.CanParry
+
+	local openTime = win.OpenTime
+	local impactTime = win.ImpactTime
+	local closeTime = win.CloseTime
+	local totalApproach = math.max(0.2, impactTime - openTime)
+
+	approachRenderConn = RunService.RenderStepped:Connect(function()
+		local now = os.clock()
+		if now > closeTime or not activeReactionWindowId then
+			if approachRenderConn then
+				approachRenderConn:Disconnect()
+				approachRenderConn = nil
+			end
+			approachRing.Visible = false
+			if now > closeTime and activeReactionWindowId then
+				activeReactionWindowId = nil
+				showJudgementFeedback("MISS", Color3.fromRGB(255, 60, 60))
+				bannerLabel.Text = "💀 Reaction Missed!"
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+			end
+			return
+		end
+
+		approachRing.Visible = true
+		local remaining = impactTime - now
+		local ratio = remaining / totalApproach
+		local targetDiam = 84
+		local currentDiam = targetDiam + math.max(0, ratio) * 160
+
+		approachRing.Size = UDim2.new(0, currentDiam, 0, currentDiam)
+		approachRing.Position = UDim2.new(0.5, -currentDiam / 2, 0.5, -currentDiam / 2)
+		approachCorner.CornerRadius = UDim.new(0, currentDiam / 2)
+
+		local absDelta = math.abs(remaining)
+		local perfTol = win.ParryPerfectTolerance or 0.08
+		local goodTol = win.DodgeGoodTolerance or 0.35
+
+		if absDelta <= perfTol then
+			approachStroke.Color = Color3.fromRGB(255, 220, 80)
+			approachStroke.Thickness = 3.5
+		elseif absDelta <= goodTol then
+			approachStroke.Color = Color3.fromRGB(80, 220, 255)
+			approachStroke.Thickness = 3
+		else
+			approachStroke.Color = Color3.fromRGB(220, 225, 240)
+			approachStroke.Thickness = 2.5
+		end
+	end)
+end
 
 UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
 	if gameProcessed then return end
-	if not activeReactionWindowId or not reactionPromptFrame.Visible then return end
+	if not activeReactionWindowId or not reactionWidget.Visible then return end
 
-	if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
-		if dodgeBtnFrame.Visible and SubmitCombatReactionEvent then
-			SubmitCombatReactionEvent:FireServer(activeReactionWindowId, "Dodge")
-			reactionPromptFrame.Visible = false
-			bannerLabel.Text = "💨 Dodge reaction submitted!"
+	-- STRICT PROTOCOL: C = Dodge, V = Parry only. Space and Shift are explicitly NOT bound.
+	if input.KeyCode == Enum.KeyCode.C then
+		if dodgeBtnFrame.Visible then
+			submitReactionAttempt("Dodge")
 		end
-	elseif input.KeyCode == Enum.KeyCode.V or input.KeyCode == Enum.KeyCode.C then
-		if parryBtnFrame.Visible and SubmitCombatReactionEvent then
-			SubmitCombatReactionEvent:FireServer(activeReactionWindowId, "Parry")
-			reactionPromptFrame.Visible = false
-			bannerLabel.Text = "⚔️ Parry reaction submitted!"
+	elseif input.KeyCode == Enum.KeyCode.V then
+		if parryBtnFrame.Visible then
+			submitReactionAttempt("Parry")
 		end
 	end
 end)
@@ -1224,7 +1382,7 @@ eventHeader.Parent = eventChamberView
 UIFactory.createCorner(eventHeader, 14)
 
 local eventTitle = Instance.new("TextLabel")
-eventTitle.Size = UDim2.new(1, -40, 0, 30)
+eventTitle.Size = UDim2.new(1, -90, 0, 30)
 eventTitle.Position = UDim2.new(0, 20, 0, 6)
 eventTitle.BackgroundTransparency = 1
 eventTitle.Text = "🔮 ANCIENT EVENT CHAMBER"
@@ -1236,7 +1394,7 @@ eventTitle.ZIndex = 17
 eventTitle.Parent = eventHeader
 
 local eventStatusLabel = Instance.new("TextLabel")
-eventStatusLabel.Size = UDim2.new(1, -40, 0, 20)
+eventStatusLabel.Size = UDim2.new(1, -90, 0, 20)
 eventStatusLabel.Position = UDim2.new(0, 20, 0, 34)
 eventStatusLabel.BackgroundTransparency = 1
 eventStatusLabel.Text = "Attempts Remaining: 3"
@@ -1247,18 +1405,40 @@ eventStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 eventStatusLabel.ZIndex = 17
 eventStatusLabel.Parent = eventHeader
 
+local eventCloseBtn = Instance.new("TextButton")
+eventCloseBtn.Size = UDim2.new(0, 32, 0, 32)
+eventCloseBtn.Position = UDim2.new(1, -44, 0, 14)
+eventCloseBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 75)
+eventCloseBtn.Text = "✕"
+eventCloseBtn.TextColor3 = Color3.fromRGB(230, 210, 255)
+eventCloseBtn.Font = Enum.Font.GothamBold
+eventCloseBtn.TextSize = 16
+eventCloseBtn.ZIndex = 18
+eventCloseBtn.Parent = eventHeader
+UIFactory.createCorner(eventCloseBtn, 8)
+eventCloseBtn.MouseButton1Click:Connect(function()
+	eventChamberView.Visible = false
+end)
+
 local eventClueBox = Instance.new("Frame")
-eventClueBox.Size = UDim2.new(1, -40, 0, 110)
-eventClueBox.Position = UDim2.new(0, 20, 0, 72)
+eventClueBox.Size = UDim2.new(1, -48, 0, 96)
+eventClueBox.Position = UDim2.new(0, 24, 0, 72)
 eventClueBox.BackgroundColor3 = Color3.fromRGB(16, 14, 24)
 eventClueBox.ZIndex = 16
 eventClueBox.Parent = eventChamberView
 UIFactory.createCorner(eventClueBox, 10)
 UIFactory.createStroke(eventClueBox, Color3.fromRGB(70, 60, 100), 1)
 
+local eventCluePadding = Instance.new("UIPadding")
+eventCluePadding.PaddingLeft = UDim.new(0, 16)
+eventCluePadding.PaddingRight = UDim.new(0, 16)
+eventCluePadding.PaddingTop = UDim.new(0, 12)
+eventCluePadding.PaddingBottom = UDim.new(0, 12)
+eventCluePadding.Parent = eventClueBox
+
 local eventClueText = Instance.new("TextLabel")
-eventClueText.Size = UDim2.new(1, -20, 1, -16)
-eventClueText.Position = UDim2.new(0, 10, 0, 8)
+eventClueText.Size = UDim2.new(1, 0, 1, 0)
+eventClueText.Position = UDim2.new(0, 0, 0, 0)
 eventClueText.BackgroundTransparency = 1
 eventClueText.Text = "Decipher the chamber's secret..."
 eventClueText.TextColor3 = Color3.fromRGB(230, 220, 255)
@@ -1271,16 +1451,18 @@ eventClueText.ZIndex = 17
 eventClueText.Parent = eventClueBox
 
 local interactablesContainer = Instance.new("Frame")
-interactablesContainer.Size = UDim2.new(1, -40, 0, 260)
-interactablesContainer.Position = UDim2.new(0, 20, 0, 195)
+interactablesContainer.Size = UDim2.new(1, -48, 0, 270)
+interactablesContainer.Position = UDim2.new(0, 24, 0, 180)
 interactablesContainer.BackgroundTransparency = 1
 interactablesContainer.ZIndex = 16
 interactablesContainer.Parent = eventChamberView
 
 local interactablesLayout = Instance.new("UIGridLayout")
-interactablesLayout.CellSize = UDim2.new(0.48, 0, 0, 52)
-interactablesLayout.CellPadding = UDim2.new(0.04, 0, 0, 12)
+interactablesLayout.CellSize = UDim2.new(0.48, 0, 0, 58)
+interactablesLayout.CellPadding = UDim2.new(0.04, 0, 0, 14)
 interactablesLayout.Parent = interactablesContainer
+
+local isEventInteractPending = false
 
 local function renderEventChamber(eventView: StateTypes.EventView)
 	eventTitle.Text = string.format("🔮 %s (%s)", eventView.Name, eventView.Category)
@@ -1306,16 +1488,29 @@ local function renderEventChamber(eventView: StateTypes.EventView)
 		btnFrame.ZIndex = 17
 		btnFrame.Parent = interactablesContainer
 
-		local btnColor = interactable.IsActive and Color3.fromRGB(70, 50, 120) or Color3.fromRGB(50, 50, 60)
-		local btnText = string.format("%s: %s", interactable.Name, interactable.Label or "Interact")
+		local btnColor = interactable.IsActive and Color3.fromRGB(75, 55, 125) or Color3.fromRGB(50, 48, 60)
+		local btnText = interactable.Label or interactable.Name
 		local btn = UIFactory.createButton(btnFrame, btnText, btnColor, function()
+			if isEventInteractPending then return end
 			if not interactable.IsActive then return end
+			isEventInteractPending = true
+			bannerLabel.Text = "Submitting choice..."
+			bannerLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
 			if InteractEventObjectEvent then
 				InteractEventObjectEvent:FireServer(interactable.Id)
 			end
 		end)
 		btn.ZIndex = 18
+		btn.TextWrapped = true
+		btn.TextSize = 13
 		btn.Active = interactable.IsActive
+
+		local btnPadding = Instance.new("UIPadding")
+		btnPadding.PaddingLeft = UDim.new(0, 12)
+		btnPadding.PaddingRight = UDim.new(0, 12)
+		btnPadding.PaddingTop = UDim.new(0, 6)
+		btnPadding.PaddingBottom = UDim.new(0, 6)
+		btnPadding.Parent = btn
 	end
 end
 
@@ -1330,6 +1525,13 @@ local function switchView(phase: StateTypes.RunPhase)
 	rewardsView.Visible = (phase == "Rewards")
 	victoryView.Visible = (phase == "RunVictory")
 	defeatView.Visible = (phase == "RunDefeat")
+
+	if phase ~= "ActiveRoom" then
+		eventChamberView.Visible = false
+		if reactionWidget then
+			reactionWidget.Visible = false
+		end
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -1372,13 +1574,13 @@ if RunStateUpdateEvent then
 		elseif snapshot.Phase == "ActiveRoom" then
 			bannerLabel.Text = "Entered Room: Combat"
 			bannerLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
-			if snapshot.Event ~= nil then
+			if snapshot.Event ~= nil and not snapshot.Event.IsCompleted then
 				combatHudView.Visible = false
 				eventChamberView.Visible = true
 				renderEventChamber(snapshot.Event)
 				bannerLabel.Text = string.format("Event Chamber: %s", snapshot.Event.Name)
 			else
-				combatHudView.Visible = true
+				combatHudView.Visible = (snapshot.Event == nil)
 				eventChamberView.Visible = false
 			end
 		elseif snapshot.Phase == "Rewards" then
@@ -1513,18 +1715,22 @@ if CombatStateUpdateEvent then
 			environmentBadge.Visible = false
 		end
 
-		-- Active Reaction Window Update
+		-- Active Reaction Window Update (Rhythm Approach Circle)
 		if snapshot.ActiveReactionWindow then
 			local win = snapshot.ActiveReactionWindow
-			activeReactionWindowId = win.WindowId
-			reactionPromptFrame.Visible = true
-			reactionDetail.Text = string.format("%s: %s (%d %s)", win.EnemyName, win.AttackName, win.RawDamage, win.DamageType)
-			reactionTimerLabel.Text = string.format("Reaction window: %.1fs remaining", win.TimeRemaining)
-			dodgeBtnFrame.Visible = win.CanDodge
-			parryBtnFrame.Visible = win.CanParry
+			if activeReactionWindowId ~= win.WindowId then
+				activeReactionWindowId = win.WindowId
+				currentReactionWindowView = win
+				startApproachCircleAnimation(win)
+			end
 		else
 			activeReactionWindowId = nil
-			reactionPromptFrame.Visible = false
+			currentReactionWindowView = nil
+			reactionWidget.Visible = false
+			if approachRenderConn then
+				approachRenderConn:Disconnect()
+				approachRenderConn = nil
+			end
 		end
 
 		if snapshot.Message and snapshot.Message ~= "" then
@@ -1639,6 +1845,15 @@ if ActionResultEvent then
 			if res.Success == false then
 				bannerLabel.Text = string.format("⚠️ %s", tostring(res.Message or "Cannot play card."))
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+			end
+		elseif res.Action == "InteractEventObject" then
+			isEventInteractPending = false
+			if res.Success == false then
+				bannerLabel.Text = string.format("⚠️ %s", tostring(res.Message or "Interaction failed."))
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+			else
+				bannerLabel.Text = tostring(res.Message or "Interaction recorded.")
+				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 			end
 		elseif res.Success == false then
 			bannerLabel.Text = string.format("⚠️ %s: %s", res.Action or "Action", res.Message or "Action failed.")

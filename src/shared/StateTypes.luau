@@ -151,7 +151,8 @@ export type CombatEvent = {
 --------------------------------------------------------------------------------
 
 export type ReactionType = "Dodge" | "Parry"
-export type ReactionResult = "Success" | "Miss" | "Early" | "Late" | "None"
+export type TimingJudgement = "Perfect" | "Good" | "Early" | "Late" | "Miss" | "Unavailable" | "None"
+export type ReactionResult = "Success" | "Perfect" | "Good" | "Miss" | "Early" | "Late" | "Unavailable" | "None"
 
 export type AttackReactionProfile = {
 	AttackId: string,
@@ -159,10 +160,16 @@ export type AttackReactionProfile = {
 	CanDodge: boolean,
 	CanParry: boolean,
 	TelegraphDuration: number,
+	ImpactDelay: number,
+	RecoveryDuration: number,
 	DodgeWindowStart: number,
 	DodgeWindowEnd: number,
 	ParryWindowStart: number,
 	ParryWindowEnd: number,
+	DodgePerfectTolerance: number,
+	DodgeGoodTolerance: number,
+	ParryPerfectTolerance: number,
+	ParryGoodTolerance: number,
 	DamageType: DamageType,
 	RawDamage: number,
 	IsAoE: boolean?,
@@ -174,9 +181,18 @@ export type ReactionWindowState = {
 	EnemyInstanceId: string,
 	TargetUserIds: { number },
 	OpenTime: number,
+	ImpactTime: number,
 	CloseTime: number,
 	Resolved: boolean,
-	PerPlayerResult: { [number]: { Reaction: ReactionType?, Result: ReactionResult, SubmittedAt: number? } },
+	PerPlayerResult: {
+		[number]: {
+			Reaction: ReactionType?,
+			Result: ReactionResult,
+			Judgement: TimingJudgement?,
+			TimeDelta: number?,
+			SubmittedAt: number?,
+		},
+	},
 }
 
 export type ReactionWindowView = {
@@ -187,9 +203,16 @@ export type ReactionWindowView = {
 	RawDamage: number,
 	CanDodge: boolean,
 	CanParry: boolean,
+	OpenTime: number,
+	ImpactTime: number,
+	CloseTime: number,
 	TimeRemaining: number,
 	TotalDuration: number,
 	TargetUserIds: { number },
+	DodgePerfectTolerance: number?,
+	DodgeGoodTolerance: number?,
+	ParryPerfectTolerance: number?,
+	ParryGoodTolerance: number?,
 }
 
 export type EnvironmentId = "RainSoaked" | "LavaCavern" | "FrozenWastes" | "ToxicSwamp" | "ArcaneStorm" | "None"

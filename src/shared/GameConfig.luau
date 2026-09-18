@@ -60,15 +60,22 @@ GameConfig.Dungeon = {
 	EventChanceLate = 0.15,       -- Chance for Event room in tiers 5..8
 }
 
---------------------------------------------------------------------------------
--- Reaction System Tuning (Dodge / Parry)
---------------------------------------------------------------------------------
-
 GameConfig.Reaction = {
-	DefaultTelegraphDuration = 1.0, -- Seconds telegraph displays before strike
-	DefaultDodgeWindow = 1.2,       -- Total window duration for Dodge (generous)
-	DefaultParryStart = 0.7,        -- Monotonic offset when tight Parry window opens
-	DefaultParryDuration = 0.3,     -- Window duration for Parry (0.7s to 1.0s, tight)
+	Keybinds = {
+		Dodge = Enum.KeyCode.C,
+		Parry = Enum.KeyCode.V,
+	},
+	DefaultTelegraphDuration = 1.2,
+	DefaultImpactDelay = 1.0,
+	DefaultRecoveryDuration = 0.3,
+	DefaultDodgePerfectTolerance = 0.15,
+	DefaultDodgeGoodTolerance = 0.35,
+	DefaultParryPerfectTolerance = 0.08,
+	DefaultParryGoodTolerance = 0.18,
+	-- Backwards compatibility
+	DefaultDodgeWindow = 1.35,
+	DefaultParryStart = 0.85,
+	DefaultParryDuration = 0.30,
 }
 
 --------------------------------------------------------------------------------

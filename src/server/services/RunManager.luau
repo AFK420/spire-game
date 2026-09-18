@@ -328,9 +328,11 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 	end
 
 	local eventView: StateTypes.EventView? = nil
-	local es = getEventService()
-	if es and es.getEventSnapshotForPlayer then
-		eventView = es.getEventSnapshotForPlayer(player)
+	if runToRead.Phase == "ActiveRoom" and runToRead.ActiveRoom and runToRead.ActiveRoom.Type == "Event" then
+		local es = getEventService()
+		if es and es.getEventSnapshotForPlayer then
+			eventView = es.getEventSnapshotForPlayer(player)
+		end
 	end
 
 	return {
@@ -1087,6 +1089,12 @@ function RunManager.onEventCompleted(outcome: "Success" | "Failure", node: Dunge
 	end
 
 	runToMutate.ActiveEvent = nil
+	local es = getEventService()
+	if es then
+		pcall(function()
+			es.cleanupEvent()
+		end)
+	end
 
 	if outcome == "Success" then
 		RunManager.transitionToRewards(false, false)

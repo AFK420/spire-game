@@ -24,15 +24,18 @@ local PersistenceService = require(servicesFolder:WaitForChild("PersistenceServi
 
 local EventService = {}
 
-local activeEventState: StateTypes.EventState? = nil
-local activePartyRef: { [number]: StateTypes.PlayerState } = {}
-local onEventCompletedCallback: ((outcome: "Success" | "Failure", eventState: StateTypes.EventState) -> ())? = nil
+local activeEventStateLive: StateTypes.EventState? = nil
+local activeEventStateTest: StateTypes.EventState? = nil
+local activePartyRefLive: { [number]: StateTypes.PlayerState } = {}
+local activePartyRefTest: { [number]: StateTypes.PlayerState } = {}
+local onEventCompletedCallbackLive: ((outcome: "Success" | "Failure", eventState: StateTypes.EventState) -> ())? = nil
+local onEventCompletedCallbackTest: ((outcome: "Success" | "Failure", eventState: StateTypes.EventState) -> ())? = nil
 
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
 
-local function getRunManager()
+local function getRunManager(): any
 	local rm = servicesFolder:FindFirstChild("RunManager")
 	if rm then
 		return require(rm :: ModuleScript)
@@ -40,14 +43,63 @@ local function getRunManager()
 	return nil
 end
 
+local function isTestIsolated(): boolean
+	local rm = getRunManager()
+	if rm and rm.isTestIsolationActive then
+		return rm.isTestIsolationActive()
+	end
+	return false
+end
+
+local function getActiveEventState(): StateTypes.EventState?
+	return if isTestIsolated() then activeEventStateTest else activeEventStateLive
+end
+
+local function setActiveEventState(st: StateTypes.EventState?)
+	if isTestIsolated() then
+		activeEventStateTest = st
+	else
+		activeEventStateLive = st
+	end
+end
+
+local function getActivePartyRef(): { [number]: StateTypes.PlayerState }
+	return if isTestIsolated() then activePartyRefTest else activePartyRefLive
+end
+
+local function setActivePartyRef(p: { [number]: StateTypes.PlayerState })
+	if isTestIsolated() then
+		activePartyRefTest = p
+	else
+		activePartyRefLive = p
+	end
+end
+
+local function getCallback(): ((outcome: "Success" | "Failure", eventState: StateTypes.EventState) -> ())?
+	return if isTestIsolated() then onEventCompletedCallbackTest else onEventCompletedCallbackLive
+end
+
+local function setCallback(cb: ((outcome: "Success" | "Failure", eventState: StateTypes.EventState) -> ())?)
+	if isTestIsolated() then
+		onEventCompletedCallbackTest = cb
+	else
+		onEventCompletedCallbackLive = cb
+	end
+end
+
 function EventService.getActiveEvent(): StateTypes.EventState?
-	return activeEventState
+	return getActiveEventState()
 end
 
 function EventService.cleanupEvent()
-	activeEventState = nil
-	table.clear(activePartyRef)
-	onEventCompletedCallback = nil
+	setActiveEventState(nil)
+	if isTestIsolated() then
+		table.clear(activePartyRefTest)
+		onEventCompletedCallbackTest = nil
+	else
+		table.clear(activePartyRefLive)
+		onEventCompletedCallbackLive = nil
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -61,8 +113,8 @@ function EventService.startEvent(
 	completionCallback: ((outcome: "Success" | "Failure", eventState: StateTypes.EventState) -> ())?
 ): StateTypes.EventState
 	EventService.cleanupEvent()
-	activePartyRef = partyMembers
-	onEventCompletedCallback = completionCallback
+	setActivePartyRef(partyMembers)
+	setCallback(completionCallback)
 
 	local def = EventData.getDefinition(eventId)
 	if not def then
@@ -177,7 +229,7 @@ function EventService.startEvent(
 		end
 	end
 
-	activeEventState = {
+	local newEventState: StateTypes.EventState = {
 		EventId = eventId,
 		DefinitionId = def.Id,
 		Name = def.Name,
@@ -196,9 +248,10 @@ function EventService.startEvent(
 		SharedEventState = sharedState,
 		Message = string.format("Entered: %s", def.Name),
 	}
+	setActiveEventState(newEventState)
 
 	print(string.format("[EventService] Started event: %s (%s) with %d attempts.", def.Name, eventId, def.MaxAttempts))
-	return activeEventState
+	return newEventState
 end
 
 --------------------------------------------------------------------------------
@@ -206,11 +259,30 @@ end
 --------------------------------------------------------------------------------
 
 function EventService.interact(player: any, interactableId: string): (boolean, string?, boolean?, StateTypes.EventState?)
-	if not activeEventState or activeEventState.IsCompleted then
+	local activeEventState = getActiveEventState()
+	if not activeEventState then
+		-- Defensive fallback: attempt recovery from RunManager run state if available
+		local rm = getRunManager()
+		if rm and rm.getRunState then
+			local rState = rm.getRunState()
+			if rState and rState.ActiveEvent then
+				activeEventState = rState.ActiveEvent
+				setActiveEventState(activeEventState)
+				setActivePartyRef(rState.PartyMembers)
+			end
+		end
+	end
+
+	if not activeEventState then
 		return false, "No active event chamber.", false, nil
 	end
 
+	if activeEventState.IsCompleted then
+		return true, "Event is already resolved.", true, activeEventState
+	end
+
 	local userId = (typeof(player) == "number") and player or (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId)
+	local activePartyRef = getActivePartyRef()
 	local pState = (typeof(userId) == "number") and activePartyRef[userId] or nil
 	if not pState then
 		return false, "Player is not a member of the current party.", false, activeEventState
@@ -293,6 +365,7 @@ end
 --------------------------------------------------------------------------------
 
 function EventService.resolveEvent(outcome: "Success" | "Failure", message: string?)
+	local activeEventState = getActiveEventState()
 	if not activeEventState or activeEventState.IsCompleted then return end
 
 	activeEventState.IsCompleted = true
@@ -305,6 +378,7 @@ function EventService.resolveEvent(outcome: "Success" | "Failure", message: stri
 	end
 
 	local def = EventData.getDefinition(activeEventState.DefinitionId)
+	local activePartyRef = getActivePartyRef()
 	if def then
 		if outcome == "Success" then
 			-- Grant rewards to all living party members
@@ -336,9 +410,10 @@ function EventService.resolveEvent(outcome: "Success" | "Failure", message: stri
 
 	print(string.format("[EventService] Event resolved: Outcome=%s, Msg=%s", outcome, tostring(message)))
 
-	if onEventCompletedCallback then
+	local cb = getCallback()
+	if cb then
 		pcall(function()
-			onEventCompletedCallback(outcome, activeEventState :: StateTypes.EventState)
+			cb(outcome, activeEventState :: StateTypes.EventState)
 		end)
 	end
 end
@@ -348,6 +423,7 @@ end
 --------------------------------------------------------------------------------
 
 function EventService.getEventSnapshotForPlayer(player: any): StateTypes.EventView?
+	local activeEventState = getActiveEventState()
 	if not activeEventState then return nil end
 
 	local userId = (typeof(player) == "number") and player or (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId)
