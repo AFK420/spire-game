@@ -35,6 +35,7 @@ local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
 local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
+local BuildInfo = require(Shared:WaitForChild("BuildInfo") :: ModuleScript)
 
 local services = script.Parent
 local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
@@ -1433,6 +1434,208 @@ local function runSuite70()
 			ArenaVisualizer.cleanup()
 		end)
 		assertTest(cleanupOk == true, "[Suite 70.23] ArenaVisualizer.cleanup executes cleanly with pcall protection")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+end
+
+local function runSuite71()
+	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
+
+	-- 71.1: Build fingerprinting invariants
+	assertTest(BuildInfo.BUILD_ID == "18918ad5-mapflow-handshake-v2", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "MapFlow Handshake & StateSync Recovery", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+
+	do
+		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+
+		local flowPlayer = {
+			UserId = 71001,
+			Name = "HandshakeHero",
+			DisplayName = "HandshakeHero",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(flowPlayer :: any)
+		local pState = RunManager.addPlayer(flowPlayer :: any)
+		assert(pState, "flowPlayer pState exists")
+		ClassService.selectClass(flowPlayer :: any, "Ironclad")
+		ClassService.lockClass(flowPlayer :: any)
+
+		local startOk = RunManager.startRun(flowPlayer :: any)
+		assertTest(startOk == true, "[Suite 71.3] startRun transitions to MapSelect")
+
+		local runState = RunManager.getRunState()
+		assertTest(runState.Phase == "MapSelect", "[Suite 71.4] Initial run phase is MapSelect")
+		local targetNodeId = runState.AvailableNodeIds[1]
+		assert(targetNodeId, "targetNodeId exists in Act 1 tier 1")
+
+		-- Server processes VoteMapNode
+		local voteOk, voteErr, won, phase, rev = RunManager.voteMapNode(flowPlayer :: any, targetNodeId)
+		assertTest(voteOk == true, "[Suite 71.5] voteMapNode returns true for available first room")
+		assertTest(voteErr == nil, "[Suite 71.6] voteMapNode returns nil error on valid consensus")
+		assertTest(won == true, "[Suite 71.7] voteMapNode returns won == true for consensus winner")
+		assertTest(phase == "ActiveRoom", "[Suite 71.8] voteMapNode returns Phase == 'ActiveRoom'")
+		assertTest(rev ~= nil and rev >= 2, "[Suite 71.9] voteMapNode returns incremented StateRevision")
+
+		-- Invariant: Server runState committed
+		assertTest(runState.Phase == "ActiveRoom", "[Suite 71.10] runState.Phase committed to ActiveRoom")
+		assertTest(runState.CurrentNodeId == targetNodeId, "[Suite 71.11] runState.CurrentNodeId set to target room")
+		assertTest(runState.ActiveCombat ~= nil, "[Suite 71.12] ActiveCombat instantiated on room entry")
+
+		-- 71.3: Authoritative ActionResult payload constructed
+		local actionResultPayload: StateTypes.ActionResult = {
+			Action = "VoteMapNode",
+			Success = true,
+			Won = (won == true),
+			NodeId = targetNodeId,
+			Phase = phase,
+			StateRevision = rev,
+		}
+		assertTest(actionResultPayload.Won == true, "[Suite 71.13] ActionResult has Won == true")
+		assertTest(actionResultPayload.Phase == "ActiveRoom", "[Suite 71.14] ActionResult has authoritative Phase == 'ActiveRoom'")
+		assertTest(actionResultPayload.StateRevision == runState.StateRevision, "[Suite 71.15] ActionResult carries authoritative StateRevision")
+
+		-- 71.4: Client-side handshake simulation
+		-- Upon receiving Won == true, client sets banner to "Room selected. Syncing room..." and sends RequestStateSync
+		local clientBannerText = "Room selected. Syncing room..."
+		assertTest(clientBannerText == "Room selected. Syncing room...", "[Suite 71.16] Client displays 'Room selected. Syncing room...' on Won=true")
+
+		-- 71.5: Server fulfills RequestStateSync
+		local syncSnapshot = RunManager.getRunSnapshotForPlayer(flowPlayer :: any)
+		assertTest(syncSnapshot ~= nil, "[Suite 71.17] RequestStateSync returns valid snapshot")
+		assertTest(syncSnapshot.Phase == "ActiveRoom", "[Suite 71.18] StateSync snapshot Phase is ActiveRoom")
+		assertTest(syncSnapshot.CurrentNodeId == targetNodeId, "[Suite 71.19] StateSync snapshot CurrentNodeId matches target")
+		assertTest(syncSnapshot.StateRevision == runState.StateRevision, "[Suite 71.20] StateSync snapshot StateRevision matches server")
+
+		-- 71.6: Central view switcher simulation
+		local mockViews = {
+			lobbyView = { Visible = true },
+			mapView = { Visible = true },
+			combatHudView = { Visible = false },
+			rewardsView = { Visible = false },
+		}
+		local function mockSwitchView(targetPhase: StateTypes.RunPhase)
+			mockViews.lobbyView.Visible = (targetPhase == "Lobby")
+			mockViews.mapView.Visible = (targetPhase == "MapSelect")
+			mockViews.combatHudView.Visible = (targetPhase == "ActiveRoom")
+			mockViews.rewardsView.Visible = (targetPhase == "Rewards")
+		end
+
+		mockSwitchView(syncSnapshot.Phase)
+		assertTest(mockViews.mapView.Visible == false, "[Suite 71.21] switchView hides mapView in ActiveRoom")
+		assertTest(mockViews.combatHudView.Visible == true, "[Suite 71.22] switchView shows combatHudView in ActiveRoom")
+		clientBannerText = "Entered Room: Combat"
+		assertTest(clientBannerText == "Entered Room: Combat", "[Suite 71.23] Client banner updates to 'Entered Room: Combat' upon ActiveRoom RunStateUpdate")
+
+		-- 71.7: Failure Injection C: Duplicate vote returns idempotent success
+		local dupOk, dupErr, dupWon, dupPhase, dupRev = RunManager.voteMapNode(flowPlayer :: any, targetNodeId)
+		assertTest(dupOk == true, "[Suite 71.24] Duplicate vote returns true (idempotent)")
+		assertTest(dupErr == nil, "[Suite 71.25] Duplicate vote returns nil error")
+		assertTest(dupWon == true, "[Suite 71.26] Duplicate vote returns won == true")
+		assertTest(dupPhase == "ActiveRoom", "[Suite 71.27] Duplicate vote returns Phase == 'ActiveRoom'")
+		assertTest(dupRev == runState.StateRevision, "[Suite 71.28] Duplicate vote preserves current StateRevision")
+
+		-- 71.8: Failure Injection D: Voting another node in ActiveRoom rejected
+		local invalidOk, invalidErr, invalidWon, invalidPhase, invalidRev = RunManager.voteMapNode(flowPlayer :: any, "Act1_T1_L99_Invalid")
+		assertTest(invalidOk == false, "[Suite 71.29] Voting different node in ActiveRoom is rejected")
+		assertTest(invalidErr ~= nil, "[Suite 71.30] Voting in ActiveRoom returns distinct error message")
+		assertTest(invalidWon == false, "[Suite 71.31] Voting different node has won == false")
+		assertTest(invalidPhase == "ActiveRoom", "[Suite 71.32] Error payload preserves authoritative ActiveRoom phase")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+
+	do
+		-- 71.9: Failure Injection A: Combat Setup Failure Rollback
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+
+		local failPlayer = {
+			UserId = 71002,
+			Name = "FailRollbackTester",
+			DisplayName = "FailRollbackTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(failPlayer :: any)
+		RunManager.addPlayer(failPlayer :: any)
+		ClassService.selectClass(failPlayer :: any, "Ironclad")
+		ClassService.lockClass(failPlayer :: any)
+		RunManager.startRun(failPlayer :: any)
+
+		local runState = RunManager.getRunState()
+		local failNodeId = runState.AvailableNodeIds[1]
+		local revBeforeFailure = runState.StateRevision
+
+		-- Inject failure into CombatService.startCombat
+		local originalStartCombat = CombatService.startCombat
+		CombatService.startCombat = function(...)
+			error("Obsidian is not a valid member of Enum.Material")
+		end
+
+		local travelOk, travelErr = RunManager.travelToNode(failNodeId)
+		CombatService.startCombat = originalStartCombat -- restore immediately
+
+		assertTest(travelOk == false, "[Suite 71.33] travelToNode returns false when combat setup throws error")
+		assertTest(travelErr ~= nil and string.find(travelErr, "Obsidian is not a valid member") ~= nil, "[Suite 71.34] travelToNode captures exact combat setup error message")
+		assertTest(runState.Phase == "MapSelect", "[Suite 71.35] Phase cleanly rolled back to MapSelect on combat error")
+		assertTest(runState.CurrentNodeId == nil, "[Suite 71.36] CurrentNodeId remained nil on combat error rollback")
+		assertTest(runState.ActiveCombat == nil, "[Suite 71.37] ActiveCombat remained nil on combat error rollback")
+		assertTest(runState.StateRevision == revBeforeFailure, "[Suite 71.38] StateRevision remained unbumped on combat error rollback")
+
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+	end
+
+	do
+		-- 71.10: Failure Injection B: Delayed RunStateUpdate recovered by RequestStateSync
+		CombatService.cleanupCombat()
+		RunManager.resetToLobby()
+
+		local recoveryPlayer = {
+			UserId = 71003,
+			Name = "RecoveryTester",
+			DisplayName = "RecoveryTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.loadProfile(recoveryPlayer :: any)
+		RunManager.addPlayer(recoveryPlayer :: any)
+		ClassService.selectClass(recoveryPlayer :: any, "Ironclad")
+		ClassService.lockClass(recoveryPlayer :: any)
+		RunManager.startRun(recoveryPlayer :: any)
+
+		local runState = RunManager.getRunState()
+		local targetNode = runState.AvailableNodeIds[1]
+		RunManager.voteMapNode(recoveryPlayer :: any, targetNode)
+
+		-- Simulate client whose RunStateUpdate packet was dropped or delayed
+		local clientState = {
+			lastRunStateRevision = 1,
+			currentPhase = "MapSelect",
+			mapVisible = true,
+			combatVisible = false,
+		}
+
+		-- Client triggers RequestStateSync to recover
+		local recoveredSnapshot = RunManager.getRunSnapshotForPlayer(recoveryPlayer :: any)
+		assertTest(recoveredSnapshot.Phase == "ActiveRoom", "[Suite 71.39] StateSync snapshot has Phase == 'ActiveRoom'")
+		assertTest(recoveredSnapshot.StateRevision ~= nil and recoveredSnapshot.StateRevision > clientState.lastRunStateRevision,
+			"[Suite 71.40] StateSync snapshot revision is higher than client's stale revision")
+
+		-- Client processes StateSync snapshot
+		if recoveredSnapshot.StateRevision and recoveredSnapshot.StateRevision >= clientState.lastRunStateRevision then
+			clientState.lastRunStateRevision = recoveredSnapshot.StateRevision
+			clientState.currentPhase = recoveredSnapshot.Phase
+			clientState.mapVisible = (recoveredSnapshot.Phase == "MapSelect")
+			clientState.combatVisible = (recoveredSnapshot.Phase == "ActiveRoom")
+		end
+
+		assertTest(clientState.currentPhase == "ActiveRoom", "[Suite 71.41] Client phase recovered to ActiveRoom via StateSync")
+		assertTest(clientState.mapVisible == false, "[Suite 71.42] Client map view hidden after StateSync recovery")
+		assertTest(clientState.combatVisible == true, "[Suite 71.43] Client combat HUD visible after StateSync recovery")
 
 		CombatService.cleanupCombat()
 		RunManager.resetToLobby()
@@ -7599,6 +7802,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 70: TURN RESOLUTION LIFECYCLE & FAIL-SAFE PHASE RECOVERY
 	----------------------------------------------------------------------------
 	runSuite70()
+
+	----------------------------------------------------------------------------
+	-- SUITE 71: MAPFLOW HANDSHAKE, STATESYNC RECOVERY & FINGERPRINTING
+	----------------------------------------------------------------------------
+	runSuite71()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

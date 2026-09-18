@@ -39,6 +39,7 @@ required_files = [
     "CARD_COLLECTION.md",
     "default.project.json",
     "src/shared/StateTypes.luau",
+    "src/shared/BuildInfo.luau",
     "src/shared/GameConfig.luau",
     "src/shared/CardData.luau",
     "src/shared/ClassData.luau",
@@ -1518,6 +1519,74 @@ test('local isReadyVotePending: boolean = false' in ui_ctrl_src, "UIController t
 test('currentCombatPhase ~= "PlayerPhase"' in ui_ctrl_src, "UIController guards ready click and card play outside PlayerPhase")
 test('readyBtn.Text = "⏳ RESOLVING..."' in ui_ctrl_src, "UIController displays RESOLVING label during ResolutionPhase")
 test('res.Action == "PlayCard"' in ui_ctrl_src, "UIController clears isPlayCardPending on PlayCard action result")
+
+# Check 66: Suite 71 MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection
+print("\n--- [Check 66] Suite 71 MapFlow Handshake, StateSync Recovery & Build Fingerprint ---")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+run_mgr_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf-8")
+build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
+
+# Build Fingerprint Invariants
+test('BUILD_ID = "18918ad5-mapflow-handshake-v2"' in build_info_src, "BuildInfo declares BUILD_ID = 18918ad5-mapflow-handshake-v2")
+test('BUILD_NAME = "MapFlow Handshake & StateSync Recovery"' in build_info_src, "BuildInfo declares BUILD_NAME = MapFlow Handshake & StateSync Recovery")
+test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
+test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
+test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
+
+# TestRunner Suite 71 Registration & Execution
+test("local function runSuite71()" in testrunner_src, "TestRunner includes Suite 71 definition")
+test("runSuite71()" in testrunner_src, "TestRunner invokes Suite 71 in runAllTests")
+test("[Suite 71.1]" in testrunner_src, "Suite 71 tests BuildInfo.BUILD_ID matches fingerprint")
+test("[Suite 71.3]" in testrunner_src, "Suite 71 tests startRun transitions to MapSelect")
+test("[Suite 71.5]" in testrunner_src, "Suite 71 tests voteMapNode returns true for available first room")
+test("[Suite 71.8]" in testrunner_src, "Suite 71 tests voteMapNode returns Phase == 'ActiveRoom'")
+test("[Suite 71.13]" in testrunner_src, "Suite 71 tests ActionResult has Won == true")
+test("[Suite 71.14]" in testrunner_src, "Suite 71 tests ActionResult has authoritative Phase == 'ActiveRoom'")
+test("[Suite 71.15]" in testrunner_src, "Suite 71 tests ActionResult carries authoritative StateRevision")
+test("[Suite 71.16]" in testrunner_src, "Suite 71 tests Client displays 'Room selected. Syncing room...' on Won=true")
+test("[Suite 71.18]" in testrunner_src, "Suite 71 tests StateSync snapshot Phase is ActiveRoom")
+test("[Suite 71.21]" in testrunner_src, "Suite 71 tests switchView hides mapView in ActiveRoom")
+test("[Suite 71.22]" in testrunner_src, "Suite 71 tests switchView shows combatHudView in ActiveRoom")
+test("[Suite 71.23]" in testrunner_src, "Suite 71 tests Client banner updates to 'Entered Room: Combat' upon ActiveRoom RunStateUpdate")
+test("[Suite 71.24]" in testrunner_src, "Suite 71 tests duplicate vote returns idempotent success")
+test("[Suite 71.29]" in testrunner_src, "Suite 71 tests voting different node in ActiveRoom is rejected")
+test("[Suite 71.33]" in testrunner_src, "Suite 71 tests travelToNode returns false when combat setup throws error")
+test("[Suite 71.35]" in testrunner_src, "Suite 71 tests Phase cleanly rolled back to MapSelect on combat error")
+test("[Suite 71.39]" in testrunner_src, "Suite 71 tests StateSync snapshot recovers dropped/delayed state")
+test("[Suite 71.41]" in testrunner_src, "Suite 71 tests Client phase recovered to ActiveRoom via StateSync")
+
+# Server Standardized [MAPFLOW] Steps 1 through 10
+test('[MAPFLOW][SERVER] 1. Vote received' in run_mgr_src, "Server logs Step 1: Vote received")
+test('[MAPFLOW][SERVER] 2. vote accepted' in run_mgr_src, "Server logs Step 2: vote accepted")
+test('[MAPFLOW][SERVER] 3. winner check' in run_mgr_src, "Server logs Step 3: winner check")
+test('[MAPFLOW][SERVER] 4. travel START' in run_mgr_src, "Server logs Step 4: travel START")
+test('[MAPFLOW][SERVER] 5. combat START' in run_mgr_src, "Server logs Step 5: combat START")
+test('[MAPFLOW][SERVER] 6. combat SUCCESS' in run_mgr_src, "Server logs Step 6: combat SUCCESS")
+test('[MAPFLOW][SERVER] 7. dungeon COMMIT' in run_mgr_src, "Server logs Step 7: dungeon COMMIT")
+test('[MAPFLOW][SERVER] 8. run COMMIT' in run_mgr_src, "Server logs Step 8: run COMMIT")
+test('[MAPFLOW][SERVER] 9. snapshot SEND' in run_mgr_src, "Server logs Step 9: snapshot SEND")
+test('[MAPFLOW][SERVER] 10. vote RETURN' in init_server_src, "Server logs Step 10: vote RETURN")
+
+# Client Standardized [MAPFLOW] Steps 11 through 20
+test('[MAPFLOW][CLIENT] 11. ActionResult RECEIVED' in ui_ctrl_src, "Client logs Step 11: ActionResult RECEIVED")
+test('[MAPFLOW][CLIENT] 12. ActionResult Won' in ui_ctrl_src, "Client logs Step 12: ActionResult Won")
+test('[MAPFLOW][CLIENT] 13. RequestStateSync SENT' in ui_ctrl_src, "Client logs Step 13: RequestStateSync SENT")
+test('[MAPFLOW][CLIENT] 14. RunStateUpdate RECEIVED' in ui_ctrl_src, "Client logs Step 14: RunStateUpdate RECEIVED")
+test('[MAPFLOW][CLIENT] 15. StateRevision checked' in ui_ctrl_src, "Client logs Step 15: StateRevision checked")
+test('[MAPFLOW][CLIENT] 16. Phase processed' in ui_ctrl_src, "Client logs Step 16: Phase processed")
+test('[MAPFLOW][CLIENT] 17. CurrentNodeId processed' in ui_ctrl_src, "Client logs Step 17: CurrentNodeId processed")
+test('[MAPFLOW][CLIENT] 18. switchView called' in ui_ctrl_src, "Client logs Step 18: switchView called")
+test('[MAPFLOW][CLIENT] 19. MapVisible updated' in ui_ctrl_src, "Client logs Step 19: MapVisible updated")
+test('[MAPFLOW][CLIENT] 20. CombatVisible updated' in ui_ctrl_src, "Client logs Step 20: CombatVisible updated")
+
+# Handshake & StateSync Invariants
+test('Room selected. Syncing room...' in ui_ctrl_src, "Client UI updates banner to 'Room selected. Syncing room...' on Won=true")
+test('Entered Room: Combat' in ui_ctrl_src, "Client UI updates banner to 'Entered Room: Combat' on authoritative ActiveRoom update")
+test('RequestStateSyncEvent:FireServer()' in ui_ctrl_src, "Client triggers RequestStateSync on Won consensus")
+test('[MAPFLOW][SERVER] RequestStateSync fulfilled' in init_server_src, "Server fulfills RequestStateSync with logging")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

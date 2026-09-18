@@ -182,8 +182,8 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
 		isReal = true
 	end
-	local runToRead = if (isIsolatedTesting and isReal and liveRun.PartyMembers[userId]) then liveRun else currentRun
-	local dRun = if (isIsolatedTesting and isReal and liveRun.PartyMembers[userId]) then liveDungeonRun else internalDungeonRun
+	local runToRead = if (isIsolatedTesting and isReal) then liveRun else currentRun
+	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
 	local actName = "Act 1: The Forsaken Ascent"
 	if dRun and dRun.Acts[dRun.CurrentActIndex] then
 		actName = dRun.Acts[dRun.CurrentActIndex].Name
@@ -692,7 +692,7 @@ function RunManager.startRun(initiator: any?): boolean
 	return true
 end
 
-function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?, boolean?)
+function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, string?, boolean?, StateTypes.RunPhase?, number?)
 	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
 	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
 		isReal = true
@@ -703,39 +703,40 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	local userId = (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId) or player
 	local pState = (typeof(userId) == "number") and runToUse.PartyMembers[userId] or nil
 
-	print(string.format("[MAPFLOW][SERVER][1] [MapVote] Player=%s Target=%s Phase=%s Rev=%d",
+	print(string.format("[MAPFLOW][SERVER] 1. Vote received [MapVote]: Player=%s, Target=%s, Phase=%s, Rev=%d",
 		tostring(userId), tostring(targetNodeId), tostring(runToUse.Phase), runToUse.StateRevision or 0))
 
 	if not dRun then
-		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Dungeon run is not initialized.")
-		return false, "Dungeon run is not initialized.", false
+		print("[MAPFLOW][SERVER] vote rejected: Reason=Dungeon run is not initialized.")
+		return false, "Dungeon run is not initialized.", false, runToUse.Phase, runToUse.StateRevision
 	end
 
 	if not pState then
-		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Player not in party.")
-		return false, "Player not in party.", false
+		print("[MAPFLOW][SERVER] vote rejected: Reason=Player not in party.")
+		return false, "Player not in party.", false, runToUse.Phase, runToUse.StateRevision
 	end
 	if pState.IsConnected == false then
-		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Player is disconnected.")
-		return false, "Player is disconnected.", false
+		print("[MAPFLOW][SERVER] vote rejected: Reason=Player is disconnected.")
+		return false, "Player is disconnected.", false, runToUse.Phase, runToUse.StateRevision
 	end
 
 	local node = DungeonService.getNode(dRun, targetNodeId)
 	if not node then
-		print("[MAPFLOW][SERVER][9] [MapVote] vote rejected: Reason=Target room does not exist in dungeon.")
-		return false, "Target room does not exist in dungeon.", false
+		print("[MAPFLOW][SERVER] vote rejected: Reason=Target room does not exist in dungeon.")
+		return false, "Target room does not exist in dungeon.", false, runToUse.Phase, runToUse.StateRevision
 	end
 
 	-- Idempotent handling: If the run has already transitioned to ActiveRoom and the winning CurrentNodeId
 	-- matches the requested targetNodeId from a valid party member, treat it as an already-completed success.
 	if runToUse.Phase == "ActiveRoom" and runToUse.CurrentNodeId == targetNodeId then
-		print(string.format("[MAPFLOW][SERVER][8] [MapVote] duplicate vote received: Node=%s, CurrentNode=%s", targetNodeId, tostring(runToUse.CurrentNodeId)))
-		return true, nil, true
+		print(string.format("[MAPFLOW][SERVER] duplicate vote received (idempotent): Node=%s, CurrentNode=%s, Phase=ActiveRoom, Rev=%d",
+			targetNodeId, tostring(runToUse.CurrentNodeId), runToUse.StateRevision or 0))
+		return true, nil, true, runToUse.Phase, runToUse.StateRevision
 	end
 
 	if runToUse.Phase ~= "MapSelect" then
-		print("[MAPFLOW][SERVER][9] vote rejected: Reason=Map selection is no longer active.")
-		return false, "Map selection is no longer active.", false
+		print(string.format("[MAPFLOW][SERVER] vote rejected: Reason=Map selection is no longer active (Phase=%s).", tostring(runToUse.Phase)))
+		return false, "Map selection is no longer active.", false, runToUse.Phase, runToUse.StateRevision
 	end
 
 	local isAvailable = false
@@ -747,11 +748,12 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 
 	if not isAvailable then
-		print("[MAPFLOW][SERVER][9] vote rejected: Reason=Target room is not currently reachable.")
-		return false, "Target room is not currently reachable.", false
+		print("[MAPFLOW][SERVER] vote rejected: Reason=Target room is not currently reachable.")
+		return false, "Target room is not currently reachable.", false, runToUse.Phase, runToUse.StateRevision
 	end
 
 	pState.VotedNodeId = targetNodeId
+	print(string.format("[MAPFLOW][SERVER] 2. vote accepted: Player=%s, Target=%s", tostring(userId), tostring(targetNodeId)))
 
 	-- Consensus check among connected party members
 	local votes: { [string]: number } = {}
@@ -796,21 +798,21 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 		end
 	end
 
-	print(string.format("[MAPFLOW][SERVER][2] vote validation result: Valid=true, Winner=%s, Votes=%s",
+	print(string.format("[MAPFLOW][SERVER] 3. winner check: Winner=%s, Votes=%s",
 		tostring(winningNodeId), HttpService:JSONEncode(votes)))
 
 	if winningNodeId then
 		for _, member in runToUse.PartyMembers do
 			member.VotedNodeId = nil
 		end
-		print(string.format("[MAPFLOW][SERVER][3] travelToNode starting: Target=%s", winningNodeId))
+		print(string.format("[MAPFLOW][SERVER] 4. travel START: Target=%s", winningNodeId))
 		local travelOk, travelErr = RunManager.travelToNode(winningNodeId, isReal)
-		return travelOk, travelErr, true
+		return travelOk, travelErr, true, runToUse.Phase, runToUse.StateRevision
 	else
 		if not isIsolatedTesting or isReal then
 			RunManager.broadcastRunSnapshots(string.format("%s voted for room %s", pState.DisplayName, targetNodeId), isReal)
 		end
-		return true, nil, false
+		return true, nil, false, runToUse.Phase, runToUse.StateRevision
 	end
 end
 
@@ -836,6 +838,7 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 			CombatService = require(servicesFolder:WaitForChild("CombatService") :: ModuleScript)
 		end
 
+		print(string.format("[MAPFLOW][SERVER] 5. combat START: Node=%s", node.Id))
 		local encounterId = "enc_" .. node.Id
 		local combatOk, combatResult = pcall(function()
 			return CombatService.startCombat(
@@ -851,17 +854,18 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 		if not combatOk or not combatResult then
 			local combatErr = not combatOk and tostring(combatResult) or "startCombat returned nil"
-			warn(string.format("[MAPFLOW][SERVER][4] combat setup result: Success=false, Err=%s", combatErr))
-			print(string.format("[MAPFLOW][SERVER][10] rollback executed: Phase=MapSelect, Err=%s", combatErr))
+			warn(string.format("[MAPFLOW][SERVER] combat setup result: Success=false, Err=%s", combatErr))
+			print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", combatErr))
 			return false, "Failed to start combat: " .. combatErr
 		end
 
 		activeCombat = combatResult
-		print("[MAPFLOW][SERVER][4] combat setup result: Success=true")
+		print(string.format("[MAPFLOW][SERVER] 6. combat SUCCESS: Node=%s", node.Id))
 	end
 
 	-- Stage 3: Commit dungeon progression now that encounter is verified
 	DungeonService.commitNode(dRun, node)
+	print(string.format("[MAPFLOW][SERVER] 7. dungeon COMMIT: Node=%s", node.Id))
 
 	-- Stage 4: Commit run state transactionally with incremented revision
 	runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
@@ -914,16 +918,16 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		end)
 	end
 
-	print(string.format("[MAPFLOW][SERVER][5] state committed: Phase=ActiveRoom, Rev=%d, Node=%s",
+	print(string.format("[MAPFLOW][SERVER] 8. run COMMIT: Phase=ActiveRoom, Rev=%d, Node=%s",
 		runToMutate.StateRevision, targetNodeId))
 
 	-- Stage 6: Broadcast state snapshot to all connected clients
 	if not isIsolatedTesting or isLiveAction then
-		print(string.format("[MAPFLOW][SERVER][6] snapshot broadcast dispatched: Rev=%d", runToMutate.StateRevision))
+		print(string.format("[MAPFLOW][SERVER] 9. snapshot SEND: Phase=ActiveRoom, Rev=%d", runToMutate.StateRevision))
 		RunManager.broadcastRunSnapshots(string.format("Entered Room: %s (Tier %d)", node.Type, node.Tier), isLiveAction)
 	end
 
-	print("[MAPFLOW][SERVER][7] travelToNode completed: Success=true")
+	print("[MAPFLOW][SERVER] travelToNode completed: Success=true")
 	return true, nil
 end
 
@@ -956,9 +960,9 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 	end
 
 	if node.Type == "Act Boss" and node.Act == 4 then
-		currentRun.StateRevision = (currentRun.StateRevision or 0) + 1
-		currentRun.Phase = "RunVictory"
-		for _, member in currentRun.PartyMembers do
+		runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
+		runToMutate.Phase = "RunVictory"
+		for _, member in runToMutate.PartyMembers do
 			if member.PlayerInstance then
 				PersistenceService.recordRunVictory(member.PlayerInstance)
 			end

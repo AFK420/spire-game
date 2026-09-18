@@ -37,6 +37,9 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
 local PassiveData = require(Shared:WaitForChild("PassiveData") :: ModuleScript)
+local BuildInfo = require(Shared:WaitForChild("BuildInfo") :: ModuleScript)
+
+print(string.format("[BUILD] Server build=%s", BuildInfo.BUILD_ID))
 
 local VALID_EQUIPMENT_SLOTS: { [string]: boolean } = {
 	["Weapon"] = true,
@@ -188,19 +191,22 @@ NetworkService.VoteMapNodeEvent.OnServerEvent:Connect(function(player: Player, t
 		return
 	end
 
-	local ok, success, err, won = pcall(function()
+	local ok, success, err, won, phase, stateRevision = pcall(function()
 		return RunManager.voteMapNode(player, targetNodeId)
 	end)
 
 	if not ok then
 		local errMsg = tostring(success)
 		warn(string.format("[Server] VoteMapNode runtime error for %s: %s", player.Name, errMsg))
+		local rState = RunManager.getRunState(player)
 		NetworkService.sendActionResult(player, {
 			Action = "VoteMapNode",
 			Success = false,
 			Message = "Server error: " .. errMsg,
 			Reason = errMsg,
 			NodeId = targetNodeId,
+			Phase = rState.Phase,
+			StateRevision = rState.StateRevision or 0,
 		})
 		return
 	end
@@ -209,19 +215,31 @@ NetworkService.VoteMapNodeEvent.OnServerEvent:Connect(function(player: Player, t
 		if err then
 			warn(string.format("[Server] VoteMapNode rejected for %s: %s", player.Name, err))
 		end
+		local rState = RunManager.getRunState(player)
+		local finalPhase = phase or rState.Phase
+		local finalRev = stateRevision or rState.StateRevision or 0
 		NetworkService.sendActionResult(player, {
 			Action = "VoteMapNode",
 			Success = false,
 			Message = tostring(err or "Failed to vote for map node."),
 			Reason = tostring(err or "Failed to vote for map node."),
 			NodeId = targetNodeId,
+			Phase = finalPhase,
+			StateRevision = finalRev,
 		})
 	else
+		local rState = RunManager.getRunState(player)
+		local finalPhase = phase or (if won then "ActiveRoom" else rState.Phase)
+		local finalRev = stateRevision or rState.StateRevision or 0
+		print(string.format("[MAPFLOW][SERVER] 10. vote RETURN: Success=true, Won=%s, Phase=%s, Rev=%d",
+			tostring(won == true), tostring(finalPhase), finalRev))
 		NetworkService.sendActionResult(player, {
 			Action = "VoteMapNode",
 			Success = true,
 			Won = (won == true),
 			NodeId = targetNodeId,
+			Phase = finalPhase,
+			StateRevision = finalRev,
 		})
 	end
 end)
@@ -307,10 +325,8 @@ end)
 
 -- 9. Client Full State Sync Request
 NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Player)
-	if not NetworkService.checkRateLimit(player, "General") then return end
-
 	if not RunManager.getPlayerState(player) then
-		if RunManager.getRunState().Phase == "Lobby" then
+		if RunManager.getRunState(player).Phase == "Lobby" then
 			RunManager.addPlayer(player)
 		end
 	end
@@ -324,6 +340,8 @@ NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Play
 	end
 
 	local runSnapshot = RunManager.getRunSnapshotForPlayer(player)
+	print(string.format("[MAPFLOW][SERVER] RequestStateSync fulfilled for %s: Phase=%s, Rev=%d, CurrentNode=%s",
+		player.Name, tostring(runSnapshot.Phase), runSnapshot.StateRevision or 0, tostring(runSnapshot.CurrentNodeId)))
 	NetworkService.sendRunState(player, runSnapshot)
 
 	local combatSnapshot = CombatService.getCombatSnapshotForPlayer(player)

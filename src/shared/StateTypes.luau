@@ -436,6 +436,12 @@ export type ActionResult = {
 	Action: string,
 	Success: boolean,
 	Message: string?,
+	Reason: string?,
+	Won: boolean?,
+	NodeId: string?,
+	Phase: RunPhase?,
+	StateRevision: number?,
+	CardDefId: string?,
 }
 
 export type RunSnapshot = {

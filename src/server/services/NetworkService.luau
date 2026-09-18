@@ -209,6 +209,9 @@ export type ActionResultPayload = {
 	Reason: string?,
 	NodeId: string?,
 	Won: boolean?,
+	Phase: StateTypes.RunPhase?,
+	StateRevision: number?,
+	CardDefId: string?,
 }
 
 -- Notifies a specific player of an action result

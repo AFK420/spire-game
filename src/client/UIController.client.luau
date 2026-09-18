@@ -23,6 +23,9 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
+local BuildInfo = require(Shared:WaitForChild("BuildInfo") :: ModuleScript)
+
+print(string.format("[BUILD] Client build=%s", BuildInfo.BUILD_ID))
 
 --------------------------------------------------------------------------------
 -- Remote Events Resolution via GameNetwork
@@ -1079,9 +1082,11 @@ if RunStateUpdateEvent then
 		if not snapshot then return end
 
 		local rev = snapshot.StateRevision or 0
-		print(string.format("[MAPFLOW][CLIENT][4] RunStateUpdate received: Phase=%s, Rev=%d, CurrentNode=%s",
+		print(string.format("[MAPFLOW][CLIENT] 14. RunStateUpdate RECEIVED: Phase=%s, Rev=%d, CurrentNode=%s",
 			tostring(snapshot.Phase), rev, tostring(snapshot.CurrentNodeId)))
 
+		print(string.format("[MAPFLOW][CLIENT] 15. StateRevision checked: Rev=%d, LastRev=%d",
+			rev, lastRunStateRevision))
 		if snapshot.StateRevision and snapshot.StateRevision < lastRunStateRevision then
 			print(string.format("[MAPFLOW][CLIENT] Stale RunStateUpdate snapshot discarded (rev %d < last %d)",
 				snapshot.StateRevision, lastRunStateRevision))
@@ -1091,8 +1096,13 @@ if RunStateUpdateEvent then
 			lastRunStateRevision = snapshot.StateRevision
 		end
 
+		print(string.format("[MAPFLOW][CLIENT] 16. Phase processed: Phase=%s", tostring(snapshot.Phase)))
+		print(string.format("[MAPFLOW][CLIENT] 17. CurrentNodeId processed: CurrentNode=%s", tostring(snapshot.CurrentNodeId)))
+
+		print(string.format("[MAPFLOW][CLIENT] 18. switchView called: TargetPhase=%s", tostring(snapshot.Phase)))
 		switchView(snapshot.Phase)
-		print(string.format("[MAPFLOW][CLIENT][5] View switched to: %s", snapshot.Phase))
+		print(string.format("[MAPFLOW][CLIENT] 19. MapVisible updated: MapVisible=%s", tostring(mapView.Visible)))
+		print(string.format("[MAPFLOW][CLIENT] 20. CombatVisible updated: CombatVisible=%s", tostring(combatHudView.Visible)))
 
 		if snapshot.Phase == "Lobby" then
 			bannerLabel.Text = "Lobby: Gather heroes and start run."
@@ -1100,7 +1110,8 @@ if RunStateUpdateEvent then
 			bannerLabel.Text = "Map Selection: Select reachable room to proceed."
 			buildDungeonMapTree(snapshot)
 		elseif snapshot.Phase == "ActiveRoom" then
-			bannerLabel.Text = string.format("Act %d: Tier %d Room", snapshot.ActIndex, snapshot.CurrentTier)
+			bannerLabel.Text = "Entered Room: Combat"
+			bannerLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 		elseif snapshot.Phase == "Rewards" then
 			isRewardClaimPending = false
 			local isBossRoom = (snapshot.CurrentTier == 10)
@@ -1143,7 +1154,7 @@ if RunStateUpdateEvent then
 			lastFocusedPhase = snapshot.Phase
 		end
 
-		if snapshot.Message and snapshot.Message ~= "" then
+		if snapshot.Message and snapshot.Message ~= "" and snapshot.Phase ~= "ActiveRoom" then
 			bannerLabel.Text = snapshot.Message
 		end
 	end)
@@ -1266,8 +1277,8 @@ if ActionResultEvent then
 	ActionResultEvent.OnClientEvent:Connect(function(res: any)
 		if not res then return end
 		if res.Action == "VoteMapNode" then
-			print(string.format("[MAPFLOW][CLIENT][3] ActionResult received: Action=VoteMapNode, Success=%s, Won=%s",
-				tostring(res.Success), tostring(res.Won)))
+			print(string.format("[MAPFLOW][CLIENT] 11. ActionResult RECEIVED: Action=VoteMapNode, Success=%s, Won=%s, Node=%s, Phase=%s, Rev=%s",
+				tostring(res.Success), tostring(res.Won), tostring(res.NodeId), tostring(res.Phase), tostring(res.StateRevision)))
 
 			if lastFocusedPhase == "ActiveRoom" or not mapView.Visible then
 				isVotePending = false
@@ -1288,10 +1299,16 @@ if ActionResultEvent then
 				end
 			else
 				if res.Won == true then
-					-- Vote accepted and party won consensus! Keep buttons disabled and wait for RunStateUpdate to transition phase.
+					-- Vote accepted and party won consensus! Keep buttons disabled and request immediate state sync
 					setMapButtonsEnabled(false)
-					bannerLabel.Text = "Your vote was accepted. Entering room..."
+					bannerLabel.Text = "Room selected. Syncing room..."
 					bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+					print(string.format("[MAPFLOW][CLIENT] 12. ActionResult Won: Node=%s, ServerPhase=%s, ServerRev=%s",
+						tostring(res.NodeId), tostring(res.Phase), tostring(res.StateRevision)))
+					print("[MAPFLOW][CLIENT] 13. RequestStateSync SENT")
+					if RequestStateSyncEvent then
+						RequestStateSyncEvent:FireServer()
+					end
 				else
 					isVotePending = false
 					pendingVoteNodeId = nil
