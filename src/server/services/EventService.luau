@@ -68,10 +68,16 @@ local function getActivePartyRef(): { [number]: StateTypes.PlayerState }
 end
 
 local function setActivePartyRef(p: { [number]: StateTypes.PlayerState })
+	local copy: { [number]: StateTypes.PlayerState } = {}
+	if p then
+		for k, v in p do
+			copy[k] = v
+		end
+	end
 	if isTestIsolated() then
-		activePartyRefTest = p
+		activePartyRefTest = copy
 	else
-		activePartyRefLive = p
+		activePartyRefLive = copy
 	end
 end
 
@@ -94,10 +100,10 @@ end
 function EventService.cleanupEvent()
 	setActiveEventState(nil)
 	if isTestIsolated() then
-		table.clear(activePartyRefTest)
+		activePartyRefTest = {}
 		onEventCompletedCallbackTest = nil
 	else
-		table.clear(activePartyRefLive)
+		activePartyRefLive = {}
 		onEventCompletedCallbackLive = nil
 	end
 end
@@ -198,7 +204,8 @@ function EventService.startEvent(
 	elseif def.Category == "Riddle" and eventId == "statue_riddle" then
 		-- Select correct statue deterministically (Statue_Wisdom with AnswerKey = "Echo")
 		correctStatueId = "Statue_Wisdom"
-		clues["Riddle"] = def.RiddlePrompt or "Solve the riddle of the sentinels."
+		local prompt = def.RiddlePrompt or "Solve the riddle of the sentinels."
+		local statueClues = {}
 
 		local statuePositions = {
 			["Statue_Valor"] = Vector3.new(-14, 4.5, -8),
@@ -209,8 +216,15 @@ function EventService.startEvent(
 		if def.Statues then
 			for _, sChoice in def.Statues do
 				clues[sChoice.StatueId] = sChoice.Clue
+				table.insert(statueClues, sChoice.Clue)
 			end
 		end
+
+		clues["Riddle"] = string.format(
+			"Ancient Inscription:\n\"%s\"\n\nSentinels' Answers:\n%s\n\n(Choose the sentinel speaking the truth)",
+			prompt,
+			table.concat(statueClues, "\n")
+		)
 
 		for _, idef in def.Interactables do
 			local pos = statuePositions[idef.Id] or Vector3.new(0, 4.5, 0)

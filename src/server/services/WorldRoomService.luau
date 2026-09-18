@@ -30,6 +30,22 @@ local currentActiveRoom: Model? = nil
 local currentEnvironmentId: StateTypes.EnvironmentId? = "None"
 local currentRoomTemplateId: string = "tpl_default"
 
+local function getEventService(): any
+	local es = script.Parent:FindFirstChild("EventService")
+	if es then
+		return require(es :: ModuleScript)
+	end
+	return nil
+end
+
+local function getRunManager(): any
+	local rm = script.Parent:FindFirstChild("RunManager")
+	if rm then
+		return require(rm :: ModuleScript)
+	end
+	return nil
+end
+
 --------------------------------------------------------------------------------
 -- Container Lifecycle
 --------------------------------------------------------------------------------
@@ -495,8 +511,8 @@ function WorldRoomService.createInteractable(
 
 		local bb = Instance.new("BillboardGui")
 		bb.Name = "StatueBillboard"
-		bb.Size = UDim2.new(0, 160, 0, 45)
-		bb.StudsOffset = Vector3.new(0, 6, 0)
+		bb.Size = UDim2.new(0, 220, 0, 60)
+		bb.StudsOffset = Vector3.new(0, 6.5, 0)
 		bb.AlwaysOnTop = true
 		bb.Parent = part
 
@@ -507,6 +523,7 @@ function WorldRoomService.createInteractable(
 		txt.TextColor3 = Color3.fromRGB(255, 230, 120)
 		txt.TextStrokeTransparency = 0.2
 		txt.TextSize = 13
+		txt.TextWrapped = true
 		txt.Font = Enum.Font.GothamBold
 		txt.Parent = bb
 	else
@@ -519,6 +536,17 @@ function WorldRoomService.createInteractable(
 	local clickDetector = Instance.new("ClickDetector")
 	clickDetector.MaxActivationDistance = 32
 	clickDetector.Parent = part
+
+	clickDetector.MouseClick:Connect(function(player: Player)
+		local es = getEventService()
+		if es and es.interact then
+			local success, message = es.interact(player, id)
+			local rm = getRunManager()
+			if rm and rm.broadcastRunSnapshots then
+				rm.broadcastRunSnapshots(message or (if success then "Object activated!" else "Interaction failed."), true)
+			end
+		end
+	end)
 
 	part.Parent = interactablesFolder
 	return part

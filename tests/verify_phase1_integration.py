@@ -1631,6 +1631,7 @@ test("[Suite 73.14]" in testrunner_src, "Suite 73 tests Downed player rejected f
 test("[Suite 73.15]" in testrunner_src, "Suite 73 tests Statue Riddle initialized")
 test("[Suite 73.17]" in testrunner_src, "Suite 73 tests Choosing Statue_Wisdom solves riddle")
 test("[Suite 73.20]" in testrunner_src, "Suite 73 tests Gold reward granted on puzzle success")
+test("[Suite 73.22]" in testrunner_src, "Suite 73 tests cleanupEvent preserves caller party table")
 
 # Suite 74 ReactionService assertions
 test("[Suite 74.1]" in testrunner_src, "Suite 74 tests createAttackProfile stores AttackName")
@@ -1743,9 +1744,15 @@ test("Enum.KeyCode.C" in ui_ctrl_src and "Enum.KeyCode.V" in ui_ctrl_src, "UICon
 test("eventCloseBtn" in ui_ctrl_src, "UIController provides event chamber close/dismiss button")
 test("isEventInteractPending" in ui_ctrl_src, "UIController debounces event interactions")
 
-# EventService test isolation & idempotent interactions
+# EventService test isolation, party preservation & riddle clarity
+event_data_src = (ROOT / "src/shared/EventData.luau").read_text(encoding="utf-8")
+world_room_src = (ROOT / "src/server/services/WorldRoomService.luau").read_text(encoding="utf-8")
 test("activeEventStateTest" in event_svc_src and "activeEventStateLive" in event_svc_src, "EventService isolates test event from live players")
 test("Event is already resolved" in event_svc_src, "EventService handles idempotent interaction safely")
+test("activePartyRefLive = {}" in event_svc_src, "EventService cleanupEvent reassigns empty table instead of clearing party memory")
+test("What am I?" in event_data_src, "EventData specifies clear 'What am I?' prompt for Statue Riddle")
+test("The Echo" in event_data_src, "EventData clearly defines Sentinel of Wisdom answer as 'The Echo'")
+test("clickDetector.MouseClick" in world_room_src, "WorldRoomService wires physical ClickDetector.MouseClick to EventService")
 
 # TestRunner Suite 74 & manual testing helper
 test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains original rhythm reaction assertions")

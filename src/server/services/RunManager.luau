@@ -735,6 +735,17 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	local userId = (typeof(player) == "Instance" and player.UserId) or (typeof(player) == "table" and player.UserId) or player
 	local pState = (typeof(userId) == "number") and runToUse.PartyMembers[userId] or nil
 
+	-- Defensive recovery: If pState is missing but the voting entity is a connected player, recover from liveRun/currentRun
+	if not pState and typeof(userId) == "number" then
+		if liveRun and liveRun.PartyMembers[userId] then
+			runToUse.PartyMembers[userId] = liveRun.PartyMembers[userId]
+			pState = runToUse.PartyMembers[userId]
+		elseif currentRun and currentRun.PartyMembers[userId] then
+			runToUse.PartyMembers[userId] = currentRun.PartyMembers[userId]
+			pState = runToUse.PartyMembers[userId]
+		end
+	end
+
 	print(string.format("[MAPFLOW][SERVER] 1. Vote received [MapVote]: Player=%s, Target=%s, Phase=%s, Rev=%d",
 		tostring(userId), tostring(targetNodeId), tostring(runToUse.Phase), runToUse.StateRevision or 0))
 

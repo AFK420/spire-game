@@ -1437,8 +1437,8 @@ eventCloseBtn.MouseButton1Click:Connect(function()
 end)
 
 local eventClueBox = Instance.new("Frame")
-eventClueBox.Size = UDim2.new(1, -48, 0, 96)
-eventClueBox.Position = UDim2.new(0, 24, 0, 72)
+eventClueBox.Size = UDim2.new(1, -48, 0, 130)
+eventClueBox.Position = UDim2.new(0, 24, 0, 68)
 eventClueBox.BackgroundColor3 = Color3.fromRGB(16, 14, 24)
 eventClueBox.ZIndex = 16
 eventClueBox.Parent = eventChamberView
@@ -1448,8 +1448,8 @@ UIFactory.createStroke(eventClueBox, Color3.fromRGB(70, 60, 100), 1)
 local eventCluePadding = Instance.new("UIPadding")
 eventCluePadding.PaddingLeft = UDim.new(0, 16)
 eventCluePadding.PaddingRight = UDim.new(0, 16)
-eventCluePadding.PaddingTop = UDim.new(0, 12)
-eventCluePadding.PaddingBottom = UDim.new(0, 12)
+eventCluePadding.PaddingTop = UDim.new(0, 10)
+eventCluePadding.PaddingBottom = UDim.new(0, 10)
 eventCluePadding.Parent = eventClueBox
 
 local eventClueText = Instance.new("TextLabel")
@@ -1459,7 +1459,7 @@ eventClueText.BackgroundTransparency = 1
 eventClueText.Text = "Decipher the chamber's secret..."
 eventClueText.TextColor3 = Color3.fromRGB(230, 220, 255)
 eventClueText.Font = Enum.Font.GothamMedium
-eventClueText.TextSize = 14
+eventClueText.TextSize = 13
 eventClueText.TextWrapped = true
 eventClueText.TextXAlignment = Enum.TextXAlignment.Left
 eventClueText.TextYAlignment = Enum.TextYAlignment.Top
@@ -1467,8 +1467,8 @@ eventClueText.ZIndex = 17
 eventClueText.Parent = eventClueBox
 
 local interactablesContainer = Instance.new("Frame")
-interactablesContainer.Size = UDim2.new(1, -48, 0, 270)
-interactablesContainer.Position = UDim2.new(0, 24, 0, 180)
+interactablesContainer.Size = UDim2.new(1, -48, 0, 240)
+interactablesContainer.Position = UDim2.new(0, 24, 0, 208)
 interactablesContainer.BackgroundTransparency = 1
 interactablesContainer.ZIndex = 16
 interactablesContainer.Parent = eventChamberView
@@ -1490,6 +1490,14 @@ local function renderEventChamber(eventView: StateTypes.EventView)
 		clue = clue .. string.format("\n🎯 Objective: %s", eventView.ObjectiveText)
 	end
 	eventClueText.Text = clue
+
+	if eventView.Category == "Riddle" then
+		interactablesLayout.CellSize = UDim2.new(0.98, 0, 0, 48)
+		interactablesLayout.CellPadding = UDim2.new(0, 0, 0, 8)
+	else
+		interactablesLayout.CellSize = UDim2.new(0.48, 0, 0, 58)
+		interactablesLayout.CellPadding = UDim2.new(0.04, 0, 0, 14)
+	end
 
 	for _, child in interactablesContainer:GetChildren() do
 		if child:IsA("Frame") then
@@ -1544,6 +1552,7 @@ local function switchView(phase: StateTypes.RunPhase)
 
 	if phase ~= "ActiveRoom" then
 		eventChamberView.Visible = false
+		isEventInteractPending = false
 		if reactionWidget then
 			reactionWidget.Visible = false
 		end

@@ -1777,9 +1777,11 @@ local function runSuite73()
 	assertTest(riddleState.Outcome == "Success", "[Suite 73.19] Riddle outcome is Success")
 	assertTest(p1.Gold > 50, "[Suite 73.20] Gold reward granted to player 1 on success")
 
-	-- 73.8: Cleanup
+	-- 73.8: Cleanup & Party Preservation Guard
 	EventService.cleanupEvent()
 	assertTest(EventService.getActiveEvent() == nil, "[Suite 73.21] cleanupEvent clears active event")
+	assertTest(party[73001] ~= nil and party[73002] ~= nil, "[Suite 73.22] cleanupEvent does not clear or mutate caller's party table")
+	assertTest(string.find(riddleState.Clues["Riddle"] or "", "What am I%?") ~= nil, "[Suite 73.23] Statue Riddle prompts with grammatically correct 'What am I?'")
 	WorldRoomService.cleanupRoom()
 end
 
