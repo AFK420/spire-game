@@ -867,3 +867,28 @@ if RunService:IsStudio() and GameConfig.Testing and GameConfig.Testing.AutoRunTe
 else
 	print("[TestRunner] Background test runner skipped (only runs in Studio when GameConfig.Testing.AutoRunTestsInStudio is enabled).")
 end
+
+-- 4. Developer Chat Commands for Manual 3D Reaction Testing in Studio
+local function setupDeveloperChatCommands(player: Player)
+	player.Chatted:Connect(function(msg: string)
+		if not RunService:IsStudio() then return end
+		local trimmed = string.match(msg, "^%s*(.-)%s*$") or ""
+		local commands: { [string]: string } = {
+			["/SlowHeavy"] = "SlowHeavy",
+			["/FastDagger"] = "FastDagger",
+			["/JumpAttack"] = "JumpAttack",
+			["/ProjectileBolt"] = "ProjectileBolt",
+			["/UnreactableExplosion"] = "UnreactableExplosion",
+		}
+		local profileName = commands[trimmed]
+		if profileName then
+			print(string.format("[DevCommand] %s triggered 3D test attack: %s", player.Name, profileName))
+			TestRunner.triggerTestReaction(profileName, player.UserId)
+		end
+	end)
+end
+
+Players.PlayerAdded:Connect(setupDeveloperChatCommands)
+for _, p in Players:GetPlayers() do
+	setupDeveloperChatCommands(p)
+end

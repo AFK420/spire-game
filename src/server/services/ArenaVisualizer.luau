@@ -32,112 +32,16 @@ local ENEMY_STAND_POS = Vector3.new(0, 1.2, -16)
 local spawnedEnemyModels: { [string]: Model } = {}
 
 --------------------------------------------------------------------------------
--- 3D Arena Construction
+-- Deprecated Room Construction (Exclusively owned by WorldRoomService)
 --------------------------------------------------------------------------------
 
-function ArenaVisualizer.buildArena(): Model
+function ArenaVisualizer.buildArena(): Model?
+	-- Deprecated: WorldRoomService is the sole canonical room geometry owner.
 	local existing = Workspace:FindFirstChild("CombatArena")
 	if existing and existing:IsA("Model") then
 		existing:Destroy()
 	end
-
-	local arenaModel = Instance.new("Model")
-	arenaModel.Name = "CombatArena"
-
-	-- Main stone platform
-	local floor = Instance.new("Part")
-	floor.Name = "ArenaFloor"
-	floor.Size = Vector3.new(50, 2, 50)
-	floor.Position = ARENA_ORIGIN
-	floor.Anchored = true
-	floor.Material = Enum.Material.Cobblestone
-	floor.Color = Color3.fromRGB(38, 40, 46)
-	floor.TopSurface = Enum.SurfaceType.Smooth
-	floor.Parent = arenaModel
-
-	-- Glowing border ring
-	local border = Instance.new("Part")
-	border.Name = "ArenaBorder"
-	border.Size = Vector3.new(52, 0.4, 52)
-	border.Position = ARENA_ORIGIN + Vector3.new(0, 1.05, 0)
-	border.Anchored = true
-	border.Material = Enum.Material.Neon
-	border.Color = Color3.fromRGB(60, 140, 220)
-	border.CanCollide = false
-	border.Transparency = 0.4
-	border.Parent = arenaModel
-
-	-- Player Pedestal
-	local playerPad = Instance.new("Part")
-	playerPad.Name = "PlayerPedestal"
-	playerPad.Shape = Enum.PartType.Cylinder
-	playerPad.Size = Vector3.new(0.6, 8, 8)
-	playerPad.CFrame = CFrame.new(PLAYER_STAND_POS) * CFrame.Angles(0, 0, math.rad(90))
-	playerPad.Anchored = true
-	playerPad.Material = Enum.Material.Neon
-	playerPad.Color = Color3.fromRGB(45, 120, 240)
-	playerPad.Parent = arenaModel
-
-	-- SpawnLocation
-	local spawn = Instance.new("SpawnLocation")
-	spawn.Name = "ArenaSpawn"
-	spawn.Size = Vector3.new(6, 0.5, 6)
-	spawn.Position = PLAYER_STAND_POS + Vector3.new(0, 0.4, 0)
-	spawn.Anchored = true
-	spawn.Material = Enum.Material.Neon
-	spawn.Color = Color3.fromRGB(50, 150, 255)
-	spawn.Transparency = 0.7
-	spawn.CanCollide = true
-	spawn.Duration = 0
-	spawn.Parent = arenaModel
-
-	-- Enemy Pedestal
-	local enemyPad = Instance.new("Part")
-	enemyPad.Name = "EnemyPedestal"
-	enemyPad.Shape = Enum.PartType.Cylinder
-	enemyPad.Size = Vector3.new(0.6, 12, 12)
-	enemyPad.CFrame = CFrame.new(ENEMY_STAND_POS) * CFrame.Angles(0, 0, math.rad(90))
-	enemyPad.Anchored = true
-	enemyPad.Material = Enum.Material.Neon
-	enemyPad.Color = Color3.fromRGB(200, 45, 45)
-	enemyPad.Parent = arenaModel
-
-	-- Perimeter Pillars
-	local pillarPositions = {
-		Vector3.new(-22, 6, -22),
-		Vector3.new(22, 6, -22),
-		Vector3.new(-22, 6, 22),
-		Vector3.new(22, 6, 22),
-	}
-
-	for i, pos in pillarPositions do
-		local pillar = Instance.new("Part")
-		pillar.Name = "Pillar_" .. i
-		pillar.Size = Vector3.new(3, 12, 3)
-		pillar.Position = pos
-		pillar.Anchored = true
-		pillar.Material = Enum.Material.SmoothPlastic
-		pillar.Color = Color3.fromRGB(28, 30, 36)
-		pillar.Parent = arenaModel
-
-		local beacon = Instance.new("Part")
-		beacon.Name = "Beacon"
-		beacon.Size = Vector3.new(1.8, 1.8, 1.8)
-		beacon.Position = pos + Vector3.new(0, 6.5, 0)
-		beacon.Anchored = true
-		beacon.Material = Enum.Material.Neon
-		beacon.Color = (pos.Z < 0) and Color3.fromRGB(240, 60, 60) or Color3.fromRGB(60, 160, 255)
-		beacon.Parent = arenaModel
-
-		local light = Instance.new("PointLight")
-		light.Color = beacon.Color
-		light.Range = 18
-		light.Brightness = 2
-		light.Parent = beacon
-	end
-
-	arenaModel.Parent = Workspace
-	return arenaModel
+	return nil
 end
 
 --------------------------------------------------------------------------------
@@ -313,10 +217,14 @@ function ArenaVisualizer.syncEnemies(enemies: { [string]: StateTypes.EnemyState 
 
 		local targetPos = ENEMY_STAND_POS + offset
 		local ok, err = pcall(function()
+			local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+			local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
 			local model = spawnedEnemyModels[enemy.InstanceId]
 			if not model or not model.Parent then
 				model = buildEnemyModel(enemy, targetPos)
 				spawnedEnemyModels[enemy.InstanceId] = model
+			elseif activeRoom and model.Parent ~= activeRoom then
+				model.Parent = activeRoom
 			end
 
 			-- Update billboard

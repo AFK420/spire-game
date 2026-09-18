@@ -644,26 +644,12 @@ local function resolveTurn()
 								-- Dynamic projectile travel time based on distance and configured ProjectileSpeed
 								if profile.AttackType == "Projectile" and profile.ProjectileSpeed and profile.ProjectileSpeed > 0 then
 									local dist = (targetWorldPos - attackerWorldPos).Magnitude
-									local travelTime = math.clamp(dist / math.max(1, profile.ProjectileSpeed), 0.25, 3.0)
-									local castWindup = math.max(0.15, profile.TelegraphDuration or 0.35)
-									profile.TelegraphDuration = castWindup
-									profile.ImpactDelay = math.round((castWindup + travelTime) * 100) / 100
+									local windup, impactDelay = ReactionData.resolveProjectileTiming(dist, profile.ProjectileSpeed, profile.TelegraphDuration)
+									profile.TelegraphDuration = windup
+									profile.ImpactDelay = impactDelay
 								end
 
 								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, targetUserIds)
-
-								if not isCombatIsolation then
-									pcall(function()
-										ArenaVisualizer.playEnemyAttackAnimation(
-											enemyId,
-											profile.TelegraphDuration,
-											profile.ImpactDelay,
-											profile.RecoveryDuration,
-											profile.AttackType,
-											targetWorldPos
-										)
-									end)
-								end
 
 								CombatService.broadcastSnapshots(string.format("⚠️ %s is attacking %s with %s!", enemy.Name, if isAoE then "the entire party" else target.DisplayName, profile.AttackName))
 

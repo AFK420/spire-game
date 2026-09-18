@@ -1517,7 +1517,7 @@ test('local atkPower = enemy.AttackPower or 10' in combat_svc_src, "CombatServic
 test('activeCombat.TurnNumber += 1' in combat_svc_src, "CombatService advances TurnNumber in guaranteed recovery")
 test('activeCombat.Phase = "PlayerPhase"' in combat_svc_src, "CombatService restores PlayerPhase in guaranteed recovery")
 test('ArenaVisualizer.cleanup()' in combat_svc_src, "CombatService calls ArenaVisualizer.cleanup")
-test('ArenaVisualizer.playEnemyAttackAnimation' in combat_svc_src, "CombatService invokes ArenaVisualizer.playEnemyAttackAnimation")
+test('ReactionData.resolveProjectileTiming' in combat_svc_src, "CombatService uses ReactionData.resolveProjectileTiming")
 test('model:Destroy()' in arena_vis_src, "ArenaVisualizer destroys models on cleanup")
 
 # Client UI Turn Resolution & Debounce Invariants
@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "reaction_v2_20260918"' in build_info_src, "BuildInfo declares BUILD_ID = reaction_v2_20260918")
-test('BUILD_NAME = "Reaction V2 3D Attack & Timing Hardening"' in build_info_src, "BuildInfo declares BUILD_NAME = Reaction V2 3D Attack & Timing Hardening")
+test('BUILD_ID = "reaction_v2_playability_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = reaction_v2_playability_20260919")
+test('BUILD_NAME = "Reaction V2 End-to-End Playability & Visual Synchronization"' in build_info_src, "BuildInfo declares BUILD_NAME = Reaction V2 End-to-End Playability & Visual Synchronization")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -1726,8 +1726,8 @@ test("onParryHook" in reaction_svc_src, "ReactionService invokes parry riposte h
 test("function ReactionService.createProfileFromPreset" in reaction_svc_src, "ReactionService provides createProfileFromPreset")
 
 # CombatService & Visualizer synchronization
-test("ArenaVisualizer.playEnemyAttackAnimation" in combat_svc_src, "CombatService invokes synchronized attack animation")
-test("profile.ImpactDelay" in combat_svc_src and "profile.RecoveryDuration" in combat_svc_src, "CombatService passes timing parameters to visualizer")
+test("ReactionData.resolveProjectileTiming" in combat_svc_src, "CombatService dynamically calculates projectile travel time via ReactionData")
+test("ArenaVisualizer.playEnemyAttackAnimation" not in combat_svc_src, "CombatService eliminates redundant server attack animation call")
 test("ParryCounter" in combat_svc_src, "CombatService executes parry counter-damage riposte")
 
 # CombatVFXController dedicated 3D attack presentation & projectile flight
@@ -1755,9 +1755,9 @@ test("eventCloseBtn" in ui_ctrl_src, "UIController provides event chamber close/
 test("isEventInteractPending" in ui_ctrl_src, "UIController debounces event interactions")
 
 # ReactionService & GameConfig Latency Compensation
-test("MaxClientTimestampFutureSkew" in game_config_src and "MaxClientTimestampPastLag" in game_config_src, "GameConfig defines latency compensation skew and lag tolerances")
+test("MaxClientTimestampFutureSkew" in game_config_src and "MaxClientTimestampPastLag" in game_config_src and "MaxClientTimestampArrivalGrace" in game_config_src, "GameConfig defines latency compensation skew, lag, and arrival grace tolerances")
 test("ReactionCloseServerTime" in reaction_svc_src, "ReactionService validates reaction submissions against ReactionCloseServerTime")
-test("futureSkew" in reaction_svc_src or "evalTimestamp" in reaction_svc_src, "ReactionService compensates client timestamp with bounded validation")
+test("MaxClientTimestampArrivalGrace" in reaction_svc_src or "arrivalGrace" in reaction_svc_src, "ReactionService compensates client timestamp with arrival grace and bounded validation")
 
 # EventService test isolation, party preservation & riddle clarity
 event_data_src = (ROOT / "src/shared/EventData.luau").read_text(encoding="utf-8")
@@ -1770,10 +1770,11 @@ test("The Echo" in event_data_src, "EventData clearly defines Sentinel of Wisdom
 test("clickDetector.MouseClick" in world_room_src, "WorldRoomService wires physical ClickDetector.MouseClick to EventService")
 
 # TestRunner Suite 74 & manual testing helper
-test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains original rhythm reaction assertions")
+test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains deterministic projectile timing assertions")
 test("[Suite 74.65]" in testrunner_src, "TestRunner Suite 74 contains comprehensive 3D attack animation and server time assertions")
 test("[Suite 74.80]" in testrunner_src, "TestRunner Suite 74 contains all 15 Reaction V2 regression invariants up to [Suite 74.80]")
 test("TestRunner.triggerTestReaction" in testrunner_src, "TestRunner provides triggerTestReaction manual test scenario helper")
+test("/SlowHeavy" in init_server_src and "/FastDagger" in init_server_src, "Server init provides Studio developer chat commands for 3D attack testing")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

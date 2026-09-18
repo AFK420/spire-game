@@ -3,7 +3,7 @@
 --[=[
 	ReactionData ModuleScript
 	Mapped to: ReplicatedStorage.Shared.ReactionData
-	Data-driven attack timing profiles for the rhythm approach-circle reaction system.
+	Data-driven attack timing profiles for the 3D Attack Reaction System.
 	1. Defines telegraph duration, impact delay, and recovery timing per attack type.
 	2. Defines tight Perfect and wider Good tolerances for Dodge and Parry.
 	3. Authoritatively gates whether an attack CanDodge, CanParry, or is Unreactable.
@@ -248,6 +248,18 @@ function ReactionData.createCustomProfile(
 		ProjectileSpeed = projectileSpeed,
 		Description = nil,
 	}
+end
+
+function ReactionData.resolveProjectileTiming(
+	distance: number,
+	projectileSpeed: number,
+	castWindup: number?
+): (number, number)
+	local windup = math.max(0.15, castWindup or 0.35)
+	local safeSpeed = math.max(1, projectileSpeed)
+	local travelTime = math.clamp(distance / safeSpeed, 0.25, 3.0)
+	local impactDelay = math.round((windup + travelTime) * 100) / 100
+	return windup, impactDelay
 end
 
 function ReactionData.getAllProfiles(): { [string]: AttackTimingProfile }

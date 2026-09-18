@@ -273,8 +273,17 @@ function ReactionService.submitReaction(
 	local closeTime = activeWin.ReactionCloseServerTime or activeWin.CloseTime
 	local impactTime = activeWin.ImpactServerTime or activeWin.ImpactTime
 
-	-- 1. Explicit Reaction Close Time Validation
-	if now > closeTime then
+	local arrivalGrace = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampArrivalGrace) or 0.20
+
+	-- 1. Packet Arrival Grace & Explicit Close Time Validation
+	-- LATENCY-COMPENSATION TRUST MODEL:
+	-- The client samples Workspace:GetServerTimeNow() at the instantaneous moment of player input.
+	-- Because network packets require one-way transit time (ping/2 + jitter), a valid keypress made
+	-- just before `closeTime` will arrive at the server after `closeTime`.
+	-- To prevent unfairly penalizing players for network transit, the server permits packet arrival
+	-- up to `closeTime + MaxClientTimestampArrivalGrace` (default 0.20s).
+	-- If physical arrival time `now` exceeds `closeTime + arrivalGrace`, the reaction is unconditionally rejected.
+	if now > (closeTime + arrivalGrace) then
 		playerRecord.Reaction = reactionType
 		playerRecord.Result = "Late"
 		playerRecord.Judgement = "Late"
@@ -285,12 +294,17 @@ function ReactionService.submitReaction(
 	end
 
 	-- 2. Client Latency Compensation with Bounds Checking
+	-- The server trusts the client-reported input timestamp provided it satisfies:
+	--   a) Packet arrived within `closeTime + MaxClientTimestampArrivalGrace`
+	--   b) Clock skew is bounded: `clientTimestamp <= now + MaxClientTimestampFutureSkew` (anti-spoofing)
+	--   c) Timestamp is not stale: `clientTimestamp >= math.max(AttackStart - 0.5, now - MaxPastLag * 2)`
+	--   d) Keypress occurred before reaction window closed: `clientTimestamp <= closeTime`
 	local maxFutureSkew = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampFutureSkew) or 0.15
 	local maxPastLag = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampPastLag) or 0.60
 
 	local evalTimestamp = now
 	if typeof(clientTimestamp) == "number" and not (clientTimestamp ~= clientTimestamp) then
-		-- Reject timestamps excessively far in the future
+		-- Reject timestamps excessively far in the future (anti-spoofing)
 		if clientTimestamp > (now + maxFutureSkew) then
 			return false, "Timestamp rejected: client time is too far in the future.", "None", "None", nil
 		end
@@ -314,6 +328,17 @@ function ReactionService.submitReaction(
 
 		-- Bound client timestamp within past lag threshold
 		evalTimestamp = math.clamp(clientTimestamp, now - maxPastLag, now + maxFutureSkew)
+	else
+		-- Fallback to server receipt time: if client did not supply timestamp and arrived past closeTime
+		if now > closeTime then
+			playerRecord.Reaction = reactionType
+			playerRecord.Result = "Late"
+			playerRecord.Judgement = "Late"
+			playerRecord.SubmittedAt = now
+			local lateDelta = now - impactTime
+			playerRecord.TimeDelta = lateDelta
+			return false, "Reaction submitted after window closed.", "Late", "Late", lateDelta
+		end
 	end
 
 	local timeDelta = evalTimestamp - impactTime -- Negative = Early, Positive = Late

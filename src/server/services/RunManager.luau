@@ -884,6 +884,22 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 		print(string.format("[MAPFLOW][SERVER] 5. combat START: Node=%s", node.Id))
 		local encounterId = "enc_" .. node.Id
+
+		-- Ensure ActiveRoom exists in Workspace BEFORE combat initialization so enemy models are parented inside ActiveRoom
+		local wrs = getWorldRoomService()
+		if wrs then
+			pcall(function()
+				wrs.loadRoom(
+					node.Type :: StateTypes.ActiveRoomType,
+					node.Tier,
+					node.Act,
+					encounterId,
+					"None",
+					dRun.Seed
+				)
+			end)
+		end
+
 		local combatOk, combatResult = pcall(function()
 			return CombatService.startCombat(
 				encounterId,
@@ -900,10 +916,22 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 			local combatErr = not combatOk and tostring(combatResult) or "startCombat returned nil"
 			warn(string.format("[MAPFLOW][SERVER] combat setup result: Success=false, Err=%s", combatErr))
 			print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", combatErr))
+			if wrs then
+				pcall(function()
+					wrs.cleanupRoom()
+				end)
+			end
 			return false, "Failed to start combat: " .. combatErr
 		end
 
 		activeCombat = combatResult
+
+		-- Apply environment visuals to already loaded ActiveRoom if selected by combat
+		if wrs and activeCombat and activeCombat.Environment and activeCombat.Environment.EnvironmentId ~= "None" then
+			pcall(function()
+				wrs.applyEnvironmentVisuals(activeCombat.Environment.EnvironmentId)
+			end)
+		end
 		print(string.format("[MAPFLOW][SERVER] 6. combat SUCCESS: Node=%s", node.Id))
 	elseif node.Type == "Event" then
 		local es = getEventService()
@@ -997,9 +1025,9 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		end
 	end
 
-	-- Stage 5: Load physical 3D room and teleport players in live game
+	-- Stage 5: Load physical 3D room for non-combat/non-event rooms, and teleport players
 	local wrs = getWorldRoomService()
-	if wrs and node.Type ~= "Event" then
+	if wrs and node.Type ~= "Event" and node.Type ~= "Combat" and node.Type ~= "Elite Monster" and node.Type ~= "Act Boss" then
 		pcall(function()
 			wrs.loadRoom(
 				node.Type :: StateTypes.ActiveRoomType,

@@ -79,6 +79,7 @@ GameConfig.Reaction = {
 	-- Network latency validation tolerances
 	MaxClientTimestampFutureSkew = 0.15,
 	MaxClientTimestampPastLag = 0.60,
+	MaxClientTimestampArrivalGrace = 0.20,
 }
 
 --------------------------------------------------------------------------------

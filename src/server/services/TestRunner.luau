@@ -26,7 +26,9 @@
 	13. Player leave and rejoin state persistence (zero state corruption).
 ]=]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
@@ -1973,31 +1975,35 @@ local function runSuite74()
 	assertTest(badWinOk == false and string.find(badWinErr or "", "Invalid or expired") ~= nil,
 		"[Suite 74.51] Invalid or expired window ID rejected safely")
 
-	-- 74.15: Arena Visualizer Attack Animation Integration
-	local animOk = pcall(function()
-		ArenaVisualizer.playEnemyAttackAnimation("enemy_test", 1.6, 1.45, 0.35, "Melee")
-	end)
-	assertTest(animOk == true, "[Suite 74.52] ArenaVisualizer.playEnemyAttackAnimation executes safely")
+	-- 74.15: Deterministic Projectile Timing Resolution
+	local wu1, imp1 = ReactionData.resolveProjectileTiming(30, 30, 0.35)
+	assertTest(wu1 == 0.35 and imp1 == 1.35, "[Suite 74.52] ReactionData.resolveProjectileTiming computes deterministic windup and impact delay")
 
-	-- 74.16: Jump Attack Profile & Animation Integration
+	-- 74.16: Jump Attack Profile & Projectile Speed Sensitivity
 	local jumpPreset = ReactionData.getProfile("JumpAttack")
 	assertTest(jumpPreset ~= nil and jumpPreset.AttackType == "Jump" and jumpPreset.ImpactDelay == 1.25,
 		"[Suite 74.53] JumpAttack preset defines Jump attack profile with 1.25s ImpactDelay")
-	local jumpAnimOk = pcall(function()
-		ArenaVisualizer.playEnemyAttackAnimation("enemy_jump", 1.30, 1.10, 0.40, "Jump", Vector3.new(0, 5, 0))
-	end)
-	assertTest(jumpAnimOk == true, "[Suite 74.54] ArenaVisualizer executes Jump attack animation safely")
+	local _, fastDelay = ReactionData.resolveProjectileTiming(30, 60, 0.35)
+	local _, slowDelay = ReactionData.resolveProjectileTiming(30, 15, 0.35)
+	assertTest(fastDelay == 0.85 and slowDelay == 2.35 and fastDelay < imp1 and slowDelay > imp1,
+		"[Suite 74.54] Projectile impact delay scales inversely with ProjectileSpeed")
 
-	-- 74.17: Projectile Bolt Profile & Animation Integration
+	-- 74.17: Projectile Bolt Profile & Packet Arrival Grace Acceptance
 	local projPreset = ReactionData.getProfile("ProjectileBolt")
 	assertTest(projPreset ~= nil and projPreset.AttackType == "Projectile" and projPreset.ProjectileSpeed == 30,
 		"[Suite 74.55] ProjectileBolt preset defines Projectile attack profile with ProjectileSpeed = 30")
-	local projAnimOk = pcall(function()
-		ArenaVisualizer.playEnemyAttackAnimation("enemy_caster", 1.35, 1.20, 0.30, "Projectile", Vector3.new(10, 2, -10))
-	end)
-	assertTest(projAnimOk == true, "[Suite 74.56] ArenaVisualizer executes Projectile attack animation safely")
+	local winGrace = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_grace", { 74001 })
+	local gNow = ReactionService.getServerTime()
+	winGrace.ReactionCloseServerTime = gNow - 0.08 -- arrived 80ms after closeTime, within 200ms grace
+	winGrace.CloseTime = winGrace.ReactionCloseServerTime
+	winGrace.ImpactServerTime = winGrace.ReactionCloseServerTime - 0.10
+	winGrace.ImpactTime = winGrace.ImpactServerTime
+	local graceOk, _, graceRes = ReactionService.submitReaction(74001, winGrace.WindowId, "Dodge", winGrace.ImpactServerTime)
+	assertTest(graceOk == true and graceRes == "Perfect",
+		"[Suite 74.56] Packet arriving within arrival grace with valid client timestamp is accepted")
+	ReactionService.resolveReactionWindow(mockCombatState :: any, winGrace.WindowId)
 
-	-- 74.18: Unreactable AoE Profile & Animation Integration
+	-- 74.18: Unreactable AoE Profile & Packet Beyond Grace Rejection
 	local aoePreset = ReactionData.getProfile("UnreactableExplosion")
 	assertTest(aoePreset ~= nil and aoePreset.AttackType == "AoE" and aoePreset.CanDodge == false and aoePreset.CanParry == false,
 		"[Suite 74.57] UnreactableExplosion preset defines unreactable AoE attack")
@@ -2007,10 +2013,14 @@ local function runSuite74()
 	assertTest(aoeDodgeOk == false and aoeDodgeRes == "Unavailable" and aoeParryOk == false and aoeParryRes == "Unavailable",
 		"[Suite 74.58] Unreactable AoE strictly rejects both Dodge and Parry with Unavailable")
 	ReactionService.resolveReactionWindow(mockCombatState :: any, winAoe.WindowId)
-	local aoeAnimOk = pcall(function()
-		ArenaVisualizer.playEnemyAttackAnimation("enemy_aoe", 1.50, 1.25, 0.40, "AoE")
-	end)
-	assertTest(aoeAnimOk == true, "[Suite 74.59] ArenaVisualizer executes AoE attack animation safely")
+	local winBeyond = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_beyond", { 74001 })
+	local bNow = ReactionService.getServerTime()
+	winBeyond.ReactionCloseServerTime = bNow - 0.25 -- arrived 250ms after closeTime, exceeding 200ms grace
+	winBeyond.CloseTime = winBeyond.ReactionCloseServerTime
+	local beyondOk, _, beyondRes = ReactionService.submitReaction(74001, winBeyond.WindowId, "Dodge", bNow - 0.30)
+	assertTest(beyondOk == false and beyondRes == "Late",
+		"[Suite 74.59] Submission arriving beyond packet arrival grace unconditionally rejected as Late")
+	ReactionService.resolveReactionWindow(mockCombatState :: any, winBeyond.WindowId)
 
 	-- 74.19: Workspace:GetServerTimeNow() Synchronization Timestamps
 	local winSync = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_sync", { 74001 })
@@ -8422,38 +8432,104 @@ end
 function TestRunner.triggerTestReaction(profileName: string?, targetUserId: number?)
 	local profileId = profileName or "SlowHeavy"
 	local prof = ReactionService.createProfileFromPreset(profileId)
-	local userId = targetUserId or 1
+
+	-- Determine target player
+	local targetPlayer: Player? = nil
+	if targetUserId then
+		targetPlayer = Players:GetPlayerByUserId(targetUserId)
+	end
+	if not targetPlayer then
+		local players = Players:GetPlayers()
+		if #players > 0 then
+			targetPlayer = players[1]
+		end
+	end
+	local userId = if targetPlayer then targetPlayer.UserId else (targetUserId or 1)
+
+	-- Ensure enemy dummy model exists in ActiveRoom (or Workspace) so CombatVFXController finds it
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
+	local parentTarget = activeRoom or Workspace
+	local enemyModel = parentTarget:FindFirstChild("Enemy_test_attacker", true) or Workspace:FindFirstChild("Enemy_test_attacker")
+	if not enemyModel then
+		enemyModel = Instance.new("Model")
+		enemyModel.Name = "Enemy_test_attacker"
+		local hrp = Instance.new("Part")
+		hrp.Name = "HumanoidRootPart"
+		hrp.Size = Vector3.new(3, 5, 3)
+		hrp.Position = Vector3.new(0, 3, -16)
+		hrp.Anchored = true
+		hrp.Material = Enum.Material.Granite
+		hrp.Color = Color3.fromRGB(180, 50, 50)
+		hrp.Parent = enemyModel
+		enemyModel.PrimaryPart = hrp
+		enemyModel.Parent = parentTarget
+	end
+
+	-- Authoritative target world position: player character position if available
+	local targetPos = Vector3.new(0, 3, 16)
+	if targetPlayer and targetPlayer.Character then
+		local charRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if charRoot then
+			targetPos = charRoot.Position
+		end
+	end
+
+	local attackerPos = (enemyModel.PrimaryPart and enemyModel.PrimaryPart.Position) or Vector3.new(0, 3, -16)
+	prof.TargetWorldPos = targetPos
+	prof.TargetWorldPosition = targetPos
+	prof.AttackerWorldPos = attackerPos
+
+	if prof.AttackType == "Projectile" and prof.ProjectileSpeed and prof.ProjectileSpeed > 0 then
+		local dist = (targetPos - attackerPos).Magnitude
+		local windup, impactDelay = ReactionData.resolveProjectileTiming(dist, prof.ProjectileSpeed, prof.TelegraphDuration)
+		prof.TelegraphDuration = windup
+		prof.ImpactDelay = impactDelay
+	end
+
 	local dummyCombatState: any = {
 		CombatId = "manual_test_reaction",
 		ActiveReactionWindow = nil,
 	}
 	local win = ReactionService.openReactionWindow(dummyCombatState, prof, "test_attacker", { userId })
 	local view = ReactionService.getReactionWindowView(win, "Training Dummy")
-	local net = NetworkService
-	if net and net.broadcast then
-		net.broadcast("ReactionWindowStarted", view)
-	end
 
-	pcall(function()
-		ArenaVisualizer.playEnemyAttackAnimation(
-			"test_attacker",
-			prof.TelegraphDuration,
-			prof.ImpactDelay,
-			prof.RecoveryDuration,
-			prof.AttackType,
-			Vector3.new(0, 5, 0)
-		)
-	end)
+	local combatSnapshot: StateTypes.CombatSnapshot = {
+		CombatId = "manual_test_reaction",
+		Phase = "ResolutionPhase",
+		TurnNumber = 1,
+		TurnStartTime = os.clock(),
+		TurnDuration = 45,
+		TimeRemaining = 45,
+		Enemies = {},
+		Party = {},
+		LocalHand = {},
+		CombatEvents = {},
+		Message = string.format("⚠️ Training Dummy is attacking with %s!", prof.AttackName),
+		ActiveReactionWindow = view,
+		Environment = nil,
+	}
+
+	if targetPlayer then
+		NetworkService.sendCombatState(targetPlayer, combatSnapshot)
+	else
+		for _, p in Players:GetPlayers() do
+			NetworkService.sendCombatState(p, combatSnapshot)
+		end
+	end
 
 	print(string.format("[TestRunner] Triggered manual test reaction window '%s' (%s - %s) for player %d", win.WindowId, prof.AttackName, prof.AttackType or "Melee", userId))
 	task.delay(prof.TelegraphDuration + prof.ImpactDelay + prof.RecoveryDuration, function()
 		if dummyCombatState.ActiveReactionWindow then
 			local results = ReactionService.resolveReactionWindow(dummyCombatState, win.WindowId)
-			if net and net.broadcast then
-				net.broadcast("ReactionWindowEnded", {
-					WindowId = win.WindowId,
-					Results = results,
-				})
+			combatSnapshot.ActiveReactionWindow = nil
+			combatSnapshot.Message = "Reaction resolved."
+			if targetPlayer then
+				NetworkService.sendCombatState(targetPlayer, combatSnapshot)
+			else
+				for _, p in Players:GetPlayers() do
+					NetworkService.sendCombatState(p, combatSnapshot)
+				end
 			end
 			print(string.format("[TestRunner] Manual test reaction window '%s' closed and resolved.", win.WindowId))
 		end

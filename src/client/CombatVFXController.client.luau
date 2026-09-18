@@ -33,12 +33,27 @@ local localPlayer = Players.LocalPlayer
 
 local currentActiveWindowId: string? = nil
 local activeAnimations: { [string]: RBXScriptConnection } = {}
+local activeConnections: { [string]: { RBXScriptConnection } } = {}
 local activeVfxInstances: { Instance } = {}
 local enemyOriginalPivots: { [Model]: CFrame } = {}
 
-local function getVfxContainer(): Instance
+local function trackConnection(windowId: string, conn: RBXScriptConnection)
+	local list = activeConnections[windowId]
+	if not list then
+		list = {}
+		activeConnections[windowId] = list
+	end
+	table.insert(list, conn)
+end
+
+local function getActiveRoom(): Instance?
 	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
-	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
+	if not cardRiftWorld then return nil end
+	return cardRiftWorld:FindFirstChild("ActiveRoom")
+end
+
+local function getVfxContainer(): Instance
+	local activeRoom = getActiveRoom()
 	if activeRoom then
 		local effects = activeRoom:FindFirstChild("Effects")
 		if effects then return effects end
@@ -50,36 +65,50 @@ local function getVfxContainer(): Instance
 end
 
 local function findEnemyModel(enemyInstanceId: string?): Model?
-	local container = getVfxContainer()
-	local searchRoots = { container, Workspace }
+	if not enemyInstanceId or enemyInstanceId == "" then return nil end
+	local expectedName = "Enemy_" .. enemyInstanceId
 
-	for _, root in searchRoots do
-		for _, child in root:GetChildren() do
-			if child:IsA("Model") then
-				if enemyInstanceId and child.Name == ("Enemy_" .. enemyInstanceId) then
-					return child
-				end
-			end
+	-- 1. Search recursively under ActiveRoom
+	local activeRoom = getActiveRoom()
+	if activeRoom then
+		local found = activeRoom:FindFirstChild(expectedName, true)
+		if found and found:IsA("Model") then
+			return found
 		end
 	end
 
-	-- Fallback search by prefix
-	for _, root in searchRoots do
-		for _, child in root:GetChildren() do
-			if child:IsA("Model") and string.find(child.Name, "Enemy_") ~= nil then
-				return child
-			end
+	-- 2. Search recursively under CardRiftWorld
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	if cardRiftWorld then
+		local found = cardRiftWorld:FindFirstChild(expectedName, true)
+		if found and found:IsA("Model") then
+			return found
 		end
+	end
+
+	-- 3. Search recursively under Workspace
+	local foundWs = Workspace:FindFirstChild(expectedName, true)
+	if foundWs and foundWs:IsA("Model") then
+		return foundWs
 	end
 
 	return nil
 end
 
 local function cleanupActiveAttack(windowId: string)
-	local conn = activeAnimations[windowId]
-	if conn then
-		conn:Disconnect()
-		activeAnimations[windowId] = nil
+	local conns = activeConnections[windowId]
+	if conns then
+		for _, conn in conns do
+			conn:Disconnect()
+		end
+		activeConnections[windowId] = nil
+	end
+
+	for key, conn in activeAnimations do
+		if string.find(key, windowId, 1, true) ~= nil then
+			conn:Disconnect()
+			activeAnimations[key] = nil
+		end
 	end
 
 	for i = #activeVfxInstances, 1, -1 do
@@ -167,6 +196,7 @@ local function playMeleeAttack(win: StateTypes.ReactionWindowView)
 	end)
 
 	if connection then
+		trackConnection(windowId, connection)
 		activeAnimations[windowId] = connection
 	end
 end
@@ -257,6 +287,7 @@ local function playJumpAttack(win: StateTypes.ReactionWindowView)
 	end)
 
 	if connection then
+		trackConnection(windowId, connection)
 		activeAnimations[windowId] = connection
 	end
 end
@@ -348,6 +379,7 @@ local function playProjectileAttack(win: StateTypes.ReactionWindowView)
 		end)
 
 		if flightConnection then
+			trackConnection(windowId, flightConnection)
 			activeAnimations[windowId .. "_proj"] = flightConnection
 		end
 	end)
@@ -367,12 +399,15 @@ local function playAoEAttack(win: StateTypes.ReactionWindowView)
 
 	local container = getVfxContainer()
 
-	-- Ground telegraph expanding circle
+	-- Ground telegraph expanding circle originating at attacker world position
+	local centerPos = win.AttackerWorldPos or originPivot.Position
+	local aoeCenter = Vector3.new(centerPos.X, 0.4, centerPos.Z)
+
 	local aoeZone = Instance.new("Part")
 	aoeZone.Name = "CombatVFX_AoETelegraph"
 	aoeZone.Shape = Enum.PartType.Cylinder
 	aoeZone.Size = Vector3.new(0.2, 4, 4)
-	aoeZone.CFrame = CFrame.new(0, 0.4, 0) * CFrame.Angles(0, 0, math.rad(90))
+	aoeZone.CFrame = CFrame.new(aoeCenter) * CFrame.Angles(0, 0, math.rad(90))
 	aoeZone.Material = Enum.Material.Neon
 	aoeZone.Color = Color3.fromRGB(240, 50, 50)
 	aoeZone.Transparency = 0.65
