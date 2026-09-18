@@ -2149,6 +2149,90 @@ local function runSuite74()
 	assertTest(slowHeavyPreset.ParryGoodTolerance == 0.18 and slowHeavyPreset.RecoveryDuration == 0.40 and jumpPreset.ImpactDelay == 1.25,
 		"[Suite 74.80] Tolerances and delays agree across config and data")
 
+	-- 15. Real Network Initialization Regression & Data Path Boundary
+	local gameNetworkFolder = ReplicatedStorage:FindFirstChild("GameNetwork")
+	assertTest(gameNetworkFolder ~= nil and gameNetworkFolder:IsA("Folder"),
+		"[Suite 74.81] ReplicatedStorage contains authoritative GameNetwork folder")
+
+	local csuRemote = gameNetworkFolder and gameNetworkFolder:FindFirstChild("CombatStateUpdate")
+	assertTest(csuRemote ~= nil and csuRemote:IsA("RemoteEvent"),
+		"[Suite 74.82] GameNetwork contains authoritative CombatStateUpdate RemoteEvent")
+
+	-- Test manual trigger data path boundary up to client RemoteEvent dispatch
+	local testWin = TestRunner.triggerTestReaction("SlowHeavy", 74001)
+	assertTest(testWin ~= nil and testWin.WindowId ~= nil,
+		"[Suite 74.83] triggerTestReaction successfully creates active test window")
+
+	local testView = ReactionService.getReactionWindowView(testWin, "Training Dummy")
+	assertTest(
+		testView ~= nil
+		and testView.WindowId == testWin.WindowId
+		and testView.AttackStartServerTime ~= nil
+		and testView.ImpactServerTime ~= nil
+		and testView.ReactionCloseServerTime ~= nil
+		and testView.EnemyInstanceId == "test_attacker"
+		and testView.AttackType == "Melee"
+		and (testView.TargetWorldPosition ~= nil or testView.TargetWorldPos ~= nil)
+		and testView.AttackerWorldPos ~= nil,
+		"[Suite 74.84] ActiveReactionWindow view exposes complete authoritative 3D attack metadata"
+	)
+
+	-- Verify NetworkService.sendCombatState dispatches cleanly with mock player
+	local mockPlayerInstance = {
+		UserId = 74001,
+		Name = "TestNetPlayer",
+		IsA = function(_, cls) return cls == "Player" end,
+	}
+	local sendOk = pcall(function()
+		local snap: StateTypes.CombatSnapshot = {
+			CombatId = "manual_test_reaction",
+			Phase = "ResolutionPhase",
+			TurnNumber = 1,
+			TurnStartTime = os.clock(),
+			TurnDuration = 45,
+			TimeRemaining = 45,
+			Enemies = {},
+			Party = {},
+			LocalHand = {},
+			CombatEvents = {},
+			Message = "Network test",
+			ActiveReactionWindow = testView,
+			Environment = nil,
+		}
+		NetworkService.sendCombatState(mockPlayerInstance :: any, snap)
+	end)
+	assertTest(sendOk == true, "[Suite 74.85] NetworkService.sendCombatState dispatches snapshot without error")
+
+	-- Clean up test window
+	local dummyStateCleanup = {
+		CombatId = "manual_test_reaction",
+		ActiveReactionWindow = testWin,
+	}
+	ReactionService.resolveReactionWindow(dummyStateCleanup :: any, testWin.WindowId)
+
+	--[=[
+		=============================================================================
+		MANUAL STUDIO ACCEPTANCE CRITERIA (3D Presentation Verification):
+		Automated tests verify timing mathematics, server authorization, network
+		contract boundaries, and state transition correctness. They do NOT prove
+		visual animation playback in the 3D viewport.
+
+		Required Studio Play Solo / Multiplayer Acceptance Checks:
+		1. SlowHeavy: Run /SlowHeavy in chat. Observe enemy torso windup lunge toward
+		   player, striking at ImpactServerTime.
+		2. FastDagger: Run /FastDagger in chat. Observe noticeably faster thrust.
+		3. JumpAttack: Run /JumpAttack in chat. Observe enemy leaping into parabolic
+		   arc and slamming downward onto player position at impact.
+		4. ProjectileBolt: Run /ProjectileBolt in chat. Observe void energy projectile
+		   traveling from enemy to player at configured ProjectileSpeed (30 studs/s).
+		5. UnreactableExplosion: Run /UnreactableExplosion in chat. Observe red expanding
+		   AoE cylinder telegraphing impending detonation; Dodge and Parry are locked.
+		6. Player Input: Press C (Dodge) or V (Parry) during valid timing window.
+		   Observe immediate HUD judgement banner ("PERFECT", "GOOD", "EARLY", "LATE").
+		7. Target Isolation: Non-targeted players in multi-player do not see Dodge/Parry prompt.
+		=============================================================================
+	]=]
+
 	ReactionService.cleanup()
 	ReactionService.setParryHook(nil)
 end
@@ -8519,7 +8603,7 @@ function TestRunner.triggerTestReaction(profileName: string?, targetUserId: numb
 	end
 
 	print(string.format("[TestRunner] Triggered manual test reaction window '%s' (%s - %s) for player %d", win.WindowId, prof.AttackName, prof.AttackType or "Melee", userId))
-	task.delay(prof.TelegraphDuration + prof.ImpactDelay + prof.RecoveryDuration, function()
+	task.delay(prof.ImpactDelay + prof.RecoveryDuration + 0.05, function()
 		if dummyCombatState.ActiveReactionWindow then
 			local results = ReactionService.resolveReactionWindow(dummyCombatState, win.WindowId)
 			combatSnapshot.ActiveReactionWindow = nil

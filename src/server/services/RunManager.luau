@@ -888,8 +888,8 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		-- Ensure ActiveRoom exists in Workspace BEFORE combat initialization so enemy models are parented inside ActiveRoom
 		local wrs = getWorldRoomService()
 		if wrs then
-			pcall(function()
-				wrs.loadRoom(
+			local roomOk, roomResult = pcall(function()
+				return wrs.loadRoom(
 					node.Type :: StateTypes.ActiveRoomType,
 					node.Tier,
 					node.Act,
@@ -898,6 +898,16 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 					dRun.Seed
 				)
 			end)
+			local activeRoom = (roomOk and typeof(roomResult) == "Instance" and roomResult:IsA("Model") and roomResult.Parent ~= nil and roomResult) or (wrs.getActiveRoomModel and wrs.getActiveRoomModel())
+			if not activeRoom then
+				local loadErr = if not roomOk then tostring(roomResult) else "ActiveRoom failed to instantiate"
+				warn(string.format("[MAPFLOW][SERVER] combat room load failed: %s", loadErr))
+				print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", loadErr))
+				pcall(function()
+					wrs.cleanupRoom()
+				end)
+				return false, "Failed to load active room: " .. loadErr
+			end
 		end
 
 		local combatOk, combatResult = pcall(function()
@@ -941,9 +951,19 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 			local wrs = getWorldRoomService()
 			if wrs then
-				pcall(function()
-					wrs.loadRoom("Event", node.Tier, node.Act, eventId, "None", dRun.Seed)
+				local roomOk, roomResult = pcall(function()
+					return wrs.loadRoom("Event", node.Tier, node.Act, eventId, "None", dRun.Seed)
 				end)
+				local activeRoom = (roomOk and typeof(roomResult) == "Instance" and roomResult:IsA("Model") and roomResult.Parent ~= nil and roomResult) or (wrs.getActiveRoomModel and wrs.getActiveRoomModel())
+				if not activeRoom then
+					local loadErr = if not roomOk then tostring(roomResult) else "Event ActiveRoom failed to instantiate"
+					warn(string.format("[MAPFLOW][SERVER] event room load failed: %s", loadErr))
+					print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", loadErr))
+					pcall(function()
+						wrs.cleanupRoom()
+					end)
+					return false, "Failed to load active room: " .. loadErr
+				end
 			end
 
 			local eventOk, eventResult = pcall(function()
@@ -961,6 +981,11 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 				local eventErr = not eventOk and tostring(eventResult) or "startEvent returned nil"
 				warn(string.format("[MAPFLOW][SERVER] event setup result: Success=false, Err=%s", eventErr))
 				print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", eventErr))
+				if wrs then
+					pcall(function()
+						wrs.cleanupRoom()
+					end)
+				end
 				return false, "Failed to start event: " .. eventErr
 			end
 

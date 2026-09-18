@@ -1773,8 +1773,34 @@ test("clickDetector.MouseClick" in world_room_src, "WorldRoomService wires physi
 test("[Suite 74.52]" in testrunner_src, "TestRunner Suite 74 contains deterministic projectile timing assertions")
 test("[Suite 74.65]" in testrunner_src, "TestRunner Suite 74 contains comprehensive 3D attack animation and server time assertions")
 test("[Suite 74.80]" in testrunner_src, "TestRunner Suite 74 contains all 15 Reaction V2 regression invariants up to [Suite 74.80]")
+test("[Suite 74.81]" in testrunner_src, "TestRunner Suite 74 verifies GameNetwork folder existence")
+test("[Suite 74.82]" in testrunner_src, "TestRunner Suite 74 verifies CombatStateUpdate RemoteEvent existence")
+test("[Suite 74.84]" in testrunner_src, "TestRunner Suite 74 verifies ActiveReactionWindow view exposes complete authoritative 3D attack metadata")
+test("[Suite 74.85]" in testrunner_src, "TestRunner Suite 74 verifies NetworkService.sendCombatState dispatches snapshot without error")
 test("TestRunner.triggerTestReaction" in testrunner_src, "TestRunner provides triggerTestReaction manual test scenario helper")
 test("/SlowHeavy" in init_server_src and "/FastDagger" in init_server_src, "Server init provides Studio developer chat commands for 3D attack testing")
+
+# Network Folder & RemoteEvent Contract Invariants (Single Authoritative Remote Contract)
+network_svc_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+combat_vfx_src = (ROOT / "src/client/CombatVFXController.client.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+run_mgr_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+
+test((ROOT / "src/client/CombatVFXController.client.luau").exists(), "CombatVFXController client script exists")
+test('ReplicatedStorage:WaitForChild("GameNetwork")' in combat_vfx_src, "CombatVFXController uses ReplicatedStorage.GameNetwork")
+test('GameNetwork:WaitForChild("CombatStateUpdate")' in combat_vfx_src, "CombatVFXController resolves CombatStateUpdate from GameNetwork")
+test('CardRiftNetwork' not in combat_vfx_src, "CombatVFXController contains zero CardRiftNetwork references")
+
+cardrift_net_found = [str(lf.relative_to(ROOT)) for lf in (ROOT / "src").rglob("*.luau") if "CardRiftNetwork" in lf.read_text(encoding="utf-8")]
+test(len(cardrift_net_found) == 0, f"Zero CardRiftNetwork references anywhere under src/ (found: {len(cardrift_net_found)})")
+
+test('"GameNetwork"' in network_svc_src and 'folder.Name = "GameNetwork"' in network_svc_src, "NetworkService creates authoritative GameNetwork folder")
+test('NetworkService.CombatStateUpdateEvent = getOrCreateRemoteEvent("CombatStateUpdate")' in network_svc_src or 'getOrCreateRemoteEvent("CombatStateUpdate")' in network_svc_src, "NetworkService creates CombatStateUpdate RemoteEvent")
+test('CombatStateUpdate' in ui_ctrl_src and 'CombatStateUpdate' in combat_vfx_src, "UIController and CombatVFXController both consume GameNetwork CombatStateUpdate remote")
+
+# Hardened Room Loading Invariants
+test("combat room load failed" in run_mgr_src, "RunManager catches room loading failures and aborts combat initialization")
+test("event room load failed" in run_mgr_src, "RunManager catches event room loading failures and aborts event initialization")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

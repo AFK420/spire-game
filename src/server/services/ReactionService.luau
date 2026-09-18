@@ -276,13 +276,17 @@ function ReactionService.submitReaction(
 	local arrivalGrace = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampArrivalGrace) or 0.20
 
 	-- 1. Packet Arrival Grace & Explicit Close Time Validation
-	-- LATENCY-COMPENSATION TRUST MODEL:
-	-- The client samples Workspace:GetServerTimeNow() at the instantaneous moment of player input.
-	-- Because network packets require one-way transit time (ping/2 + jitter), a valid keypress made
-	-- just before `closeTime` will arrive at the server after `closeTime`.
-	-- To prevent unfairly penalizing players for network transit, the server permits packet arrival
-	-- up to `closeTime + MaxClientTimestampArrivalGrace` (default 0.20s).
-	-- If physical arrival time `now` exceeds `closeTime + arrivalGrace`, the reaction is unconditionally rejected.
+	-- LATENCY-COMPENSATION TRUST MODEL & SECURITY BOUNDS:
+	-- Note on Anti-Cheat: Client timestamps are client-reported data and do not constitute absolute anti-cheat.
+	-- However, the client samples Workspace:GetServerTimeNow() at the instantaneous moment of player input,
+	-- which is essential for fair latency compensation in fast-paced action timing.
+	-- The server enforces strict bounding constraints to mitigate manipulation:
+	--   1) Packet arrival grace: packets must physically arrive within `closeTime + MaxClientTimestampArrivalGrace` (default 0.20s).
+	--      Unconditionally rejected if physical receipt time exceeds this threshold.
+	--   2) Future skew bounds: `clientTimestamp <= now + MaxClientTimestampFutureSkew` (anti-prospective spoofing).
+	--   3) Stale bounds: `clientTimestamp >= math.max(AttackStart - 0.5, now - MaxPastLag * 2)`.
+	--   4) Keypress deadline: client keypress timestamp must have occurred before reaction window close (`clientTimestamp <= closeTime`).
+	-- While this compensates for network transit (ping/jitter), the server remains the sole authority on combat outcomes.
 	if now > (closeTime + arrivalGrace) then
 		playerRecord.Reaction = reactionType
 		playerRecord.Result = "Late"
@@ -294,11 +298,6 @@ function ReactionService.submitReaction(
 	end
 
 	-- 2. Client Latency Compensation with Bounds Checking
-	-- The server trusts the client-reported input timestamp provided it satisfies:
-	--   a) Packet arrived within `closeTime + MaxClientTimestampArrivalGrace`
-	--   b) Clock skew is bounded: `clientTimestamp <= now + MaxClientTimestampFutureSkew` (anti-spoofing)
-	--   c) Timestamp is not stale: `clientTimestamp >= math.max(AttackStart - 0.5, now - MaxPastLag * 2)`
-	--   d) Keypress occurred before reaction window closed: `clientTimestamp <= closeTime`
 	local maxFutureSkew = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampFutureSkew) or 0.15
 	local maxPastLag = (GameConfig.Reaction and GameConfig.Reaction.MaxClientTimestampPastLag) or 0.60
 

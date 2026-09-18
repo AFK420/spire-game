@@ -22,8 +22,8 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 
-local CardRiftNetwork = ReplicatedStorage:WaitForChild("CardRiftNetwork")
-local CombatStateUpdateEvent = CardRiftNetwork:WaitForChild("CombatStateUpdate") :: RemoteEvent
+local GameNetwork = ReplicatedStorage:WaitForChild("GameNetwork")
+local CombatStateUpdateEvent = GameNetwork:WaitForChild("CombatStateUpdate") :: RemoteEvent
 
 local localPlayer = Players.LocalPlayer
 
@@ -467,14 +467,17 @@ local function onReactionWindowChanged(win: StateTypes.ReactionWindowView?)
 
 	-- Dispatch 3D presentation based on authoritative attack type
 	local aType = win.AttackType
-	if aType == "Jump" then
+	if aType == "Melee" then
+		playMeleeAttack(win)
+	elseif aType == "Jump" then
 		playJumpAttack(win)
 	elseif aType == "Projectile" then
 		playProjectileAttack(win)
 	elseif aType == "AoE" then
 		playAoEAttack(win)
-	elseif aType == "Melee" or true then
-		-- Default to Melee
+	else
+		-- Unknown or unspecified attack type: log warning and safely default to Melee
+		warn(string.format("[CombatVFXController] Unknown attack type '%s' for attack '%s'; defaulting to Melee presentation.", tostring(aType), tostring(win.AttackName)))
 		playMeleeAttack(win)
 	end
 end

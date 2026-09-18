@@ -2,24 +2,29 @@
 
 A modern **Multiplayer Co-op Roguelike Deckbuilder RPG** built for **Roblox** using [Rojo](https://rojo.space/) and strict Luau (`--!strict`).
 
-Up to 4 players form an adventuring party, choose from 10 distinct RPG Hero classes and 20 specialized subclasses, construct custom persistent decks, unlock passive skill trees, equip gear, slot active skills, scale a 4-Act procedural Spire, collect game-altering relics, and battle synchronized 3D raid bosses in real time.
+Up to 4 players form an adventuring party, choose from 10 distinct RPG Hero classes and 20 specialized subclasses, construct custom persistent decks, unlock passive skill trees, equip gear, slot active skills, scale a 4-Act procedural Spire, collect game-altering relics, explore interactive 3D event chambers, navigate elemental battlefields, and battle synchronized 3D raid bosses in real time.
 
 ---
 
-## 🚀 Current Project Status: Phase 4.1 Complete
+## 🚀 Current Project Status: Phase 1 – 4.1, 3D Rooms, Events & Reaction V2
 
-The project architecture has completed Phase 1 through Phase 4.1 hardening:
-* **Phase 1 (1.0 – 1.2)**: Single Source of Truth architecture, elimination of legacy monoliths, unified `RunManager` and `CombatService`, CardInstance unique GUIDs, multi-enemy support, and reactive `ArenaVisualizer`.
+The project architecture has completed comprehensive hardening across all major pillars:
+* **Phase 1 (1.0 – 1.2)**: Single Source of Truth architecture, elimination of legacy monoliths, unified `RunManager` and `CombatService`, CardInstance unique GUIDs, multi-enemy support, and reactive visualizers.
 * **Phase 2 (2.0 – 2.4)**: Decoupled combat pipeline (`DamagePipeline`, `ModifierResolver`, `TargetResolver`, `StatusService`, `EffectResolver`), card schema hardening, and strict target kinds.
 * **Phase 3 (3.0 – 3.3)**: RPG foundation (`EquipmentService`, `StatResolver`, `SkillService`, `PassiveService`), runtime modifier resolution, network ownership boundary closure, and server-authoritative provisioning.
 * **Phase 4 (4.0 – 4.1)**: Persistent account profile (`ProfileVersion = 1`), permanent `CardCollectionService`, configurable `DeckService` (slot entitlements, validation, active deck fallback), fail-closed DataStore loading, `UpdateAsync` concurrency safety, and remote security.
+* **3D Physical Room Streaming (`WorldRoomService`)**: Canonical room geometry lifecycle owner (`Workspace.CardRiftWorld.ActiveRoom`), streaming combat arenas, event chambers, campfire groves, and merchant bazaars with zero asset leakage.
+* **Interactive Co-op Event Chambers (`EventService`, `EventData`)**: 3D cooperative puzzle encounters (rune sequence puzzles, statue riddles) with physical ClickDetectors and shared/individual clues.
+* **Dynamic Elemental Environments (`EnvironmentService`, `EnvironmentData`)**: Battlefield weather affinities (Rain-Soaked, Scorched Ground, Frozen Wastes, Arcane Storm, Toxic Swamp) with damage modifiers, status bonuses, and in-combat transformations.
+* **Reaction V2 & 3D Attack Presentation (`ReactionService`, `CombatVFXController`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry). Bounded client timestamp validation with packet arrival grace (`0.20s`).
 
 ### 🧪 Verification Baseline
-* **59 In-Game Integration Suites** in `TestRunner.luau` covering every system end-to-end.
-* **608 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **75 In-Game Integration Suites** in `TestRunner.luau` covering state machines, combat mechanics, network boundaries, and deterministic timing math.
+* **1,283 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
-* **Strict Luau (`--!strict`)** across 100% of modules.
-* **Clean Rojo compilation** (`rojo build -o test.rbxl` exits code 0).
+* **Clean Rojo compilation** (`rojo build -o build.rbxl` exits code 0).
+* **Note on 3D Visual Rendering**: Automated tests prove network contracts, server authorization, and timing math; visual rendering and animation smoothness require interactive testing in Roblox Studio using developer commands (`/SlowHeavy`, `/FastDagger`, `/JumpAttack`, `/ProjectileBolt`, `/UnreactableExplosion`).
 
 ---
 
@@ -62,7 +67,7 @@ Every class features unique base stats, starting decks, passive skill trees, and
 
 ### 2. Procedural 4-Act Spire (`DungeonMap.luau`, `DungeonService.luau`)
 * **4 Acts**: *The Ashen Threshold*, *The Sunken Catacombs*, *The Obsidian Spire*, *The Heart Summit*.
-* **10 Tiers per Act**: Normal Combat, Elite Encounters, Campfire Rests, Merchant Shops, and Act Bosses.
+* **10 Tiers per Act**: Normal Combat, Elite Encounters, Event Chambers, Campfire Rests, Merchant Shops, and Act Bosses.
 * **Consensus Navigation**: Reachability graph validation allowing party members to vote on branch traversal.
 
 ---
@@ -103,21 +108,32 @@ Every class features unique base stats, starting decks, passive skill trees, and
   * `UpdateAsync` concurrency protection prevents stale sessions from overwriting newer remote timestamps.
 * **Permanent Card Collection (`CardCollectionService.luau`)**:
   * Permanent ownership tracking (`{ [cardDefId]: count }`).
-  * Clean integration surface for future gacha, booster packs, and rewards.
 * **Deck Management (`DeckService.luau`)**:
   * Server-generated GUIDs for persistent decks.
   * Configurable slot entitlements (`BaseDeckSlots = 4`, expandible up to 20).
   * Authoritative validation: collection ownership, max 3 copies per card, 8–30 card deck bounds.
   * Deterministic active-deck fallback to another valid deck or default starter deck with zero persistence mutation.
-  * Strict run isolation: in-combat card movement (drawing, playing, exhausting) never mutates persistent decks.
+  * Strict run isolation: in-combat card movement never mutates persistent decks.
 
 ---
 
-### 6. Centralized Network Gateway (`NetworkService.luau`)
+### 6. Reaction V2 — 3D Attack Reaction System
+* **No Approach Circles**: The rhythm/OSU-style shrinking circle UI is completely removed.
+* **3D Visual Cues**: Melee lunges, jump arcs, projectile flights, and expanding AoE telegraphs are rendered in the 3D world by `CombatVFXController`.
+* **Authoritative Server Timing**: Server establishes `AttackStartServerTime`, `ImpactServerTime`, and `ReactionCloseServerTime` via `Workspace:GetServerTimeNow()`.
+* **Controls**: `C` = Dodge, `V` = Parry. Space and Shift are explicitly unbound.
+* **Bounded Latency Compensation**: The server evaluates client input timestamps within strict physical bounds:
+  * Maximum packet arrival grace: 0.20s beyond close time for network transit.
+  * Future skew tolerance: 0.15s anti-spoofing limit.
+  * Past lag tolerance: 0.60s stale packet rejection.
+
+---
+
+### 7. Centralized Network Gateway (`NetworkService.luau`)
 * Centralized under `ReplicatedStorage.GameNetwork`.
 * 25 RemoteEvents categorized into token-bucket rate limiters (`Combat`, `Map`, `Class`, `General`).
 * Zero client authority: server injects sender identity from `player.UserId`; client cannot forge requests.
-* Client-authoritative skill unlocking disabled.
+* Single authoritative `CombatStateUpdate` remote consumed by both `UIController` and `CombatVFXController`.
 
 ---
 
@@ -139,13 +155,17 @@ spire-game/
 │   ├── shared/                   # ReplicatedStorage.Shared
 │   │   ├── StateTypes.luau       # Canonical Luau type definitions (--!strict)
 │   │   ├── GameConfig.luau       # Global game constants, limits, and scaling curves
+│   │   ├── BuildInfo.luau        # Authoritative build fingerprinting
 │   │   ├── CardData.luau         # Card library with data-driven effects
 │   │   ├── ClassData.luau        # 10 Classes, 20 Subclasses, starting decks
 │   │   ├── RelicData.luau        # 18 Relics, rarities, and trigger hooks
 │   │   ├── DungeonMap.luau       # 4-Act, 10-Tier procedural Spire tree generator
 │   │   ├── EquipmentData.luau    # RPG Equipment catalog and stat modifiers
 │   │   ├── SkillData.luau        # Active skills catalog and costs
-│   │   └── PassiveData.luau      # Passive skill trees (DAG) and prerequisites
+│   │   ├── PassiveData.luau      # Passive skill trees (DAG) and prerequisites
+│   │   ├── ReactionData.luau     # 3D attack timing profiles and projectile resolver
+│   │   ├── EventData.luau        # 3D interactive co-op event definitions and riddles
+│   │   └── EnvironmentData.luau  # Elemental affinities and battlefield transformations
 │   │
 │   ├── server/                   # ServerScriptService.Server
 │   │   ├── init.server.luau      # Authoritative server bootstrap & remote dispatch
@@ -169,17 +189,22 @@ spire-game/
 │   │       ├── DamagePipeline.luau        # Multi-phase damage, shields, downed
 │   │       ├── StatusService.luau         # Poison, Ignite, Chill, Freeze, Bleed
 │   │       ├── EffectResolver.luau        # Data-driven generic effect dispatcher
-│   │       ├── ArenaVisualizer.luau       # Reactive 3D arena & enemy models
-│   │       └── TestRunner.luau            # 59 end-to-end integration test suites
+│   │       ├── ArenaVisualizer.luau       # Reactive 3D enemy models & health bars
+│   │       ├── WorldRoomService.luau      # 3D physical room streaming & geometry lifecycle
+│   │       ├── EventService.luau          # 3D co-op puzzle & riddle encounter engine
+│   │       ├── ReactionService.luau       # Authoritative 3D attack reaction window engine
+│   │       ├── EnvironmentService.luau    # Elemental affinities & battlefield transformations
+│   │       └── TestRunner.luau            # 75 end-to-end integration test suites
 │   │
 │   └── client/                   # StarterPlayerScripts.Client
 │       ├── init.client.luau            # Client bootstrap
-│       ├── UIController.client.luau    # Master HUD, Map visualizer, card hand
+│       ├── UIController.client.luau    # Master HUD, Map visualizer, card hand, reaction prompt
 │       ├── ClassSelectUI.client.luau   # Lobby class & subclass picker UI
-│       └── RelicUI.client.luau         # HUD horizontal relic bar & tooltips
+│       ├── RelicUI.client.luau         # HUD horizontal relic bar & tooltips
+│       └── CombatVFXController.client.luau # Client 3D attack motions, projectiles, and AoE
 │
 └── tests/
-    └── verify_phase1_integration.py    # 608 offline architecture & logic verifiers
+    └── verify_phase1_integration.py    # 1,283 offline architecture & logic verifiers
 ```
 
 ---
@@ -195,11 +220,11 @@ spire-game/
 ```bash
 python tests/verify_phase1_integration.py
 ```
-*Executes all 608 verifier checks against file schemas, typing, and logic rules.*
+*Executes all 1,283 verifier checks against file schemas, network contracts, typing, and logic rules.*
 
 ### 2. Build Roblox Place File
 ```bash
-rojo build -o spire-game.rbxl
+rojo build -o build.rbxl
 ```
 *Compiles all Luau scripts and assets into a testable Roblox place file with zero errors.*
 
@@ -208,6 +233,14 @@ rojo build -o spire-game.rbxl
 rojo serve
 ```
 *Connect via the Rojo plugin in Roblox Studio and press F5 to Playtest.*
+
+### 4. Interactive Studio Testing (Chat Commands)
+In Studio Play Solo, trigger live 3D reaction attacks via chat:
+* `/SlowHeavy` — Slow heavy cleave (windup, lunge, recovery).
+* `/FastDagger` — Fast dagger thrust.
+* `/JumpAttack` — Parabolic leap and ground slam.
+* `/ProjectileBolt` — Void orb traveling at 30 studs/s.
+* `/UnreactableExplosion` — Expanding AoE telegraph circle.
 
 ---
 
