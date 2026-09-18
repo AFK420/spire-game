@@ -58,6 +58,12 @@ local SkillService = require(services:WaitForChild("SkillService") :: ModuleScri
 local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
 local CardCollectionService = require(services:WaitForChild("CardCollectionService") :: ModuleScript)
 local DeckService = require(services:WaitForChild("DeckService") :: ModuleScript)
+local WorldRoomService = require(services:WaitForChild("WorldRoomService") :: ModuleScript)
+local EventService = require(services:WaitForChild("EventService") :: ModuleScript)
+local ReactionService = require(services:WaitForChild("ReactionService") :: ModuleScript)
+local EnvironmentService = require(services:WaitForChild("EnvironmentService") :: ModuleScript)
+local EventData = require(Shared:WaitForChild("EventData") :: ModuleScript)
+local EnvironmentData = require(Shared:WaitForChild("EnvironmentData") :: ModuleScript)
 local NetworkService = require(services:WaitForChild("NetworkService") :: ModuleScript)
 
 local TestRunner = {}
@@ -1640,6 +1646,283 @@ local function runSuite71()
 		CombatService.cleanupCombat()
 		RunManager.resetToLobby()
 	end
+end
+
+local function runSuite72()
+	print("\n--- [Suite 72] WorldRoomService: 3D Room Lifecycle, Deterministic Templating & Zero Leakage ---")
+
+	-- 72.1: Initialization
+	WorldRoomService.init()
+	local container = game:GetService("Workspace"):FindFirstChild("CardRiftWorld")
+	assertTest(container ~= nil and container:IsA("Folder"), "[Suite 72.1] CardRiftWorld container folder created in Workspace")
+
+	-- 72.2: Load Combat Arena Room
+	local roomModel = WorldRoomService.loadRoom("Combat", 1, 1, "enc_test_1", "None", 12345)
+	assertTest(roomModel ~= nil and roomModel:IsA("Model"), "[Suite 72.2] loadRoom returns Model")
+	assertTest(roomModel.Name == "ActiveRoom", "[Suite 72.3] ActiveRoom model named correctly")
+	assertTest(roomModel:FindFirstChild("Geometry") ~= nil, "[Suite 72.4] Geometry folder present in ActiveRoom")
+	assertTest(roomModel:FindFirstChild("SpawnPoints") ~= nil, "[Suite 72.5] SpawnPoints folder present in ActiveRoom")
+	assertTest(roomModel:FindFirstChild("Interactables") ~= nil, "[Suite 72.6] Interactables folder present in ActiveRoom")
+	assertTest(roomModel:FindFirstChild("Hazards") ~= nil, "[Suite 72.7] Hazards folder present in ActiveRoom")
+	assertTest(roomModel:FindFirstChild("Effects") ~= nil, "[Suite 72.8] Effects folder present in ActiveRoom")
+
+	-- 72.3: Spawns
+	local spFolder = roomModel:FindFirstChild("SpawnPoints") :: Folder
+	local spawnLoc = spFolder:FindFirstChildWhichIsA("SpawnLocation")
+	assertTest(spawnLoc ~= nil, "[Suite 72.9] SpawnLocation instance exists in SpawnPoints")
+
+	-- 72.4: Load Event Chamber Room (Cleans up previous room)
+	local eventRoom = WorldRoomService.loadRoom("Event", 2, 1, "rune_sequence_puzzle", "None", 67890)
+	assertTest(eventRoom ~= nil and eventRoom == WorldRoomService.getActiveRoomModel(), "[Suite 72.10] loadRoom replaces prior room with new ActiveRoom")
+	local geomFolder = eventRoom:FindFirstChild("Geometry") :: Folder
+	assertTest(geomFolder:FindFirstChild("CentralDais") ~= nil, "[Suite 72.11] Event Chamber contains CentralDais")
+
+	-- 72.5: Create 3D Interactables
+	local runePart = WorldRoomService.createInteractable("Rune_Test", "Test Rune", "Rune", Vector3.new(0, 3, 0), "Activate")
+	assertTest(runePart ~= nil and runePart:IsA("BasePart"), "[Suite 72.12] createInteractable instantiates physical BasePart")
+	assertTest(runePart:FindFirstChildWhichIsA("ClickDetector") ~= nil, "[Suite 72.13] ClickDetector attached to interactable")
+	assertTest(WorldRoomService.getInteractable("Rune_Test") == runePart, "[Suite 72.14] getInteractable retrieves part by ID")
+
+	-- 72.6: Apply Environment Visuals
+	WorldRoomService.applyEnvironmentVisuals("LavaCavern")
+	local fxFolder = eventRoom:FindFirstChild("Effects") :: Folder
+	assertTest(fxFolder:FindFirstChild("LavaAnchor") ~= nil, "[Suite 72.15] LavaCavern visual preset instantiated LavaAnchor in Effects")
+
+	-- 72.7: Teleport Players
+	local mockPlayer = {
+		UserId = 72001,
+		Character = Instance.new("Model"),
+	}
+	local hrp = Instance.new("Part")
+	hrp.Name = "HumanoidRootPart"
+	hrp.CFrame = CFrame.new(0, 0, 0)
+	hrp.Parent = mockPlayer.Character
+	WorldRoomService.teleportPlayers({ mockPlayer })
+	assertTest(hrp.Position.Y > 0, "[Suite 72.16] teleportPlayers moves character to spawn area")
+
+	-- 72.8: Cleanup Room & Zero Instance Leakage
+	WorldRoomService.cleanupRoom()
+	assertTest(WorldRoomService.getActiveRoomModel() == nil, "[Suite 72.17] getActiveRoomModel returns nil after cleanupRoom")
+	assertTest(container:FindFirstChild("ActiveRoom") == nil, "[Suite 72.18] ActiveRoom completely destroyed from Workspace (zero leakage)")
+end
+
+local function runSuite73()
+	print("\n--- [Suite 73] EventService: 3D Puzzle State Machine, Clues & Rewards ---")
+
+	local p1 = {
+		UserId = 73001,
+		DisplayName = "PuzzleMaster",
+		Resources = { HP = 100, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Gold = 50,
+		IsDowned = false,
+	}
+	local p2 = {
+		UserId = 73002,
+		DisplayName = "RiddleSolver",
+		Resources = { HP = 80, MaxHP = 80, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Gold = 30,
+		IsDowned = false,
+	}
+	local party: { [number]: StateTypes.PlayerState } = {
+		[73001] = p1 :: any,
+		[73002] = p2 :: any,
+	}
+
+	-- 73.1: Start Rune Sequence Puzzle
+	WorldRoomService.loadRoom("Event", 1, 1, "rune_sequence_puzzle", "None", 100)
+	local puzzleState = EventService.startEvent("rune_sequence_puzzle", party, 100)
+	assertTest(puzzleState ~= nil, "[Suite 73.1] startEvent instantiates puzzle state")
+	assertTest(puzzleState.Category == "Puzzle", "[Suite 73.2] Event category is Puzzle")
+	assertTest(puzzleState.AttemptsRemaining == 3, "[Suite 73.3] Starts with 3 attempts remaining")
+	assertTest(puzzleState.TargetSequence ~= nil and #puzzleState.TargetSequence == 4, "[Suite 73.4] Generates 4-rune sequence")
+	assertTest(puzzleState.CurrentStep == 1, "[Suite 73.5] Sequence starts at Step 1")
+
+	-- 73.2: Co-op Clue Distribution
+	local snap1 = EventService.getEventSnapshotForPlayer(p1)
+	local snap2 = EventService.getEventSnapshotForPlayer(p2)
+	assertTest(snap1 ~= nil and snap1.ClueText ~= nil, "[Suite 73.6] Player 1 receives puzzle clues")
+	assertTest(snap2 ~= nil and snap2.ClueText ~= nil, "[Suite 73.7] Player 2 receives puzzle clues")
+	assertTest(snap1.ObjectiveText ~= nil, "[Suite 73.8] Player 1 has assigned objective")
+
+	-- 73.3: Correct Rune Step
+	local firstCorrectRune = puzzleState.TargetSequence[1]
+	local okStep, msgStep = EventService.interact(p1, firstCorrectRune)
+	assertTest(okStep == true, "[Suite 73.9] Interacting with correct first rune succeeds")
+	assertTest(puzzleState.CurrentStep == 2, "[Suite 73.10] CurrentStep advanced from 1 to 2")
+
+	-- 73.4: Incorrect Rune Step decrements attempts
+	local wrongRune = puzzleState.TargetSequence[4] -- Incorrect step
+	local wrongOk, wrongMsg = EventService.interact(p1, wrongRune)
+	assertTest(wrongOk == false, "[Suite 73.11] Interacting with out-of-order rune rejected")
+	assertTest(puzzleState.AttemptsRemaining == 2, "[Suite 73.12] Attempts decremented to 2 on error")
+	assertTest(puzzleState.CurrentStep == 1, "[Suite 73.13] CurrentStep reset to 1 on mistake")
+
+	-- 73.5: Downed Player Guard
+	p2.IsDowned = true
+	local downOk, downErr = EventService.interact(p2, firstCorrectRune)
+	assertTest(downOk == false and string.find(downErr or "", "Downed") ~= nil, "[Suite 73.14] Downed player rejected from interacting")
+	p2.IsDowned = false
+
+	-- 73.6: Start Statue Riddle
+	WorldRoomService.loadRoom("Event", 2, 1, "statue_riddle", "None", 200)
+	local riddleState = EventService.startEvent("statue_riddle", party, 200)
+	assertTest(riddleState ~= nil and riddleState.Category == "Riddle", "[Suite 73.15] Statue Riddle initialized")
+	assertTest(riddleState.CorrectStatueId == "Statue_Wisdom", "[Suite 73.16] Correct statue is Statue_Wisdom")
+
+	-- 73.7: Solve Riddle Successfully
+	local solveOk, solveMsg = EventService.interact(p1, "Statue_Wisdom")
+	assertTest(solveOk == true, "[Suite 73.17] Choosing Statue_Wisdom solves riddle")
+	assertTest(riddleState.IsCompleted == true, "[Suite 73.18] Riddle marked completed")
+	assertTest(riddleState.Outcome == "Success", "[Suite 73.19] Riddle outcome is Success")
+	assertTest(p1.Gold > 50, "[Suite 73.20] Gold reward granted to player 1 on success")
+
+	-- 73.8: Cleanup
+	EventService.cleanupEvent()
+	assertTest(EventService.getActiveEvent() == nil, "[Suite 73.21] cleanupEvent clears active event")
+	WorldRoomService.cleanupRoom()
+end
+
+local function runSuite74()
+	print("\n--- [Suite 74] ReactionService: Authoritative Monotonic Windowing, Dodge & Parry ---")
+
+	-- 74.1: Profile Creation
+	local profile = ReactionService.createAttackProfile(
+		"atk_boss_slam",
+		"Titan Cleave",
+		25,
+		"Physical",
+		true, -- CanDodge
+		true, -- CanParry
+		1.0,  -- TelegraphDuration
+		1.2,  -- DodgeWindowEnd
+		0.6,  -- ParryWindowStart
+		0.9   -- ParryWindowEnd
+	)
+	assertTest(profile.AttackName == "Titan Cleave", "[Suite 74.1] createAttackProfile stores AttackName")
+	assertTest(profile.RawDamage == 25, "[Suite 74.2] Profile stores RawDamage")
+	assertTest(profile.ParryWindowStart == 0.6 and profile.ParryWindowEnd == 0.9, "[Suite 74.3] Profile configures parry window (0.6s - 0.9s)")
+
+	-- 74.2: Open Reaction Window
+	local mockCombatState = {
+		CombatId = "test_combat_react",
+		ActiveReactionWindow = nil,
+	}
+	local window = ReactionService.openReactionWindow(mockCombatState :: any, profile, "enemy_boss", { 74001, 74002 })
+	assertTest(window ~= nil, "[Suite 74.4] openReactionWindow returns window state")
+	assertTest(mockCombatState.ActiveReactionWindow == window, "[Suite 74.5] Window attached to combatState")
+	assertTest(ReactionService.getActiveWindow() == window, "[Suite 74.6] getActiveWindow returns active window")
+
+	-- 74.3: Non-targeted player rejected
+	local nonTargetOk, nonTargetErr = ReactionService.submitReaction(99999, window.WindowId, "Dodge")
+	assertTest(nonTargetOk == false and string.find(nonTargetErr or "", "not a targeted recipient") ~= nil,
+		"[Suite 74.7] Non-targeted player rejected from reaction")
+
+	-- 74.4: Valid Dodge Submission
+	local dodgeOk, dodgeMsg, dodgeRes = ReactionService.submitReaction(74001, window.WindowId, "Dodge")
+	assertTest(dodgeOk == true and dodgeRes == "Success", "[Suite 74.8] Valid timing Dodge submission succeeds")
+
+	-- 74.5: Single Submission Enforced (Double reaction rejected)
+	local dupOk, dupErr = ReactionService.submitReaction(74001, window.WindowId, "Dodge")
+	assertTest(dupOk == false and string.find(dupErr or "", "already submitted") ~= nil,
+		"[Suite 74.9] Double reaction submission strictly rejected")
+
+	-- 74.6: Parry Hook Callback
+	local parryHookFired = false
+	ReactionService.setParryHook(function(targetUserId, attackProf)
+		if targetUserId == 74002 and attackProf.AttackName == "Titan Cleave" then
+			parryHookFired = true
+		end
+	end)
+
+	-- 74.7: Window View
+	local winView = ReactionService.getReactionWindowView(window, "The Titan Boss")
+	assertTest(winView ~= nil, "[Suite 74.10] getReactionWindowView returns valid view")
+	assertTest(winView.EnemyName == "The Titan Boss", "[Suite 74.11] View includes EnemyName")
+	assertTest(winView.CanDodge == true and winView.CanParry == true, "[Suite 74.12] View reflects reaction permissions")
+
+	-- 74.8: Window Resolution
+	local results = ReactionService.resolveReactionWindow(mockCombatState :: any, window.WindowId)
+	assertTest(results[74001] ~= nil and results[74001].Result == "Success", "[Suite 74.13] resolveReactionWindow returns player 1 success")
+	assertTest(mockCombatState.ActiveReactionWindow == nil, "[Suite 74.14] CombatState ActiveReactionWindow cleared on resolution")
+	assertTest(ReactionService.getActiveWindow() == nil, "[Suite 74.15] Active window set to nil after resolution")
+
+	-- 74.9: Non-dodgeable / Non-parryable Attacks
+	local unparryableProf = ReactionService.createAttackProfile("atk_unparry", "Unstoppable Nova", 50, "Void", false, false)
+	local win2 = ReactionService.openReactionWindow(mockCombatState :: any, unparryableProf, "boss_nova", { 74001 })
+	local noDodgeOk, noDodgeErr = ReactionService.submitReaction(74001, win2.WindowId, "Dodge")
+	assertTest(noDodgeOk == false and string.find(noDodgeErr or "", "cannot be dodged") ~= nil,
+		"[Suite 74.16] Attacks with CanDodge=false strictly reject Dodge")
+
+	ReactionService.resolveReactionWindow(mockCombatState :: any, win2.WindowId)
+	ReactionService.cleanup()
+	ReactionService.setParryHook(nil)
+end
+
+local function runSuite75()
+	print("\n--- [Suite 75] EnvironmentService: Elemental Affinities, Scaling & Transformations ---")
+
+	-- 75.1: Deterministic Selection
+	local env1 = EnvironmentData.pickDeterministicEnvironment(1, 42)
+	local env2 = EnvironmentData.pickDeterministicEnvironment(1, 42)
+	assertTest(env1 == env2, "[Suite 75.1] pickDeterministicEnvironment is deterministic across same seed")
+
+	-- 75.2: RainSoaked Affinities
+	local rainState = EnvironmentService.createEnvironment("RainSoaked")
+	assertTest(rainState.EnvironmentId == "RainSoaked", "[Suite 75.2] RainSoaked environment instantiated")
+	assertTest(rainState.DamageModifiers["Lightning"] == 1.30, "[Suite 75.3] RainSoaked increases Lightning damage (+30%)")
+	assertTest(rainState.DamageModifiers["Fire"] == 0.75, "[Suite 75.4] RainSoaked decreases Fire damage (-25%)")
+
+	-- 75.3: modifyDamage Resolution
+	local dmgContextLightning: StateTypes.DamageContext = {
+		RawDamage = 20,
+		DamageType = "Lightning",
+		SourceId = "p1",
+		SourceName = "Player",
+		TargetEntityKind = "Enemy",
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	}
+	local scaledLightning = EnvironmentService.modifyDamage(rainState, dmgContextLightning, 20)
+	assertTest(scaledLightning == 26, "[Suite 75.5] modifyDamage scales 20 Lightning damage to 26 (1.30x)")
+
+	local dmgContextFire: StateTypes.DamageContext = {
+		RawDamage = 20,
+		DamageType = "Fire",
+		SourceId = "p1",
+		SourceName = "Player",
+		TargetEntityKind = "Enemy",
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	}
+	local scaledFire = EnvironmentService.modifyDamage(rainState, dmgContextFire, 20)
+	assertTest(scaledFire == 15, "[Suite 75.6] modifyDamage scales 20 Fire damage to 15 (0.75x)")
+
+	-- 75.4: Status Modification
+	local baseStacks, baseDur = 3, 2
+	local finalStacks, finalDur = EnvironmentService.modifyStatusApplication(rainState, "Shock", baseStacks, baseDur)
+	assertTest(finalStacks == 4, "[Suite 75.7] RainSoaked adds +1 Shock stack bonus")
+
+	-- 75.5: Healing Scaling
+	local toxicState = EnvironmentService.createEnvironment("ToxicSwamp")
+	assertTest(toxicState.HealingModifier == 0.80, "[Suite 75.8] ToxicSwamp HealingModifier is 0.80")
+	local modifiedHeal = EnvironmentService.modifyHealing(toxicState, 50)
+	assertTest(modifiedHeal == 40, "[Suite 75.9] modifyHealing scales 50 heal to 40 in ToxicSwamp")
+
+	-- 75.6: Elemental Transformation: RainSoaked + Cold -> FrozenWastes
+	local transOk, transTxt, newEnvId = EnvironmentService.evaluateTransformation(rainState, "Cold")
+	assertTest(transOk == true, "[Suite 75.10] Cold damage triggers transformation in RainSoaked")
+	assertTest(newEnvId == "FrozenWastes", "[Suite 75.11] RainSoaked transformed into FrozenWastes")
+	assertTest(rainState.EnvironmentId == "FrozenWastes", "[Suite 75.12] EnvironmentState updated to FrozenWastes")
+	assertTest(rainState.DamageModifiers["Cold"] == 1.25, "[Suite 75.13] Transformed environment loaded FrozenWastes Cold modifier (+25%)")
+
+	-- 75.7: View Snapshot
+	local view = EnvironmentService.getEnvironmentView(rainState)
+	assertTest(view ~= nil and view.EnvironmentId == "FrozenWastes", "[Suite 75.14] getEnvironmentView returns FrozenWastes snapshot")
+	assertTest(view.Icon == "❄️", "[Suite 75.15] FrozenWastes view includes snowflake icon")
+
+	WorldRoomService.cleanupRoom()
 end
 
 function TestRunner.runAllTests(): boolean
@@ -7807,6 +8090,26 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 71: MAPFLOW HANDSHAKE, STATESYNC RECOVERY & FINGERPRINTING
 	----------------------------------------------------------------------------
 	runSuite71()
+
+	----------------------------------------------------------------------------
+	-- SUITE 72: WORLD ROOM SERVICE 3D LIFECYCLE & ZERO LEAKAGE
+	----------------------------------------------------------------------------
+	runSuite72()
+
+	----------------------------------------------------------------------------
+	-- SUITE 73: EVENT SERVICE 3D PUZZLES & REWARDS
+	----------------------------------------------------------------------------
+	runSuite73()
+
+	----------------------------------------------------------------------------
+	-- SUITE 74: COMBAT REACTION SERVICE DODGE & PARRY
+	----------------------------------------------------------------------------
+	runSuite74()
+
+	----------------------------------------------------------------------------
+	-- SUITE 75: ENVIRONMENT SERVICE ELEMENTAL AFFINITIES & TRANSFORMATIONS
+	----------------------------------------------------------------------------
+	runSuite75()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

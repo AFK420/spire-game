@@ -146,6 +146,132 @@ export type CombatEvent = {
 	Timestamp: number,
 }
 
+--------------------------------------------------------------------------------
+-- 3.0 Reaction & Environmental Combat Types
+--------------------------------------------------------------------------------
+
+export type ReactionType = "Dodge" | "Parry"
+export type ReactionResult = "Success" | "Miss" | "Early" | "Late" | "None"
+
+export type AttackReactionProfile = {
+	AttackId: string,
+	AttackName: string,
+	CanDodge: boolean,
+	CanParry: boolean,
+	TelegraphDuration: number,
+	DodgeWindowStart: number,
+	DodgeWindowEnd: number,
+	ParryWindowStart: number,
+	ParryWindowEnd: number,
+	DamageType: DamageType,
+	RawDamage: number,
+	IsAoE: boolean?,
+}
+
+export type ReactionWindowState = {
+	WindowId: string,
+	AttackProfile: AttackReactionProfile,
+	EnemyInstanceId: string,
+	TargetUserIds: { number },
+	OpenTime: number,
+	CloseTime: number,
+	Resolved: boolean,
+	PerPlayerResult: { [number]: { Reaction: ReactionType?, Result: ReactionResult, SubmittedAt: number? } },
+}
+
+export type ReactionWindowView = {
+	WindowId: string,
+	AttackName: string,
+	EnemyName: string,
+	DamageType: DamageType,
+	RawDamage: number,
+	CanDodge: boolean,
+	CanParry: boolean,
+	TimeRemaining: number,
+	TotalDuration: number,
+	TargetUserIds: { number },
+}
+
+export type EnvironmentId = "RainSoaked" | "LavaCavern" | "FrozenWastes" | "ToxicSwamp" | "ArcaneStorm" | "None"
+
+export type EnvironmentState = {
+	EnvironmentId: EnvironmentId,
+	Name: string,
+	StartTime: number,
+	Intensity: number,
+	Tags: { [string]: boolean },
+	ActiveHazards: { string },
+	DamageModifiers: { [DamageType]: number },
+	StatusModifiers: { [string]: { DurationBonus: number?, StacksBonus: number? } },
+	HealingModifier: number,
+	ActiveTransformation: string?,
+}
+
+export type EnvironmentView = {
+	EnvironmentId: EnvironmentId,
+	Name: string,
+	Description: string,
+	Icon: string,
+	Tags: { string },
+	ActiveTransformation: string?,
+}
+
+--------------------------------------------------------------------------------
+-- 3.0b 3D Event Room Types
+--------------------------------------------------------------------------------
+
+export type EventCategory = "Puzzle" | "Riddle" | "Choice"
+
+export type EventInteractableState = {
+	Id: string,
+	Name: string,
+	Type: string,
+	IsActive: boolean,
+	Position: Vector3?,
+	Label: string?,
+}
+
+export type EventState = {
+	EventId: string,
+	DefinitionId: string,
+	Name: string,
+	Category: EventCategory,
+	IsCompleted: boolean,
+	Outcome: "Success" | "Failure" | "Pending",
+	AttemptsRemaining: number,
+	MaxAttempts: number,
+	Interactables: { [string]: EventInteractableState },
+	TargetSequence: { string }?,
+	CurrentStep: number?,
+	CorrectStatueId: string?,
+	Clues: { [string]: string }?,
+	PlayerSpecificClues: { [number]: string }?,
+	PlayerSpecificObjectives: { [number]: string }?,
+	SharedEventState: { [string]: any },
+	Message: string?,
+}
+
+export type EventInteractableView = {
+	Id: string,
+	Name: string,
+	Type: string,
+	IsActive: boolean,
+	Label: string?,
+}
+
+export type EventView = {
+	EventId: string,
+	Name: string,
+	Category: EventCategory,
+	IsCompleted: boolean,
+	Outcome: "Success" | "Failure" | "Pending",
+	AttemptsRemaining: number,
+	Message: string?,
+	ClueText: string?,
+	Interactables: { EventInteractableView },
+	ObjectiveText: string?,
+}
+
 export type CombatState = {
 	CombatId: string,
 	Phase: CombatPhase,
@@ -156,6 +282,8 @@ export type CombatState = {
 	Enemies: { [string]: EnemyState }, -- Keyed by EnemyState.InstanceId (Supports 1 to N enemies)
 	ReadyPlayers: { [number]: boolean },
 	CombatLog: { CombatEvent },
+	ActiveReactionWindow: ReactionWindowState?,
+	Environment: EnvironmentState?,
 }
 
 --------------------------------------------------------------------------------
@@ -316,6 +444,7 @@ export type ActiveRoomType =
 	| "Campfire Rest"
 	| "Merchant Shop"
 	| "Act Boss"
+	| "Event"
 
 export type ActiveRoom = {
 	NodeId: string,
@@ -323,6 +452,9 @@ export type ActiveRoom = {
 	Tier: number,
 	ActIndex: number,
 	RoomEncounterId: string?,
+	RoomTemplateId: string?,
+	EnvironmentId: EnvironmentId?,
+	EventId: string?,
 	CampfireUsed: boolean?,
 	ShopVisited: boolean?,
 }
@@ -346,6 +478,7 @@ export type RunState = {
 	PartyMembers: { [number]: PlayerState }, -- Keyed by UserId
 	ActiveRoom: ActiveRoom?,
 	ActiveCombat: CombatState?,
+	ActiveEvent: EventState?,
 	PendingRewards: RunRewards?,
 	StateRevision: number,
 }
@@ -414,6 +547,8 @@ export type CombatSnapshot = {
 	LocalHand: { CardView },
 	CombatEvents: { CombatEvent },
 	Message: string?,
+	ActiveReactionWindow: ReactionWindowView?,
+	Environment: EnvironmentView?,
 }
 
 export type MapNodeView = {
@@ -455,6 +590,7 @@ export type RunSnapshot = {
 	AvailableNodeIds: { string },
 	MapNodes: { MapNodeView }?,
 	Party: { [string]: PlayerView },
+	Event: EventView?,
 	Rewards: {
 		GoldAmount: number,
 		AetherShardsAmount: number,

@@ -65,6 +65,20 @@ function DamagePipeline.executeDamage(
 		finalDamage = ModifierResolver.resolve(context.RawDamage, "Damage", modifiers, modContext)
 	end
 
+	-- 1a. Environmental damage modification
+	local envService = servicesFolder:FindFirstChild("EnvironmentService")
+	if envService then
+		local EnvironmentServiceModule = require(envService :: ModuleScript)
+		local combatSvc = servicesFolder:FindFirstChild("CombatService")
+		if combatSvc then
+			local CombatServiceModule = require(combatSvc :: ModuleScript)
+			local actCombat = CombatServiceModule.getActiveCombat()
+			if actCombat and actCombat.Environment then
+				finalDamage = EnvironmentServiceModule.modifyDamage(actCombat.Environment, context, finalDamage)
+			end
+		end
+	end
+
 	-- Periodic or direct hits cannot deal negative damage
 	finalDamage = math.max(0, finalDamage)
 

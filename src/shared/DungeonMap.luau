@@ -22,6 +22,7 @@ export type NodeType =
 	| "Campfire Rest"
 	| "Merchant Shop"
 	| "Act Boss"
+	| "Event"
 
 export type NodeMetadata = {
 	DisplayName: string,
@@ -104,6 +105,12 @@ local NODE_METADATA: { [NodeType]: NodeMetadata } = {
 		Color = Color3.fromRGB(175, 35, 195),
 		Description = "The guardian of this Act. Defeat to advance to the next Act.",
 	},
+	["Event"] = {
+		DisplayName = "Event Chamber",
+		Icon = "✨",
+		Color = Color3.fromRGB(155, 75, 230),
+		Description = "Explore an ancient chamber with puzzles, riddles, and forgotten secrets.",
+	},
 }
 
 --------------------------------------------------------------------------------
@@ -140,23 +147,27 @@ local function pickNodeType(tier: number, rng: Random): NodeType
 		-- Tier 9 (pre-boss) is guaranteed Campfire Rest to prepare for the boss
 		return "Campfire Rest"
 	elseif tier >= 2 and tier <= 4 then
-		-- Early tiers: Mostly Combat, with occasional Shop or Campfire
+		-- Early tiers: Mostly Combat, with occasional Event, Shop or Campfire
 		local roll = rng:NextNumber()
-		if roll < 0.65 then
+		if roll < 0.55 then
 			return "Combat"
+		elseif roll < 0.70 then
+			return "Event"
 		elseif roll < 0.85 then
 			return "Merchant Shop"
 		else
 			return "Campfire Rest"
 		end
 	else
-		-- Mid/Late tiers (5..8): Introduces Elite Monsters
+		-- Mid/Late tiers (5..8): Introduces Elite Monsters and Events
 		local roll = rng:NextNumber()
-		if roll < 0.40 then
+		if roll < 0.35 then
 			return "Combat"
-		elseif roll < 0.70 then
+		elseif roll < 0.60 then
 			return "Elite Monster"
-		elseif roll < 0.85 then
+		elseif roll < 0.75 then
+			return "Event"
+		elseif roll < 0.88 then
 			return "Campfire Rest"
 		else
 			return "Merchant Shop"

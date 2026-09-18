@@ -247,6 +247,19 @@ handlers["Heal"] = function(effect: CardData.Effect, context: ActionContext, res
 		finalHeal = ModifierResolver.resolve(rawVal, "Healing", context.Modifiers, modCtx)
 	end
 
+	local envService = servicesFolder:FindFirstChild("EnvironmentService")
+	if envService then
+		local EnvironmentServiceModule = require(envService :: ModuleScript)
+		local combatSvc = servicesFolder:FindFirstChild("CombatService")
+		if combatSvc then
+			local CombatServiceModule = require(combatSvc :: ModuleScript)
+			local actCombat = CombatServiceModule.getActiveCombat()
+			if actCombat and actCombat.Environment then
+				finalHeal = EnvironmentServiceModule.modifyHealing(actCombat.Environment, finalHeal)
+			end
+		end
+	end
+
 	local oldHp = recipient.Resources.HP
 	recipient.Resources.HP = math.min(recipient.Resources.MaxHP, recipient.Resources.HP + finalHeal)
 	local actualHealed = recipient.Resources.HP - oldHp

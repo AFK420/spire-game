@@ -77,6 +77,29 @@ local function getArenaVisualizer(): any
 	return ArenaVisualizer
 end
 
+local EventService: any = nil
+local WorldRoomService: any = nil
+
+local function getEventService(): any
+	if not EventService then
+		local es = servicesFolder:FindFirstChild("EventService")
+		if es then
+			EventService = require(es :: ModuleScript)
+		end
+	end
+	return EventService
+end
+
+local function getWorldRoomService(): any
+	if not WorldRoomService then
+		local wrs = servicesFolder:FindFirstChild("WorldRoomService")
+		if wrs then
+			WorldRoomService = require(wrs :: ModuleScript)
+		end
+	end
+	return WorldRoomService
+end
+
 local RunManager = {}
 
 --------------------------------------------------------------------------------
@@ -304,6 +327,12 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		end
 	end
 
+	local eventView: StateTypes.EventView? = nil
+	local es = getEventService()
+	if es and es.getEventSnapshotForPlayer then
+		eventView = es.getEventSnapshotForPlayer(player)
+	end
+
 	return {
 		RunId = runToRead.RunId,
 		Phase = runToRead.Phase,
@@ -315,6 +344,7 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		AvailableNodeIds = runToRead.AvailableNodeIds,
 		MapNodes = mapNodesList,
 		Party = partyViews,
+		Event = eventView,
 		Rewards = rewardView,
 		Message = nil,
 		StateRevision = runToRead.StateRevision or 0,
@@ -831,8 +861,9 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		return false, err or "Invalid target node."
 	end
 
-	-- Stage 2: If combat node, attempt combat initialization in pcall BEFORE mutating run state or dungeon
+	-- Stage 2: If combat or event node, attempt encounter initialization in pcall BEFORE mutating run state or dungeon
 	local activeCombat = nil
+	local activeEvent = nil
 	if node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss" then
 		if not CombatService then
 			CombatService = require(servicesFolder:WaitForChild("CombatService") :: ModuleScript)
@@ -861,6 +892,39 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 		activeCombat = combatResult
 		print(string.format("[MAPFLOW][SERVER] 6. combat SUCCESS: Node=%s", node.Id))
+	elseif node.Type == "Event" then
+		local es = getEventService()
+		if es then
+			local rng = Random.new(dRun.Seed + node.Tier * 13)
+			local eventId = if rng:NextNumber() < 0.5 then "rune_sequence_puzzle" else "statue_riddle"
+
+			local wrs = getWorldRoomService()
+			if wrs then
+				pcall(function()
+					wrs.loadRoom("Event", node.Tier, node.Act, eventId, "None", dRun.Seed)
+				end)
+			end
+
+			local eventOk, eventResult = pcall(function()
+				return es.startEvent(
+					eventId,
+					runToMutate.PartyMembers,
+					dRun.Seed + node.Tier,
+					function(outcome: "Success" | "Failure", eventState: StateTypes.EventState)
+						RunManager.onEventCompleted(outcome, node, isLiveAction)
+					end
+				)
+			end)
+
+			if not eventOk or not eventResult then
+				local eventErr = not eventOk and tostring(eventResult) or "startEvent returned nil"
+				warn(string.format("[MAPFLOW][SERVER] event setup result: Success=false, Err=%s", eventErr))
+				print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", eventErr))
+				return false, "Failed to start event: " .. eventErr
+			end
+
+			activeEvent = eventResult
+		end
 	end
 
 	-- Stage 3: Commit dungeon progression now that encounter is verified
@@ -877,12 +941,20 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		member.VotedNodeId = nil
 	end
 
+	local envId: StateTypes.EnvironmentId = "None"
+	if activeCombat and activeCombat.Environment then
+		envId = activeCombat.Environment.EnvironmentId
+	end
+
 	runToMutate.ActiveRoom = {
 		NodeId = node.Id,
 		Type = node.Type,
 		Tier = node.Tier,
 		ActIndex = node.Act,
 		RoomEncounterId = "enc_" .. node.Id,
+		RoomTemplateId = string.format("tpl_%s_%d", string.gsub(node.Type, "%s+", "_"), node.Tier),
+		EnvironmentId = envId,
+		EventId = if activeEvent then activeEvent.EventId else nil,
 		CampfireUsed = false,
 		ShopVisited = false,
 	}
@@ -892,6 +964,8 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 	if activeCombat then
 		runToMutate.ActiveCombat = activeCombat
+	elseif activeEvent then
+		runToMutate.ActiveEvent = activeEvent
 	elseif node.Type == "Campfire Rest" then
 		for _, member in runToMutate.PartyMembers do
 			local heal = math.floor(member.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
@@ -910,7 +984,26 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		end
 	end
 
-	-- Stage 5: Teleport players in live game
+	-- Stage 5: Load physical 3D room and teleport players in live game
+	local wrs = getWorldRoomService()
+	if wrs and node.Type ~= "Event" then
+		pcall(function()
+			wrs.loadRoom(
+				node.Type :: StateTypes.ActiveRoomType,
+				node.Tier,
+				node.Act,
+				"enc_" .. node.Id,
+				envId,
+				dRun.Seed
+			)
+		end)
+	end
+	if wrs then
+		pcall(function()
+			wrs.teleportPlayers(runToMutate.PartyMembers)
+		end)
+	end
+
 	local av = getArenaVisualizer()
 	if av and av.teleportPlayersToPedestal then
 		pcall(function()
@@ -975,11 +1068,53 @@ function RunManager.onCombatCompleted(outcome: "Victory" | "Defeat", node: Dunge
 	RunManager.transitionToRewards(node.Type == "Elite Monster", node.Type == "Act Boss")
 end
 
+function RunManager.onEventCompleted(outcome: "Success" | "Failure", node: DungeonMap.DungeonNode, isLiveAction: boolean?)
+	local runToMutate = if (isIsolatedTesting and liveRun.Phase == "ActiveRoom") then liveRun else currentRun
+	local dRun = if (isIsolatedTesting and liveDungeonRun and liveRun.Phase == "ActiveRoom") then liveDungeonRun else internalDungeonRun
+
+	if dRun then
+		DungeonService.markNodeCleared(dRun, node.Id)
+	end
+	local already = false
+	for _, id in runToMutate.ClearedNodeIds do
+		if id == node.Id then
+			already = true
+			break
+		end
+	end
+	if not already then
+		table.insert(runToMutate.ClearedNodeIds, node.Id)
+	end
+
+	runToMutate.ActiveEvent = nil
+
+	if outcome == "Success" then
+		RunManager.transitionToRewards(false, false)
+	else
+		runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
+		runToMutate.Phase = "MapSelect"
+		runToMutate.ActiveRoom = nil
+
+		if dRun then
+			local avail = DungeonService.getAvailableNodes(dRun)
+			table.clear(runToMutate.AvailableNodeIds)
+			for _, aNode in avail do
+				table.insert(runToMutate.AvailableNodeIds, aNode.Id)
+			end
+		end
+
+		if not isIsolatedTesting or isLiveAction then
+			RunManager.broadcastRunSnapshots("⚠️ Event chamber failed. Returning to Map Select.", isLiveAction)
+		end
+	end
+end
+
 function RunManager.transitionToRewards(isElite: boolean, isBoss: boolean)
 	local runToMutate = if (isIsolatedTesting and liveRun.Phase == "ActiveRoom") then liveRun else currentRun
 	runToMutate.StateRevision = (runToMutate.StateRevision or 0) + 1
 	runToMutate.Phase = "Rewards"
 	runToMutate.ActiveCombat = nil -- Clear ActiveCombat reference on room completion
+	runToMutate.ActiveEvent = nil -- Clear ActiveEvent reference on room completion
 	if (runToMutate :: any).RoomPhase then
 		(runToMutate :: any).RoomPhase = "Rewards"
 	end
@@ -1130,7 +1265,21 @@ function RunManager.continueFromRewards(player: any): boolean
 	end
 	runToUse.ActiveRoom = nil
 	runToUse.ActiveCombat = nil
+	runToUse.ActiveEvent = nil
 	runToUse.PendingRewards = nil
+
+	local wrs = getWorldRoomService()
+	if wrs then
+		pcall(function()
+			wrs.cleanupRoom()
+		end)
+	end
+	local es = getEventService()
+	if es then
+		pcall(function()
+			es.cleanupEvent()
+		end)
+	end
 
 	print(string.format("[REWARDFLOW][SERVER][4] continueFromRewards committed: Phase=MapSelect, Rev=%d, AvailableCount=%d",
 		runToUse.StateRevision, #runToUse.AvailableNodeIds))
@@ -1211,6 +1360,7 @@ function RunManager.resetToLobby()
 		run.AvailableNodeIds = {}
 		run.ActiveRoom = nil
 		run.ActiveCombat = nil
+		run.ActiveEvent = nil
 		run.PendingRewards = nil
 
 		for _, member in run.PartyMembers do
@@ -1248,6 +1398,18 @@ function RunManager.resetToLobby()
 
 	if CombatService then
 		CombatService.cleanupCombat()
+	end
+	local wrs = getWorldRoomService()
+	if wrs then
+		pcall(function()
+			wrs.cleanupRoom()
+		end)
+	end
+	local es = getEventService()
+	if es then
+		pcall(function()
+			es.cleanupEvent()
+		end)
 	end
 
 	if not isIsolatedTesting then

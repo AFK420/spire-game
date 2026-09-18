@@ -64,6 +64,12 @@ required_files = [
     "src/server/services/StatusService.luau",
     "src/server/services/EffectResolver.luau",
     "src/server/services/ActionTransaction.luau",
+    "src/shared/EventData.luau",
+    "src/shared/EnvironmentData.luau",
+    "src/server/services/WorldRoomService.luau",
+    "src/server/services/EventService.luau",
+    "src/server/services/ReactionService.luau",
+    "src/server/services/EnvironmentService.luau",
     "src/client/UIController.client.luau",
     "src/client/ClassSelectUI.client.luau",
     "src/client/RelicUI.client.luau",
@@ -1587,6 +1593,91 @@ test('Room selected. Syncing room...' in ui_ctrl_src, "Client UI updates banner 
 test('Entered Room: Combat' in ui_ctrl_src, "Client UI updates banner to 'Entered Room: Combat' on authoritative ActiveRoom update")
 test('RequestStateSyncEvent:FireServer()' in ui_ctrl_src, "Client triggers RequestStateSync on Won consensus")
 test('[MAPFLOW][SERVER] RequestStateSync fulfilled' in init_server_src, "Server fulfills RequestStateSync with logging")
+
+print("\n--- [Check 67] 3D Co-op Roguelike Gameplay Foundation (Suites 72, 73, 74, 75) ---")
+test("local function runSuite72()" in testrunner_src, "TestRunner includes Suite 72 definition")
+test("local function runSuite73()" in testrunner_src, "TestRunner includes Suite 73 definition")
+test("local function runSuite74()" in testrunner_src, "TestRunner includes Suite 74 definition")
+test("local function runSuite75()" in testrunner_src, "TestRunner includes Suite 75 definition")
+test("runSuite72()" in testrunner_src, "TestRunner invokes Suite 72 in runAllTests")
+test("runSuite73()" in testrunner_src, "TestRunner invokes Suite 73 in runAllTests")
+test("runSuite74()" in testrunner_src, "TestRunner invokes Suite 74 in runAllTests")
+test("runSuite75()" in testrunner_src, "TestRunner invokes Suite 75 in runAllTests")
+
+# Suite 72 WorldRoomService assertions
+test("[Suite 72.1]" in testrunner_src, "Suite 72 tests CardRiftWorld container created in Workspace")
+test("[Suite 72.2]" in testrunner_src, "Suite 72 tests loadRoom returns Model")
+test("[Suite 72.3]" in testrunner_src, "Suite 72 tests ActiveRoom named correctly")
+test("[Suite 72.4]" in testrunner_src, "Suite 72 tests Geometry folder present")
+test("[Suite 72.5]" in testrunner_src, "Suite 72 tests SpawnPoints folder present")
+test("[Suite 72.6]" in testrunner_src, "Suite 72 tests Interactables folder present")
+test("[Suite 72.7]" in testrunner_src, "Suite 72 tests Hazards folder present")
+test("[Suite 72.8]" in testrunner_src, "Suite 72 tests Effects folder present")
+test("[Suite 72.12]" in testrunner_src, "Suite 72 tests createInteractable instantiates physical BasePart")
+test("[Suite 72.13]" in testrunner_src, "Suite 72 tests ClickDetector attached to interactable")
+test("[Suite 72.17]" in testrunner_src, "Suite 72 tests getActiveRoomModel returns nil after cleanupRoom")
+test("[Suite 72.18]" in testrunner_src, "Suite 72 tests ActiveRoom completely destroyed (zero leakage)")
+
+# Suite 73 EventService assertions
+test("[Suite 73.1]" in testrunner_src, "Suite 73 tests startEvent instantiates puzzle state")
+test("[Suite 73.2]" in testrunner_src, "Suite 73 tests Event category is Puzzle")
+test("[Suite 73.3]" in testrunner_src, "Suite 73 tests Starts with 3 attempts remaining")
+test("[Suite 73.6]" in testrunner_src, "Suite 73 tests Player 1 receives puzzle clues")
+test("[Suite 73.7]" in testrunner_src, "Suite 73 tests Player 2 receives puzzle clues")
+test("[Suite 73.9]" in testrunner_src, "Suite 73 tests Interacting with correct first rune succeeds")
+test("[Suite 73.11]" in testrunner_src, "Suite 73 tests Interacting with out-of-order rune rejected")
+test("[Suite 73.14]" in testrunner_src, "Suite 73 tests Downed player rejected from interacting")
+test("[Suite 73.15]" in testrunner_src, "Suite 73 tests Statue Riddle initialized")
+test("[Suite 73.17]" in testrunner_src, "Suite 73 tests Choosing Statue_Wisdom solves riddle")
+test("[Suite 73.20]" in testrunner_src, "Suite 73 tests Gold reward granted on puzzle success")
+
+# Suite 74 ReactionService assertions
+test("[Suite 74.1]" in testrunner_src, "Suite 74 tests createAttackProfile stores AttackName")
+test("[Suite 74.4]" in testrunner_src, "Suite 74 tests openReactionWindow returns window state")
+test("[Suite 74.5]" in testrunner_src, "Suite 74 tests Window attached to combatState")
+test("[Suite 74.7]" in testrunner_src, "Suite 74 tests Non-targeted player rejected from reaction")
+test("[Suite 74.8]" in testrunner_src, "Suite 74 tests Valid timing Dodge submission succeeds")
+test("[Suite 74.9]" in testrunner_src, "Suite 74 tests Double reaction submission strictly rejected")
+test("[Suite 74.13]" in testrunner_src, "Suite 74 tests resolveReactionWindow returns player success")
+test("[Suite 74.16]" in testrunner_src, "Suite 74 tests Attacks with CanDodge=false strictly reject Dodge")
+
+# Suite 75 EnvironmentService assertions
+test("[Suite 75.1]" in testrunner_src, "Suite 75 tests pickDeterministicEnvironment is deterministic across seed")
+test("[Suite 75.2]" in testrunner_src, "Suite 75 tests RainSoaked environment instantiated")
+test("[Suite 75.3]" in testrunner_src, "Suite 75 tests RainSoaked increases Lightning damage (+30%)")
+test("[Suite 75.4]" in testrunner_src, "Suite 75 tests RainSoaked decreases Fire damage (-25%)")
+test("[Suite 75.5]" in testrunner_src, "Suite 75 tests modifyDamage scales 20 Lightning damage to 26")
+test("[Suite 75.7]" in testrunner_src, "Suite 75 tests RainSoaked adds +1 Shock stack bonus")
+test("[Suite 75.8]" in testrunner_src, "Suite 75 tests ToxicSwamp HealingModifier is 0.80")
+test("[Suite 75.10]" in testrunner_src, "Suite 75 tests Cold damage triggers transformation in RainSoaked")
+test("[Suite 75.11]" in testrunner_src, "Suite 75 tests RainSoaked transformed into FrozenWastes")
+test("[Suite 75.14]" in testrunner_src, "Suite 75 tests getEnvironmentView returns FrozenWastes snapshot")
+
+# Network & Server Invariants
+test("NetworkService.SubmitCombatReactionEvent" in init_server_src, "Server init hooks SubmitCombatReactionEvent")
+test("NetworkService.InteractEventObjectEvent" in init_server_src, "Server init hooks InteractEventObjectEvent")
+test("WorldRoomService.init()" in init_server_src, "Server init initializes WorldRoomService")
+test("EventService.init()" in init_server_src, "Server init initializes EventService")
+test("ReactionService.init()" in init_server_src, "Server init initializes ReactionService")
+test("EnvironmentService.init()" in init_server_src, "Server init initializes EnvironmentService")
+
+# RunManager & CombatService Invariants
+test("RunManager.onEventCompleted" in run_mgr_src, "RunManager implements onEventCompleted")
+test("wrs.loadRoom" in run_mgr_src, "RunManager loads 3D world room via WorldRoomService")
+test("wrs.teleportPlayers" in run_mgr_src, "RunManager teleports players via WorldRoomService")
+test("ReactionService.createAttackProfile" in combat_svc_src or "rs.createAttackProfile" in combat_svc_src, "CombatService creates attack reaction profiles")
+test("rs.openReactionWindow" in combat_svc_src, "CombatService opens authoritative reaction window")
+test("rs.resolveReactionWindow" in combat_svc_src, "CombatService resolves reaction window")
+test("EnvironmentServiceModule.modifyDamage" in damage_pipeline_src, "DamagePipeline routes elemental damage through EnvironmentService")
+test("es.modifyStatusApplication" in status_svc_src, "StatusService routes status applications through EnvironmentService")
+
+# Client UI Invariants
+test("reactionPromptFrame" in ui_ctrl_src, "UIController contains reactionPromptFrame")
+test("dodgeBtn" in ui_ctrl_src, "UIController contains Dodge button")
+test("parryBtn" in ui_ctrl_src, "UIController contains Parry button")
+test("environmentBadge" in ui_ctrl_src, "UIController contains environmentBadge")
+test("eventChamberView" in ui_ctrl_src, "UIController contains eventChamberView")
+test("renderEventChamber" in ui_ctrl_src, "UIController implements renderEventChamber")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

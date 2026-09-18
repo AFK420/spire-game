@@ -56,6 +56,28 @@ end
 GameConfig.Dungeon = {
 	StarterGold = 50,             -- Gold granted at expedition start
 	CampfireHealPercent = 0.30,   -- Fraction of Max HP recovered at Campfire Rest
+	EventChanceEarly = 0.15,      -- Chance for Event room in tiers 2..4
+	EventChanceLate = 0.15,       -- Chance for Event room in tiers 5..8
+}
+
+--------------------------------------------------------------------------------
+-- Reaction System Tuning (Dodge / Parry)
+--------------------------------------------------------------------------------
+
+GameConfig.Reaction = {
+	DefaultTelegraphDuration = 1.0, -- Seconds telegraph displays before strike
+	DefaultDodgeWindow = 1.2,       -- Total window duration for Dodge (generous)
+	DefaultParryStart = 0.7,        -- Monotonic offset when tight Parry window opens
+	DefaultParryDuration = 0.3,     -- Window duration for Parry (0.7s to 1.0s, tight)
+}
+
+--------------------------------------------------------------------------------
+-- Environmental Combat Tuning
+--------------------------------------------------------------------------------
+
+GameConfig.Environment = {
+	DefaultIntensity = 1.0,
+	TransformationDuration = 30.0,
 }
 
 --------------------------------------------------------------------------------

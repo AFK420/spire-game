@@ -15,6 +15,28 @@ local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local servicesFolder = script.Parent
 local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: ModuleScript)
 
+local CombatService: any = nil
+local function getCombatService(): any
+	if not CombatService then
+		local cs = servicesFolder:FindFirstChild("CombatService")
+		if cs then
+			CombatService = require(cs :: ModuleScript)
+		end
+	end
+	return CombatService
+end
+
+local EnvironmentService: any = nil
+local function getEnvironmentService(): any
+	if not EnvironmentService then
+		local es = servicesFolder:FindFirstChild("EnvironmentService")
+		if es then
+			EnvironmentService = require(es :: ModuleScript)
+		end
+	end
+	return EnvironmentService
+end
+
 local StatusService = {}
 
 --------------------------------------------------------------------------------
@@ -165,6 +187,18 @@ function StatusService.applyStatus(
 	if def.Implemented == false then
 		warn(string.format("[StatusService] Status definition '%s' is not implemented.", tostring(defId)))
 		return nil
+	end
+
+	-- Environmental status modification
+	local cs = getCombatService()
+	if cs and cs.getActiveCombat then
+		local actCombat = cs.getActiveCombat()
+		if actCombat and actCombat.Environment then
+			local es = getEnvironmentService()
+			if es and es.modifyStatusApplication then
+				stacks, duration = es.modifyStatusApplication(actCombat.Environment, defId, stacks, duration)
+			end
+		end
 	end
 
 	if not entityStatuses[targetId] then

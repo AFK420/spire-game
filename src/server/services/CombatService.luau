@@ -59,6 +59,28 @@ local function getRunManager(): any
 	return runManagerRef
 end
 
+local ReactionService: any = nil
+local function getReactionService(): any
+	if not ReactionService then
+		local rs = servicesFolder:FindFirstChild("ReactionService")
+		if rs then
+			ReactionService = require(rs :: ModuleScript)
+		end
+	end
+	return ReactionService
+end
+
+local EnvironmentService: any = nil
+local function getEnvironmentService(): any
+	if not EnvironmentService then
+		local es = servicesFolder:FindFirstChild("EnvironmentService")
+		if es then
+			EnvironmentService = require(es :: ModuleScript)
+		end
+	end
+	return EnvironmentService
+end
+
 --------------------------------------------------------------------------------
 -- Active Combat State (Single-Encounter Container)
 --------------------------------------------------------------------------------
@@ -212,6 +234,27 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 	end
 	table.sort(localHand, function(a, b) return a.Name < b.Name end)
 
+	local reactionView: StateTypes.ReactionWindowView? = nil
+	if activeCombat.ActiveReactionWindow then
+		local rs = getReactionService()
+		if rs and rs.getReactionWindowView then
+			local enemyName = "Enemy"
+			local enemyInst = activeCombat.Enemies[activeCombat.ActiveReactionWindow.EnemyInstanceId]
+			if enemyInst then
+				enemyName = enemyInst.Name
+			end
+			reactionView = rs.getReactionWindowView(activeCombat.ActiveReactionWindow, enemyName)
+		end
+	end
+
+	local envView: StateTypes.EnvironmentView? = nil
+	if activeCombat.Environment then
+		local envService = getEnvironmentService()
+		if envService and envService.getEnvironmentView then
+			envView = envService.getEnvironmentView(activeCombat.Environment)
+		end
+	end
+
 	return {
 		CombatId = activeCombat.CombatId,
 		Phase = activeCombat.Phase,
@@ -223,6 +266,8 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 		Party = partyViews,
 		LocalHand = localHand,
 		CombatEvents = activeCombat.CombatLog,
+		ActiveReactionWindow = reactionView,
+		Environment = envView,
 		Message = nil,
 	}
 end
@@ -534,21 +579,68 @@ local function resolveTurn()
 
 						if #livingPlayers > 0 then
 							local target = livingPlayers[math.random(1, #livingPlayers)]
-							local remDmg, _ = applyDamageToPlayer(target, enemy.Intent.Value)
-							logEvent("DamageDealt", enemy.Name, target.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
 
-							if remDmg > 0 then
-								local dmgRelic = RelicService.triggerEvent(target, activeCombat, "OnDamageTaken", {
-									Damage = remDmg,
-									Enemy = enemy,
-								})
-								if dmgRelic.BonusDamage > 0 then
-									local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
-									logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
+							-- Open authoritative reaction window
+							local rs = getReactionService()
+							local reacted = false
+							local reactionType: StateTypes.ReactionType? = nil
+							if rs then
+								local profile = rs.createAttackProfile(
+									"atk_" .. enemyId .. "_" .. activeCombat.TurnNumber,
+									enemy.Name .. " Strike",
+									enemy.Intent.Value,
+									"Physical" :: StateTypes.DamageType,
+									true, -- CanDodge
+									true, -- CanParry
+									1.0,  -- TelegraphDuration
+									1.2,  -- DodgeWindowEnd
+									0.7,  -- ParryWindowStart
+									1.0   -- ParryWindowEnd
+								)
+								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, { target.UserId })
+								CombatService.broadcastSnapshots(string.format("⚠️ %s is attacking %s!", enemy.Name, target.DisplayName))
+
+								-- Wait for reaction window in live play, skip in test isolation
+								local rm = getRunManager()
+								local isIso = (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) or isCombatIsolation
+								if not isIso then
+									task.wait(profile.TelegraphDuration)
 								end
-								if dmgRelic.BonusDraw > 0 then
-									CardService.drawCards(target, dmgRelic.BonusDraw)
-									logEvent("CardDrawn", "Relic", target.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+
+								local windowResults = rs.resolveReactionWindow(activeCombat, windowState.WindowId)
+								local pResult = windowResults[target.UserId]
+								if pResult and pResult.Result == "Success" then
+									reacted = true
+									reactionType = pResult.Reaction
+								end
+							end
+
+							if reacted and reactionType == "Dodge" then
+								logEvent("CombatReaction", tostring(target.UserId), enemyId, 0, string.format("%s DODGED %s's attack!", target.DisplayName, enemy.Name))
+								CombatService.broadcastSnapshots(string.format("💨 %s dodged the attack!", target.DisplayName))
+							elseif reacted and reactionType == "Parry" then
+								logEvent("CombatReaction", tostring(target.UserId), enemyId, 0, string.format("%s PARRIED %s's attack!", target.DisplayName, enemy.Name))
+								local parryCounterDmg = math.max(1, math.floor(enemy.Intent.Value * 0.5))
+								local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
+								logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Parry Counter)", thornsRem))
+								CombatService.broadcastSnapshots(string.format("⚔️ %s parried and countered for %d damage!", target.DisplayName, parryCounterDmg))
+							else
+								local remDmg, _ = applyDamageToPlayer(target, enemy.Intent.Value)
+								logEvent("DamageDealt", enemy.Name, target.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
+
+								if remDmg > 0 then
+									local dmgRelic = RelicService.triggerEvent(target, activeCombat, "OnDamageTaken", {
+										Damage = remDmg,
+										Enemy = enemy,
+									})
+									if dmgRelic.BonusDamage > 0 then
+										local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
+										logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
+									end
+									if dmgRelic.BonusDraw > 0 then
+										CardService.drawCards(target, dmgRelic.BonusDraw)
+										logEvent("CardDrawn", "Relic", target.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+									end
 								end
 							end
 						end
@@ -736,6 +828,21 @@ function CombatService.startCombat(
 		end
 	end
 
+	-- Initialize environment for combat
+	local envService = getEnvironmentService()
+	local combatEnv: StateTypes.EnvironmentState? = nil
+	if envService then
+		local actIdx = 1
+		local rm = getRunManager()
+		if rm and rm.getRunState then
+			local rState = rm.getRunState()
+			if rState then
+				actIdx = rState.ActIndex or 1
+			end
+		end
+		combatEnv = envService.createEnvironment(nil, actIdx, math.random(1, 100000))
+	end
+
 	activeCombat = {
 		CombatId = encounterId,
 		Phase = "PlayerPhase",
@@ -746,6 +853,8 @@ function CombatService.startCombat(
 		Enemies = enemies,
 		ReadyPlayers = {},
 		CombatLog = {},
+		ActiveReactionWindow = nil,
+		Environment = combatEnv,
 	}
 
 	-- Setup player combat state
@@ -1144,6 +1253,10 @@ function CombatService.cleanupCombat()
 	end
 	if not isCombatIsolation then
 		ArenaVisualizer.cleanup()
+	end
+	local rs = getReactionService()
+	if rs then
+		rs.cleanup()
 	end
 	StatusService.resetCombat()
 	activeCombat = nil

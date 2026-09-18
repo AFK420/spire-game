@@ -31,6 +31,10 @@ local SkillService = require(services:WaitForChild("SkillService") :: ModuleScri
 local PassiveService = require(services:WaitForChild("PassiveService") :: ModuleScript)
 local CardCollectionService = require(services:WaitForChild("CardCollectionService") :: ModuleScript)
 local DeckService = require(services:WaitForChild("DeckService") :: ModuleScript)
+local WorldRoomService = require(services:WaitForChild("WorldRoomService") :: ModuleScript)
+local EventService = require(services:WaitForChild("EventService") :: ModuleScript)
+local ReactionService = require(services:WaitForChild("ReactionService") :: ModuleScript)
+local EnvironmentService = require(services:WaitForChild("EnvironmentService") :: ModuleScript)
 local TestRunner = require(services:WaitForChild("TestRunner") :: ModuleScript)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -78,6 +82,10 @@ DungeonService.init()
 ArenaVisualizer.init()
 CombatService.init()
 RunManager.init()
+WorldRoomService.init()
+EventService.init()
+ReactionService.init()
+EnvironmentService.init()
 
 print("[Server] All core services deterministically initialized.")
 
@@ -779,6 +787,47 @@ NetworkService.ReturnToLobbyEvent.OnServerEvent:Connect(function(player: Player)
 		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = true })
 	else
 		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = false, Message = "Cannot return to lobby while run is in progress." })
+	end
+end)
+
+-- 26. Submit Combat Reaction (Dodge / Parry)
+NetworkService.SubmitCombatReactionEvent.OnServerEvent:Connect(function(player: Player, windowId: any, reactionType: any)
+	if not NetworkService.checkRateLimit(player, "Combat") then
+		return
+	end
+	if typeof(windowId) ~= "string" or typeof(reactionType) ~= "string" then
+		return
+	end
+	if reactionType ~= "Dodge" and reactionType ~= "Parry" then
+		return
+	end
+
+	local success, message, result = ReactionService.submitReaction(player, windowId, reactionType :: StateTypes.ReactionType)
+	NetworkService.sendActionResult(player, {
+		Action = "SubmitCombatReaction",
+		Success = success,
+		Message = message,
+	})
+end)
+
+-- 27. Interact with Event Object (3D Physical Puzzle)
+NetworkService.InteractEventObjectEvent.OnServerEvent:Connect(function(player: Player, interactableId: any)
+	if not NetworkService.checkRateLimit(player, "General") then
+		return
+	end
+	if typeof(interactableId) ~= "string" or #interactableId == 0 then
+		return
+	end
+
+	local success, message, isComplete, eventState = EventService.interact(player, interactableId)
+	if not success and message then
+		NetworkService.sendActionResult(player, {
+			Action = "InteractEventObject",
+			Success = false,
+			Message = message,
+		})
+	else
+		RunManager.broadcastRunSnapshots(message, true)
 	end
 end)
 
