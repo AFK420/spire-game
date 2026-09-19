@@ -25,6 +25,17 @@ local servicesFolder = script.Parent
 local PersistenceService = require(servicesFolder:WaitForChild("PersistenceService") :: ModuleScript)
 local CardCollectionService = require(servicesFolder:WaitForChild("CardCollectionService") :: ModuleScript)
 
+local RunManager: any = nil
+local function getRunManager(): any
+	if not RunManager then
+		local rmMod = servicesFolder:FindFirstChild("RunManager")
+		if rmMod then
+			RunManager = require(rmMod :: ModuleScript)
+		end
+	end
+	return RunManager
+end
+
 local DeckService = {}
 
 local function deepCopy<T>(original: T): T
@@ -164,6 +175,11 @@ function DeckService.createDeck(
 	cards: { [string]: number }?,
 	classId: string?
 ): (boolean, string?, StateTypes.SavedDeck?)
+	local rm = getRunManager()
+	if rm and rm.isRunActiveForPlayer and rm.isRunActiveForPlayer(player) then
+		return false, "Cannot modify decks during an active run.", nil
+	end
+
 	if typeof(name) ~= "string" then
 		return false, "Deck name must be a string.", nil
 	end
@@ -223,6 +239,11 @@ function DeckService.renameDeck(player: any, deckId: string, newName: string): (
 		return false, "Invalid deck ID: must be non-empty string."
 	end
 
+	local rm = getRunManager()
+	if rm and rm.isRunActiveForPlayer and rm.isRunActiveForPlayer(player) then
+		return false, "Cannot modify decks during an active run."
+	end
+
 	if typeof(newName) ~= "string" then
 		return false, "Deck name must be a string."
 	end
@@ -247,25 +268,59 @@ function DeckService.renameDeck(player: any, deckId: string, newName: string): (
 	end)
 end
 
--- Deletes a persistent deck with safe active deck fallback
+-- Deletes a persistent deck with strict server-authoritative rules
 function DeckService.deleteDeck(player: any, deckId: string): (boolean, string?)
 	if typeof(deckId) ~= "string" or #deckId == 0 then
 		return false, "Invalid deck ID: must be non-empty string."
 	end
 
-	return PersistenceService.mutateProfile(player, function(profile)
-		if not profile.Decks[deckId] then
+	local rm = getRunManager()
+	if rm and rm.isRunActiveForPlayer and rm.isRunActiveForPlayer(player) then
+		return false, "Cannot modify decks during an active run."
+	end
+
+	local profile = PersistenceService.getProfile(player)
+	if not profile then
+		return false, "Player profile unavailable."
+	end
+
+	if not profile.Decks[deckId] then
+		return false, string.format("Deck '%s' not found.", deckId)
+	end
+
+	-- Count total decks
+	local deckCount = 0
+	for _ in profile.Decks do
+		deckCount += 1
+	end
+
+	-- Rule 1: Reject deleting the only remaining deck
+	if deckCount <= 1 then
+		return false, "Cannot delete your only deck."
+	end
+
+	-- Rule 2: Reject deleting the currently active deck
+	if profile.ActiveDeckId == deckId then
+		return false, "Cannot delete active deck. Switch active deck first."
+	end
+
+	return PersistenceService.mutateProfile(player, function(p)
+		if not p.Decks[deckId] then
 			return false, string.format("Deck '%s' not found.", deckId)
 		end
 
-		profile.Decks[deckId] = nil
-
-		-- If active deck was deleted, fallback safely to next available deck
-		if profile.ActiveDeckId == deckId then
-			local nextDeckId = next(profile.Decks)
-			profile.ActiveDeckId = nextDeckId
+		local count = 0
+		for _ in p.Decks do
+			count += 1
+		end
+		if count <= 1 then
+			return false, "Cannot delete your only deck."
+		end
+		if p.ActiveDeckId == deckId then
+			return false, "Cannot delete active deck. Switch active deck first."
 		end
 
+		p.Decks[deckId] = nil
 		return true, nil
 	end)
 end
@@ -278,6 +333,11 @@ function DeckService.duplicateDeck(
 ): (boolean, string?, StateTypes.SavedDeck?)
 	if typeof(sourceDeckId) ~= "string" or #sourceDeckId == 0 then
 		return false, "Invalid source deck ID: must be non-empty string.", nil
+	end
+
+	local rm = getRunManager()
+	if rm and rm.isRunActiveForPlayer and rm.isRunActiveForPlayer(player) then
+		return false, "Cannot modify decks during an active run.", nil
 	end
 
 	if not DeckService.checkSlotAvailability(player) then
@@ -308,6 +368,11 @@ end
 function DeckService.saveDeck(player: any, deckId: string, cards: { [string]: number }): (boolean, string?)
 	if typeof(deckId) ~= "string" or #deckId == 0 then
 		return false, "Invalid deck ID: must be non-empty string."
+	end
+
+	local rm = getRunManager()
+	if rm and rm.isRunActiveForPlayer and rm.isRunActiveForPlayer(player) then
+		return false, "Cannot modify decks during an active run."
 	end
 
 	local profile = PersistenceService.getProfile(player)
@@ -376,6 +441,11 @@ end
 function DeckService.setActiveDeck(player: any, deckId: string): (boolean, string?)
 	if typeof(deckId) ~= "string" or #deckId == 0 then
 		return false, "Invalid deck ID: must be non-empty string."
+	end
+
+	local rm = getRunManager()
+	if rm and rm.isRunActiveForPlayer and rm.isRunActiveForPlayer(player) then
+		return false, "Cannot modify decks during an active run."
 	end
 
 	local profile = PersistenceService.getProfile(player)

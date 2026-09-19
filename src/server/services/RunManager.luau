@@ -1940,6 +1940,34 @@ function RunManager.getLiveDungeonRun(): DungeonMap.DungeonRun?
 	return liveDungeonRun
 end
 
+-- Checks whether an active run (outside Lobby) is in progress for the specified player
+function RunManager.isRunActiveForPlayer(player: any): boolean
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+	local runToCheck = if (isIsolatedTesting and isReal) then liveRun else currentRun
+	local userId: number? = nil
+	if typeof(player) == "number" then
+		userId = player
+	elseif typeof(player) == "Instance" and player:IsA("Player") then
+		userId = player.UserId
+	elseif typeof(player) == "table" and typeof(player.UserId) == "number" then
+		userId = player.UserId
+	end
+
+	if not userId then
+		return runToCheck.Phase ~= "Lobby"
+	end
+
+	local member = runToCheck.PartyMembers[userId]
+	if not member then
+		return false
+	end
+
+	return runToCheck.Phase ~= "Lobby"
+end
+
 -- Resets existing party to clean Lobby state for a new expedition run
 function RunManager.resetToLobby(callingPlayer: any?): (boolean, string?)
 	local isReal = (typeof(callingPlayer) == "Instance" and callingPlayer:IsA("Player"))

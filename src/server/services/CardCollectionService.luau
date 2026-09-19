@@ -23,6 +23,14 @@ local PersistenceService = require(servicesFolder:WaitForChild("PersistenceServi
 
 local CardCollectionService = {}
 
+local failureInjectionEnabled = false
+local failureInjectionMessage: string? = nil
+
+function CardCollectionService.setFailureInjectionForTesting(enabled: boolean, message: string?)
+	failureInjectionEnabled = enabled
+	failureInjectionMessage = message
+end
+
 -- Queries the number of permanent copies owned of a specific card definition
 function CardCollectionService.getCardCount(player: any, cardDefId: string): number
 	if typeof(cardDefId) ~= "string" or #cardDefId == 0 then
@@ -58,6 +66,10 @@ end
 -- Authoritatively grants copies of a card definition to a player's collection
 -- Future Gacha/Banner systems should call this method directly
 function CardCollectionService.grantCard(player: any, cardDefId: string, quantity: number): (boolean, string?)
+	if failureInjectionEnabled then
+		return false, failureInjectionMessage or "Injected CardCollectionService.grantCard failure."
+	end
+
 	if typeof(cardDefId) ~= "string" or #cardDefId == 0 then
 		return false, "Invalid card definition ID: must be non-empty string."
 	end

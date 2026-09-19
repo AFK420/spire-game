@@ -1452,8 +1452,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "deck_builder_collection_ui_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "Deck Builder UI & Collection Frontend", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "hardened_server_deck_contracts_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "Hardened Server Deck Invariants & Contracts", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -3333,6 +3333,239 @@ local function runSuite76()
 			"[Suite 76.204] getSlotEntitlement UsedSlots and AvailableSlots are consistent")
 
 		PersistenceService.resetForTesting(76210)
+	end
+
+	-- 76.22: Server-Authoritative Deck Deletion & Active Deck Fallback Invariants
+	do
+		local pDel = {
+			UserId = 76220,
+			Name = "DeckDelTester",
+			DisplayName = "DeckDelTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(76220)
+		PersistenceService.loadProfile(pDel :: any)
+
+		local soleProfile = PersistenceService.getProfile(pDel :: any)
+		assert(soleProfile, "soleProfile exists")
+		local starterDeckId = soleProfile.ActiveDeckId
+		assert(starterDeckId and soleProfile.Decks[starterDeckId], "Starter deck exists and is active")
+
+		-- Count total decks (must be 1 initially)
+		local initDeckCount = 0
+		for _ in soleProfile.Decks do
+			initDeckCount += 1
+		end
+		assertTest(initDeckCount == 1, "[Suite 76.205] Player initially has exactly 1 deck")
+
+		-- Rule 1: Attempt to delete the only remaining deck -> rejected
+		local delSoleOk, delSoleErr = DeckService.deleteDeck(pDel :: any, starterDeckId)
+		assertTest(delSoleOk == false and string.find(delSoleErr or "", "only deck") ~= nil,
+			"[Suite 76.206] deleteDeck rejects deleting the only remaining deck: " .. tostring(delSoleErr))
+		assertTest(soleProfile.ActiveDeckId == starterDeckId,
+			"[Suite 76.207] ActiveDeckId unchanged after rejected delete of only deck")
+
+		local countAfterSole = 0
+		for _ in soleProfile.Decks do
+			countAfterSole += 1
+		end
+		assertTest(countAfterSole == 1,
+			"[Suite 76.208] Deck count unchanged after rejected delete of only deck")
+
+		-- Create a second valid deck
+		local okC2, c2Err, customDeck2 = DeckService.createDeck(pDel :: any, "Custom Deck 2", { ["Strike"] = 4, ["Defend"] = 4 }, nil)
+		assertTest(okC2 == true and customDeck2 ~= nil, "[Suite 76.209] createDeck succeeds for second deck: " .. tostring(c2Err))
+		assert(customDeck2, "customDeck2 exists")
+
+		-- Switch active deck to customDeck2
+		local okSetActive2, setErr2 = DeckService.setActiveDeck(pDel :: any, customDeck2.DeckId)
+		assertTest(okSetActive2 == true, "[Suite 76.210] setActiveDeck switches active deck to customDeck2: " .. tostring(setErr2))
+		assertTest(soleProfile.ActiveDeckId == customDeck2.DeckId,
+			"[Suite 76.211] ActiveDeckId successfully updated to custom deck")
+
+		-- Rule 2: Attempt to delete the currently active deck -> rejected
+		local delActiveOk, delActiveErr = DeckService.deleteDeck(pDel :: any, customDeck2.DeckId)
+		assertTest(delActiveOk == false and string.find(delActiveErr or "", "Cannot delete active deck") ~= nil,
+			"[Suite 76.212] deleteDeck rejects deleting currently active deck: " .. tostring(delActiveErr))
+		assertTest(soleProfile.ActiveDeckId == customDeck2.DeckId,
+			"[Suite 76.213] ActiveDeckId unchanged after rejected active deck deletion")
+		assertTest(soleProfile.Decks[customDeck2.DeckId] ~= nil,
+			"[Suite 76.214] Active deck preserved in profile after rejected deletion")
+
+		-- Rule 3: Delete valid inactive deck -> succeeds
+		local delInactiveOk, delInactiveErr = DeckService.deleteDeck(pDel :: any, starterDeckId)
+		assertTest(delInactiveOk == true, "[Suite 76.215] deleteDeck succeeds for valid inactive deck: " .. tostring(delInactiveErr))
+		assertTest(soleProfile.Decks[starterDeckId] == nil,
+			"[Suite 76.216] Inactive deck successfully removed from profile")
+		assertTest(soleProfile.ActiveDeckId == customDeck2.DeckId,
+			"[Suite 76.217] Resulting ActiveDeckId remains valid after deleting inactive deck")
+
+		-- Active Deck Fallback Invariants:
+		-- 1. Active deck exists and is valid -> returns it
+		local activeOkDeck = DeckService.getActiveDeck(pDel :: any)
+		assertTest(activeOkDeck ~= nil and activeOkDeck.DeckId == customDeck2.DeckId,
+			"[Suite 76.218] getActiveDeck returns active deck when valid")
+
+		-- Create a third valid deck to test fallback ordering
+		local okC3, _, fallbackDeck3 = DeckService.createDeck(pDel :: any, "Fallback Deck 3", { ["Strike"] = 5, ["Defend"] = 5 }, nil)
+		assert(okC3 and fallbackDeck3, "fallbackDeck3 created")
+
+		-- 2. Active deck is corrupted/invalid -> falls back to first valid deck without mutating ActiveDeckId
+		soleProfile.Decks[customDeck2.DeckId].Cards = { ["Strike"] = 1 } -- corrupt to < MinDeckSize
+		local fallbackResult = DeckService.getActiveDeck(pDel :: any)
+		assertTest(fallbackResult ~= nil and fallbackResult.DeckId == fallbackDeck3.DeckId,
+			"[Suite 76.219] getActiveDeck falls back to first valid deck when active is invalid")
+		assertTest(soleProfile.ActiveDeckId == customDeck2.DeckId,
+			"[Suite 76.220] getActiveDeck fallback performs zero persistence mutation on ActiveDeckId")
+
+		-- 3. Corrupt all decks -> getActiveDeck returns nil without mutating profile
+		soleProfile.Decks[fallbackDeck3.DeckId].Cards = { ["Defend"] = 1 }
+		local noValidResult = DeckService.getActiveDeck(pDel :: any)
+		assertTest(noValidResult == nil,
+			"[Suite 76.221] getActiveDeck returns nil when zero valid saved decks exist")
+		assertTest(soleProfile.ActiveDeckId == customDeck2.DeckId,
+			"[Suite 76.222] getActiveDeck returning nil performs zero persistence mutation on profile")
+
+		PersistenceService.resetForTesting(76220)
+	end
+
+	-- 76.23: Mid-Run Deck Mutation Rejection at Lobby Boundary
+	do
+		RunManager.resetRunForTesting()
+		local pRunMut = {
+			UserId = 76230,
+			Name = "RunMutTester",
+			DisplayName = "RunMutTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(76230)
+		PersistenceService.loadProfile(pRunMut :: any)
+		RunManager.addPlayer(pRunMut :: any)
+		local run = RunManager.getRunState()
+
+		-- While Phase == "Lobby", isRunActiveForPlayer is false and mutations are allowed
+		assertTest(RunManager.isRunActiveForPlayer(pRunMut :: any) == false,
+			"[Suite 76.223] RunManager reports run inactive while in Lobby")
+		local okLobbyCreate, _, lobbyDeck = DeckService.createDeck(pRunMut :: any, "Lobby Deck", { ["Strike"] = 5, ["Defend"] = 5 }, nil)
+		assertTest(okLobbyCreate == true and lobbyDeck ~= nil,
+			"[Suite 76.224] DeckService mutations allowed during Lobby phase")
+		assert(lobbyDeck, "lobbyDeck exists")
+
+		-- Move Phase to MapSelect (Active expedition started)
+		run.Phase = "MapSelect"
+		assertTest(RunManager.isRunActiveForPlayer(pRunMut :: any) == true,
+			"[Suite 76.225] RunManager reports run active outside Lobby phase")
+
+		-- Attempt all 6 mutation operations mid-run: all must fail cleanly
+		local midCreateOk, midCreateErr = DeckService.createDeck(pRunMut :: any, "Illegal Mid-Run Deck")
+		assertTest(midCreateOk == false and string.find(midCreateErr or "", "during an active run") ~= nil,
+			"[Suite 76.226] createDeck rejected during active run")
+
+		local midRenameOk, midRenameErr = DeckService.renameDeck(pRunMut :: any, lobbyDeck.DeckId, "Illegal Name")
+		assertTest(midRenameOk == false and string.find(midRenameErr or "", "during an active run") ~= nil,
+			"[Suite 76.227] renameDeck rejected during active run")
+
+		local midDeleteOk, midDeleteErr = DeckService.deleteDeck(pRunMut :: any, lobbyDeck.DeckId)
+		assertTest(midDeleteOk == false and string.find(midDeleteErr or "", "during an active run") ~= nil,
+			"[Suite 76.228] deleteDeck rejected during active run")
+
+		local midSaveOk, midSaveErr = DeckService.saveDeck(pRunMut :: any, lobbyDeck.DeckId, { ["Strike"] = 4, ["Defend"] = 4 })
+		assertTest(midSaveOk == false and string.find(midSaveErr or "", "during an active run") ~= nil,
+			"[Suite 76.229] saveDeck rejected during active run")
+
+		local midDupOk, midDupErr = DeckService.duplicateDeck(pRunMut :: any, lobbyDeck.DeckId, "Illegal Dup")
+		assertTest(midDupOk == false and string.find(midDupErr or "", "during an active run") ~= nil,
+			"[Suite 76.230] duplicateDeck rejected during active run")
+
+		local midSetActiveOk, midSetActiveErr = DeckService.setActiveDeck(pRunMut :: any, lobbyDeck.DeckId)
+		assertTest(midSetActiveOk == false and string.find(midSetActiveErr or "", "during an active run") ~= nil,
+			"[Suite 76.231] setActiveDeck rejected during active run")
+
+		-- Verify state invariants: deck contents untouched and run phase intact
+		local profMut = PersistenceService.getProfile(pRunMut :: any)
+		assertTest(profMut.Decks[lobbyDeck.DeckId].Name == "Lobby Deck",
+			"[Suite 76.232] Deck contents completely unmodified after rejected mid-run mutations")
+		assertTest(run.Phase == "MapSelect",
+			"[Suite 76.233] Run phase remains valid (MapSelect) after rejected deck mutations")
+
+		PersistenceService.resetForTesting(76230)
+		RunManager.resetRunForTesting()
+	end
+
+	-- 76.24: Merchant Card Grant Failure Injection Transaction Rollback Seam
+	do
+		RunManager.resetRunForTesting()
+		local pShopFail = {
+			UserId = 76240,
+			Name = "ShopFailTester",
+			DisplayName = "ShopFailTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(76240)
+		PersistenceService.loadProfile(pShopFail :: any)
+		local memberState = RunManager.addPlayer(pShopFail :: any)
+		assert(memberState, "memberState exists")
+
+		local run = RunManager.getRunState()
+		run.Phase = "ActiveRoom"
+		run.StateRevision = 100
+		memberState.Gold = 150
+
+		local testCardDef = CardData.getCard("Strike")
+		assert(testCardDef, "Strike card def exists")
+
+		local failWare: StateTypes.MerchantItemView = {
+			ItemId = "ware_test_fail_1",
+			ItemType = "Card",
+			CardDefId = "Strike",
+			Cost = 50,
+			IsPurchased = false,
+		}
+		run.ActiveRoom = {
+			Type = "Merchant Shop",
+			MerchantWares = { failWare },
+		} :: any
+
+		local preGold = memberState.Gold
+		local preDeckSize = #memberState.Deck
+		local preRevision = run.StateRevision
+
+		-- 1. Enable failure injection in CardCollectionService
+		CardCollectionService.setFailureInjectionForTesting(true, "Simulated permanent collection storage failure")
+
+		-- 2. Attempt purchase: must fail cleanly
+		local buyFailOk, buyFailErr = RunManager.buyMerchantItem(pShopFail :: any, failWare.ItemId)
+		assertTest(buyFailOk == false,
+			"[Suite 76.234] buyMerchantItem fails closed on injected CardCollectionService failure")
+		assertTest(string.find(buyFailErr or "", "collection") ~= nil or string.find(buyFailErr or "", "Simulated") ~= nil,
+			"[Suite 76.235] Error message reflects card grant failure: " .. tostring(buyFailErr))
+
+		-- 3. Assert zero mutation side effects
+		assertTest(memberState.Gold == preGold,
+			"[Suite 76.236] Zero gold deducted after injected grant failure (150 == 150)")
+		assertTest(#memberState.Deck == preDeckSize,
+			"[Suite 76.237] Zero runtime deck cards inserted after injected grant failure")
+		assertTest(failWare.IsPurchased == false,
+			"[Suite 76.238] Ware IsPurchased remains false after failed transaction")
+		assertTest(run.StateRevision == preRevision,
+			"[Suite 76.239] Run StateRevision unchanged after failed transaction (100 == 100)")
+
+		-- 4. Disable failure injection and verify recovery
+		CardCollectionService.setFailureInjectionForTesting(false)
+		local buyRecoverOk, buyRecoverErr = RunManager.buyMerchantItem(pShopFail :: any, failWare.ItemId)
+		assertTest(buyRecoverOk == true,
+			"[Suite 76.240] buyMerchantItem succeeds normally after disabling failure injection: " .. tostring(buyRecoverErr))
+		assertTest(memberState.Gold == preGold - failWare.Cost,
+			"[Suite 76.241] Gold deducted accurately on successful purchase (100)")
+		assertTest(#memberState.Deck == preDeckSize + 1,
+			"[Suite 76.242] Runtime deck card inserted on successful purchase")
+		assertTest(failWare.IsPurchased == true,
+			"[Suite 76.243] Ware marked IsPurchased after successful purchase")
+		assertTest(run.StateRevision == preRevision + 1,
+			"[Suite 76.244] Run StateRevision incremented after successful purchase (101)")
+
+		PersistenceService.resetForTesting(76240)
+		RunManager.resetRunForTesting()
 	end
 
 	CombatService.cleanupCombat()
@@ -7834,11 +8067,18 @@ function TestRunner.runAllTests(): boolean
 	local activeD = DeckService.getActiveDeck(valPlayer)
 	assertTest(activeD ~= nil and activeD.DeckId == customDeck.DeckId, "[ActiveDeck] getActiveDeck returns custom active deck")
 
-	-- 8. Fallback on deletion of active deck
-	local okDelActive, _ = DeckService.deleteDeck(valPlayer, customDeck.DeckId)
-	assertTest(okDelActive == true, "[ActiveDeckFallback] Deleting active deck succeeds")
+	-- 8. Server-authoritative rejection of active deck deletion and switching active deck first
+	local okDelActive, errDelActive = DeckService.deleteDeck(valPlayer, customDeck.DeckId)
+	assertTest(okDelActive == false and string.find(errDelActive or "", "Cannot delete active deck") ~= nil, "[ActiveDeckDelete] Deleting active deck rejected")
+	local activeStill = DeckService.getActiveDeck(valPlayer)
+	assertTest(activeStill ~= nil and activeStill.DeckId == customDeck.DeckId, "[ActiveDeckDelete] Active deck remains unchanged after rejected delete")
+
+	local okSwitch, _ = DeckService.setActiveDeck(valPlayer, starterDeck.DeckId)
+	assertTest(okSwitch == true, "[ActiveDeckSwitch] Switching active deck back to starter deck succeeds")
+	local okDelCustom, _ = DeckService.deleteDeck(valPlayer, customDeck.DeckId)
+	assertTest(okDelCustom == true, "[ActiveDeckDelete] Deleting inactive custom deck succeeds")
 	local fallbackD = DeckService.getActiveDeck(valPlayer)
-	assertTest(fallbackD ~= nil and fallbackD.DeckId ~= customDeck.DeckId, "[ActiveDeckFallback] getActiveDeck falls back safely to starter deck")
+	assertTest(fallbackD ~= nil and fallbackD.DeckId == starterDeck.DeckId, "[ActiveDeckFallback] getActiveDeck falls back safely to starter deck")
 
 	end
 	----------------------------------------------------------------------------
@@ -8063,7 +8303,7 @@ function TestRunner.runAllTests(): boolean
 			["deck_frac_1"] = {
 				DeckId = "deck_frac_1",
 				Name = "Fractional Deck",
-				ClassId = "Knight",
+				ClassId = "Warlord",
 				Cards = {
 					["Strike"] = 1.5,
 					["Defend"] = 3,
@@ -8084,7 +8324,7 @@ function TestRunner.runAllTests(): boolean
 			["deck_blank_1"] = {
 				DeckId = "deck_blank_1",
 				Name = "   ",
-				ClassId = "Knight",
+				ClassId = "Warlord",
 				Cards = { ["Strike"] = 5, ["Defend"] = 5 },
 				CreatedAt = 1000,
 				UpdatedAt = 1000,
@@ -8101,7 +8341,7 @@ function TestRunner.runAllTests(): boolean
 			["deck_unknown_1"] = {
 				DeckId = "deck_unknown_1",
 				Name = "Exotic Deck",
-				ClassId = "Knight",
+				ClassId = "Warlord",
 				Cards = {
 					["NonExistentCard_XYZ"] = 3,
 					["Strike"] = 5,
@@ -8134,8 +8374,8 @@ function TestRunner.runAllTests(): boolean
 	-- 7. Active-deck fallback when active deck is invalid:
 	local fallbackPlayer = { UserId = 86008, Name = "FallbackTester" }
 	PersistenceService.resetForTesting(86008)
-	local okD1, _, deck1 = DeckService.createDeck(fallbackPlayer, "Valid Deck 1", { ["Strike"] = 5, ["Defend"] = 5 }, "Knight")
-	local okD2, _, deck2 = DeckService.createDeck(fallbackPlayer, "Valid Deck 2", { ["Strike"] = 4, ["Defend"] = 6 }, "Knight")
+	local okD1, _, deck1 = DeckService.createDeck(fallbackPlayer, "Valid Deck 1", { ["Strike"] = 5, ["Defend"] = 5 }, nil)
+	local okD2, _, deck2 = DeckService.createDeck(fallbackPlayer, "Valid Deck 2", { ["Strike"] = 4, ["Defend"] = 6 }, nil)
 	assert(okD1 and deck1 and okD2 and deck2, "Both fallback test decks created")
 
 	DeckService.setActiveDeck(fallbackPlayer, deck2.DeckId)

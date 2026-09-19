@@ -81,21 +81,41 @@ At the start of an expedition or when preparing player state:
 Key Runtime Invariants:
 1. **Zero Persistence Mutation on Resolution**: `getActiveDeck()` never mutates `ActiveDeckId` or any saved deck in the persistent profile during resolution or fallback.
 2. **Strict Run Isolation**: Combat card movement (drawing, playing, discarding, exhausting, creating cards) NEVER alters the persistent `SavedDeck` or permanent `CardCollection`.
-3. **Mid-Run Editing Safety**: Editing or deleting saved decks while a run is active has zero impact on the running expedition's in-progress card piles.
+3. **Mid-Run Mutation Rejection**: All deck mutations (`CreateDeck`, `RenameDeck`, `DeleteDeck`, `SaveDeck`, `DuplicateDeck`, `SelectActiveDeck`) are strictly rejected by `DeckService` and `init.server` during active dungeon runs outside Lobby (`Phase ~= "Lobby"`), returning `"Cannot modify decks during an active run."`.
+4. **Server-Authoritative Deletion Rules**:
+   - **Only Deck Rejection**: Reject deleting the sole remaining deck (`"Cannot delete your only deck."`).
+   - **Active Deck Rejection**: Reject deleting the currently active deck (`"Cannot delete active deck. Switch active deck first."`).
+   - **No Mutation on Rejection**: `ActiveDeckId` and deck counts are preserved on rejection with zero persistence mutation.
+   - **Safe Inactive Deletion**: Deleting an inactive deck succeeds and preserves `ActiveDeckId`.
 
 ---
 
 ## 5. RemoteEvent Network Endpoints
 
-All endpoints are rate-limited under `"General"` and validate arguments strictly:
+All endpoints are rate-limited under `"General"`, enforce the Lobby phase boundary (rejecting mid-run mutations), and validate arguments strictly:
 
-| RemoteEvent | Arguments | Server Action |
+| RemoteEvent | Arguments (Client $\to$ Server) | Server Action / Behavior |
 |---|---|---|
-| `CreateDeck` | `(name, cards?, classId?)` | Generates server GUID, verifies slot capacity, saves deck. |
-| `RenameDeck` | `(deckId, newName)` | Validates name length, updates `UpdatedAt`. |
-| `DeleteDeck` | `(deckId)` | Deletes deck; falls back `ActiveDeckId` if active deck was deleted. |
-| `SaveDeck` | `(deckId, cards)` | Validates full deck against player's collection, updates deck. |
-| `DuplicateDeck` | `(sourceDeckId, newName?)` | Checks slot availability, clones card list with fresh server GUID. |
-| `SelectActiveDeck`| `(deckId)` | Validates target deck is playable; updates `ActiveDeckId`. |
-| `RequestDecks` | `()` | Sends `DeckListUpdate` with summaries and slot info. |
+| `CreateDeck` | `(name: string, cards: { [string]: number }?, classId: string?)` | Generates server GUID, verifies slot capacity, creates deck (class-agnostic when `classId = nil`). Rejected mid-run. |
+| `RenameDeck` | `(deckId: string, newName: string)` | Validates name length (1–24 chars), updates deck name authoritatively. Rejected mid-run. |
+| `DeleteDeck` | `(deckId: string)` | Strictly server-authoritative: rejects deleting only deck or active deck; deletes inactive deck without mutating `ActiveDeckId`. Rejected mid-run. |
+| `SaveDeck` | `(deckId: string, cards: { [string]: number })` | Validates full deck against player's permanent collection (8–30 cards, max 3 copies), updates deck. Rejected mid-run. |
+| `DuplicateDeck` | `(sourceDeckId: string, newName: string?)` | Checks slot availability, clones card list with fresh server GUID. Rejected mid-run. |
+| `SelectActiveDeck`| `(deckId: string)` | Validates target deck is playable; updates `ActiveDeckId`. Rejected mid-run. |
+| `RequestDecks` | `()` | Sends `DeckListUpdate` with summaries, activeDeckId, and slot info. |
 | `RequestCardCollection` | `()` | Sends `CardCollectionUpdate` with collection view. |
+
+### Server $\to$ Client Response Events:
+
+- **`DeckListUpdateEvent`**:
+  - **Server Dispatch**: `DeckListUpdateEvent:FireClient(player, summaries, activeDeckId, slotInfo)`
+  - **Client Listener**: `DeckListUpdateEvent.OnClientEvent:Connect(function(summaries: { StateTypes.DeckSummaryView }, activeDeckId: string, slotInfo: StateTypes.DeckSlotView?))`
+- **`DeckDetailUpdateEvent`**:
+  - **Server Dispatch**: `DeckDetailUpdateEvent:FireClient(player, detail)`
+  - **Client Listener**: `DeckDetailUpdateEvent.OnClientEvent:Connect(function(detail: StateTypes.DeckDetailView))`
+- **`CardCollectionUpdateEvent`**:
+  - **Server Dispatch**: `CardCollectionUpdateEvent:FireClient(player, collectionView)`
+  - **Client Listener**: `CardCollectionUpdateEvent.OnClientEvent:Connect(function(col: StateTypes.CardCollectionView))`
+- **`ActionResultEvent`**:
+  - **Server Dispatch**: `ActionResultEvent:FireClient(player, { Action = actionName, Success = ok, Message = errMsg })`
+  - **Client Listener**: `ActionResultEvent.OnClientEvent:Connect(function(result: StateTypes.ActionResult))`

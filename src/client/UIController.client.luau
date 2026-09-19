@@ -1197,7 +1197,7 @@ local function createDeckBuilderController(): DeckBuilderController
 		isDeckActionPending = true
 		setDeckStatus("Creating new deck...", Color3.fromRGB(200, 200, 200))
 		if CreateDeckEvent then
-			CreateDeckEvent:FireServer(string.format("Deck %d", totalDecks + 1), {}, "Warlord")
+			CreateDeckEvent:FireServer(string.format("Deck %d", totalDecks + 1), {}, nil)
 		end
 	end)
 

@@ -19,9 +19,9 @@ The project architecture has completed comprehensive hardening across all major 
 * **Reaction V2 & 3D Attack Presentation (`ReactionService`, `CombatVFXController`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry). Bounded client timestamp validation with packet arrival grace (`0.20s`).
 
 ### 🧪 Verification Baseline
-* **76 In-Game Integration Suites** in `TestRunner.luau` (172 test assertions) covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
-* **1,473 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
-* **Authoritative Build Fingerprint**: `BUILD_ID = "hardened_campfire_merchant_20260919"` (`Hardened Campfire Choices & Merchant Purchase Transactions`).
+* **76 In-Game Integration Suites** in `TestRunner.luau` (244 test assertions in Suite 76 alone, hundreds of assertions across all suites) covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
+* **1,593 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **Authoritative Build Fingerprint**: `BUILD_ID = "hardened_server_deck_contracts_20260919"` (`Hardened Server Deck Invariants & Contracts`).
 * **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
 * **Clean Rojo compilation** (`rojo build -o build.rbxl` exits code 0).
@@ -114,11 +114,14 @@ Every class features unique base stats, starting decks, passive skill trees, and
   * `UpdateAsync` concurrency protection prevents stale sessions from overwriting newer remote timestamps.
 * **Permanent Card Collection (`CardCollectionService.luau`)**:
   * Permanent ownership tracking (`{ [cardDefId]: count }`).
+  * Test failure injection seam (`setFailureInjectionForTesting`) validating fail-closed card grant rollback semantics without side effects.
 * **Deck Management (`DeckService.luau`)**:
   * Server-generated GUIDs for persistent decks.
   * Configurable slot entitlements (`BaseDeckSlots = 4`, expandible up to 20).
-  * Authoritative validation: collection ownership, max 3 copies per card, 8–30 card deck bounds.
-  * Deterministic active-deck fallback to another valid deck or default starter deck with zero persistence mutation.
+  * Authoritative validation: collection ownership, max 3 copies per card, 8–30 card deck bounds, class-agnostic decks (`classId = nil` by default).
+  * Server-authoritative deck deletion: rejects deleting the sole remaining deck and the currently active deck, strictly preserving `ActiveDeckId` and deck counts without profile mutations; deleting inactive decks succeeds cleanly.
+  * Mid-run mutation boundary: `DeckService` and `init.server` strictly reject all deck mutations (`CreateDeck`, `RenameDeck`, `DeleteDeck`, `SaveDeck`, `DuplicateDeck`, `SelectActiveDeck`) during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
+  * Deterministic active-deck fallback: resolves first valid playable deck or default class starter deck with zero persistence mutation on read/fallback.
   * Strict run isolation: in-combat card movement never mutates persistent decks.
 
 ---

@@ -146,32 +146,37 @@ Each category operates an independent token bucket per connected player:
 #### 15. `CreateDeck`
 - **Category**: `General`
 - **Payload**: `name: string, cards: { [string]: number }?, classId: string?`
-- **Server Action**: Generates server GUID, verifies slot entitlement capacity, validates card ownership, and saves deck.
+- **Server Action**: Generates server GUID, verifies slot entitlement capacity, validates card ownership, and saves deck (class-agnostic when `classId = nil`). Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 16. `RenameDeck`
 - **Category**: `General`
 - **Payload**: `deckId: string, newName: string`
-- **Server Action**: Trims and bounds name length (1–24 chars) and updates deck.
+- **Server Action**: Trims and bounds name length (1–24 chars) and updates deck name authoritatively. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 17. `DeleteDeck`
 - **Category**: `General`
 - **Payload**: `deckId: string`
-- **Server Action**: Deletes deck from profile; if deleted deck was active, falls back safely to next available deck.
+- **Server Action**: Strictly server-authoritative deck deletion rules:
+  1. Rejects deleting the only remaining deck (`"Cannot delete your only deck."`).
+  2. Rejects deleting the currently active deck (`"Cannot delete active deck. Switch active deck first."`).
+  3. `ActiveDeckId` and total deck counts are strictly preserved on rejection with zero persistence mutations.
+  4. Deleting an inactive deck succeeds and preserves `ActiveDeckId`.
+  5. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 18. `SaveDeck`
 - **Category**: `General`
 - **Payload**: `deckId: string, cards: { [string]: number }`
-- **Server Action**: Authoritatively validates that card counts do not exceed permanent `CardCollection` ownership, bounds deck to 8–30 cards, max 3 copies, and saves.
+- **Server Action**: Authoritatively validates that card counts do not exceed permanent `CardCollection` ownership, bounds deck to 8–30 cards, max 3 copies, and saves. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 19. `DuplicateDeck`
 - **Category**: `General`
 - **Payload**: `sourceDeckId: string, newName: string?`
-- **Server Action**: Verifies slot entitlement capacity, duplicates deck with fresh server GUID.
+- **Server Action**: Verifies slot entitlement capacity, duplicates deck with fresh server GUID. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 20. `SelectActiveDeck`
 - **Category**: `General`
 - **Payload**: `deckId: string`
-- **Server Action**: Validates that target deck is playable, updates `ActiveDeckId` in profile.
+- **Server Action**: Validates that target deck is playable, updates `ActiveDeckId` in profile. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 21. `RequestDecks` / `RequestCardCollection`
 - **Category**: `General`
@@ -234,14 +239,19 @@ Each category operates an independent token bucket per connected player:
 
 #### 6. `DeckListUpdate`
 - **Target**: Targeted (`FireClient`).
-- **Payload**:
+- **Server Dispatch**:
   ```luau
-  {
-      Decks: { StateTypes.DeckSummaryView },
-      Entitlement: StateTypes.DeckSlotView,
-  }
+  DeckListUpdateEvent:FireClient(player, summaries, activeDeckId, slotInfo)
   ```
-- **Client Handling**: Updates lobby and deck manager UI with deck summaries and available slots.
+- **Client Listener**:
+  ```luau
+  DeckListUpdateEvent.OnClientEvent:Connect(function(summaries: { StateTypes.DeckSummaryView }, activeDeckId: string, slotInfo: StateTypes.DeckSlotView?)
+  ```
+- **Payload Arguments**:
+  1. `summaries: { StateTypes.DeckSummaryView }` - List of deck summaries (including deep-copied `Cards` cache and validity).
+  2. `activeDeckId: string` - Currently selected active deck ID.
+  3. `slotInfo: StateTypes.DeckSlotView?` - Slot capacity information (`UsedSlots`, `AvailableSlots`, `BaseSlots`, `AdditionalSlots`, `TotalSlots`).
+- **Client Handling**: Updates lobby and deck manager UI with deck summaries, active selection, and available slots.
 
 #### 7. `DeckDetailUpdate`
 - **Target**: Targeted (`FireClient`).

@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "deck_builder_collection_ui_20260919",
-	BUILD_NAME = "Deck Builder UI & Collection Frontend",
+	BUILD_ID = "hardened_server_deck_contracts_20260919",
+	BUILD_NAME = "Hardened Server Deck Invariants & Contracts",
 }
 
 return BuildInfo

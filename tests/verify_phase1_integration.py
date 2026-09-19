@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "deck_builder_collection_ui_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = deck_builder_collection_ui_20260919")
-test('BUILD_NAME = "Deck Builder UI & Collection Frontend"' in build_info_src, "BuildInfo declares BUILD_NAME = Deck Builder UI & Collection Frontend")
+test('BUILD_ID = "hardened_server_deck_contracts_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = hardened_server_deck_contracts_20260919")
+test('BUILD_NAME = "Hardened Server Deck Invariants & Contracts"' in build_info_src, "BuildInfo declares BUILD_NAME = Hardened Server Deck Invariants & Contracts")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -2153,6 +2153,92 @@ test("[Suite 76.201]" in testrunner_src, "Suite 76 tests setActiveDeck succeeds 
 test("[Suite 76.202]" in testrunner_src, "Suite 76 tests setActiveDeck rejects invalid empty deck")
 test("[Suite 76.203]" in testrunner_src, "Suite 76 tests getSlotEntitlement returns valid slot entitlement view")
 test("[Suite 76.204]" in testrunner_src, "Suite 76 tests getSlotEntitlement UsedSlots and AvailableSlots are consistent")
+
+# Check 74: Hardened Server Deck Invariants, Mid-Run Guards & Failure Injection Seam
+print("\n--- [Check 74] Hardened Server Deck Invariants, Mid-Run Guards & Failure Injection Seam ---")
+card_collection_src = (ROOT / "src/server/services/CardCollectionService.luau").read_text(encoding="utf-8")
+run_manager_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+deck_service_src = (ROOT / "src/server/services/DeckService.luau").read_text(encoding="utf-8")
+init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
+network_contracts_src = (ROOT / "NETWORK_CONTRACTS.md").read_text(encoding="utf-8")
+deck_system_src = (ROOT / "DECK_SYSTEM.md").read_text(encoding="utf-8")
+
+# Failure Injection Seam
+test("function CardCollectionService.setFailureInjectionForTesting" in card_collection_src, "CardCollectionService exposes setFailureInjectionForTesting")
+test("if failureInjectionEnabled then" in card_collection_src, "CardCollectionService.grantCard checks failure injection seam")
+
+# Active Run Boundary Guard
+test("function RunManager.isRunActiveForPlayer" in run_manager_src, "RunManager implements isRunActiveForPlayer")
+test("runToCheck.Phase ~= \"Lobby\"" in run_manager_src, "RunManager.isRunActiveForPlayer checks for non-Lobby phase")
+
+# Server-Authoritative Deck Deletion Invariants
+test("Cannot delete your only deck." in deck_service_src, "DeckService rejects deleting only remaining deck")
+test("Cannot delete active deck. Switch active deck first." in deck_service_src, "DeckService rejects deleting currently active deck")
+test("Cannot modify decks during an active run." in deck_service_src, "DeckService rejects deck mutations during active run")
+
+# Server bootstrap mid-run boundary checks
+test("RunManager.isRunActiveForPlayer(player)" in init_server_src, "init.server guards deck mutations with RunManager.isRunActiveForPlayer")
+test("Cannot modify decks during an active run." in init_server_src, "init.server returns deterministic mid-run error message")
+
+# Client classId = nil
+test("CreateDeckEvent:FireServer(string.format(\"Deck %d\", totalDecks + 1), {}, nil)" in ui_ctrl_src, "UIController creates class-agnostic decks with nil classId")
+
+# BuildInfo
+test('BUILD_ID = "hardened_server_deck_contracts_20260919"' in build_info_src, "BuildInfo BUILD_ID updated to hardened_server_deck_contracts_20260919")
+
+# Documentation Sync
+test("DeckListUpdateEvent:FireClient(player, summaries, activeDeckId, slotInfo)" in network_contracts_src, "NETWORK_CONTRACTS.md documents exact DeckListUpdateEvent server dispatch")
+test("Cannot delete your only deck." in deck_system_src, "DECK_SYSTEM.md documents sole deck deletion rejection")
+test("Cannot delete active deck. Switch active deck first." in deck_system_src, "DECK_SYSTEM.md documents active deck deletion rejection")
+test("Cannot modify decks during an active run." in deck_system_src, "DECK_SYSTEM.md documents mid-run deck mutation rejection")
+
+# Suite 56 & 76 Assertions
+test("[ActiveDeckDelete] Deleting active deck rejected" in testrunner_src, "Suite 56 tests server-authoritative delete active deck rejection")
+test("[ActiveDeckDelete] Active deck remains unchanged after rejected delete" in testrunner_src, "Suite 56 tests ActiveDeckId preserved after rejected delete")
+test("[ActiveDeckSwitch] Switching active deck back to starter deck succeeds" in testrunner_src, "Suite 56 tests switching active deck before deletion")
+test("[ActiveDeckDelete] Deleting inactive custom deck succeeds" in testrunner_src, "Suite 56 tests deleting inactive deck succeeds")
+
+test("[Suite 76.205]" in testrunner_src, "Suite 76 tests player initially has 1 deck")
+test("[Suite 76.206]" in testrunner_src, "Suite 76 tests deleteDeck rejects deleting only remaining deck")
+test("[Suite 76.207]" in testrunner_src, "Suite 76 tests ActiveDeckId unchanged after rejected delete of only deck")
+test("[Suite 76.208]" in testrunner_src, "Suite 76 tests deck count unchanged after rejected delete of only deck")
+test("[Suite 76.209]" in testrunner_src, "Suite 76 tests createDeck succeeds for second deck")
+test("[Suite 76.210]" in testrunner_src, "Suite 76 tests setActiveDeck switches active deck to custom deck")
+test("[Suite 76.212]" in testrunner_src, "Suite 76 tests deleteDeck rejects deleting currently active deck")
+test("[Suite 76.213]" in testrunner_src, "Suite 76 tests ActiveDeckId unchanged after rejected active deck delete")
+test("[Suite 76.214]" in testrunner_src, "Suite 76 tests active deck preserved in profile after rejected delete")
+test("[Suite 76.215]" in testrunner_src, "Suite 76 tests deleteDeck succeeds for valid inactive deck")
+test("[Suite 76.216]" in testrunner_src, "Suite 76 tests inactive deck removed from profile")
+test("[Suite 76.217]" in testrunner_src, "Suite 76 tests ActiveDeckId remains valid after deleting inactive deck")
+test("[Suite 76.218]" in testrunner_src, "Suite 76 tests getActiveDeck returns active deck when valid")
+test("[Suite 76.219]" in testrunner_src, "Suite 76 tests getActiveDeck falls back to first valid deck when active is invalid")
+test("[Suite 76.220]" in testrunner_src, "Suite 76 tests getActiveDeck fallback performs zero persistence mutation on ActiveDeckId")
+test("[Suite 76.221]" in testrunner_src, "Suite 76 tests getActiveDeck returns nil when zero valid saved decks exist")
+test("[Suite 76.222]" in testrunner_src, "Suite 76 tests getActiveDeck returning nil performs zero persistence mutation")
+test("[Suite 76.223]" in testrunner_src, "Suite 76 tests RunManager reports run inactive while in Lobby")
+test("[Suite 76.224]" in testrunner_src, "Suite 76 tests DeckService mutations allowed during Lobby phase")
+test("[Suite 76.225]" in testrunner_src, "Suite 76 tests RunManager reports run active outside Lobby phase")
+test("[Suite 76.226]" in testrunner_src, "Suite 76 tests createDeck rejected during active run")
+test("[Suite 76.227]" in testrunner_src, "Suite 76 tests renameDeck rejected during active run")
+test("[Suite 76.228]" in testrunner_src, "Suite 76 tests deleteDeck rejected during active run")
+test("[Suite 76.229]" in testrunner_src, "Suite 76 tests saveDeck rejected during active run")
+test("[Suite 76.230]" in testrunner_src, "Suite 76 tests duplicateDeck rejected during active run")
+test("[Suite 76.231]" in testrunner_src, "Suite 76 tests setActiveDeck rejected during active run")
+test("[Suite 76.232]" in testrunner_src, "Suite 76 tests deck contents unmodified after rejected mid-run mutations")
+test("[Suite 76.233]" in testrunner_src, "Suite 76 tests run phase remains valid after rejected deck mutations")
+test("[Suite 76.234]" in testrunner_src, "Suite 76 tests buyMerchantItem fails closed on injected CardCollectionService failure")
+test("[Suite 76.235]" in testrunner_src, "Suite 76 tests buyMerchantItem error message reflects card grant failure")
+test("[Suite 76.236]" in testrunner_src, "Suite 76 tests zero gold deducted after injected grant failure")
+test("[Suite 76.237]" in testrunner_src, "Suite 76 tests zero runtime deck cards inserted after injected grant failure")
+test("[Suite 76.238]" in testrunner_src, "Suite 76 tests ware IsPurchased remains false after failed transaction")
+test("[Suite 76.239]" in testrunner_src, "Suite 76 tests run StateRevision unchanged after failed transaction")
+test("[Suite 76.240]" in testrunner_src, "Suite 76 tests buyMerchantItem succeeds normally after disabling failure injection")
+test("[Suite 76.241]" in testrunner_src, "Suite 76 tests gold deducted accurately on successful purchase")
+test("[Suite 76.242]" in testrunner_src, "Suite 76 tests runtime deck card inserted on successful purchase")
+test("[Suite 76.243]" in testrunner_src, "Suite 76 tests ware marked IsPurchased after successful purchase")
+test("[Suite 76.244]" in testrunner_src, "Suite 76 tests run StateRevision incremented after successful purchase")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

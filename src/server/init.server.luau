@@ -635,6 +635,10 @@ NetworkService.CreateDeckEvent.OnServerEvent:Connect(function(player: Player, na
 		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if RunManager.isRunActiveForPlayer(player) then
+		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Cannot modify decks during an active run." })
+		return
+	end
 	if not PersistenceService.isProfileLoaded(player) then
 		NetworkService.sendActionResult(player, { Action = "CreateDeck", Success = false, Message = "Profile unavailable. Cannot create deck." })
 		return
@@ -672,6 +676,10 @@ NetworkService.RenameDeckEvent.OnServerEvent:Connect(function(player: Player, de
 		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if RunManager.isRunActiveForPlayer(player) then
+		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Cannot modify decks during an active run." })
+		return
+	end
 	if not PersistenceService.isProfileLoaded(player) then
 		NetworkService.sendActionResult(player, { Action = "RenameDeck", Success = false, Message = "Profile unavailable. Cannot rename deck." })
 		return
@@ -703,6 +711,10 @@ NetworkService.DeleteDeckEvent.OnServerEvent:Connect(function(player: Player, de
 		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if RunManager.isRunActiveForPlayer(player) then
+		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Cannot modify decks during an active run." })
+		return
+	end
 	if not PersistenceService.isProfileLoaded(player) then
 		NetworkService.sendActionResult(player, { Action = "DeleteDeck", Success = false, Message = "Profile unavailable. Cannot delete deck." })
 		return
@@ -728,6 +740,10 @@ end)
 NetworkService.SaveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any, cards: any)
 	if not NetworkService.checkRateLimit(player, "General") then
 		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if RunManager.isRunActiveForPlayer(player) then
+		NetworkService.sendActionResult(player, { Action = "SaveDeck", Success = false, Message = "Cannot modify decks during an active run." })
 		return
 	end
 	if not PersistenceService.isProfileLoaded(player) then
@@ -766,6 +782,10 @@ NetworkService.DuplicateDeckEvent.OnServerEvent:Connect(function(player: Player,
 		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
+	if RunManager.isRunActiveForPlayer(player) then
+		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Cannot modify decks during an active run." })
+		return
+	end
 	if not PersistenceService.isProfileLoaded(player) then
 		NetworkService.sendActionResult(player, { Action = "DuplicateDeck", Success = false, Message = "Profile unavailable. Cannot duplicate deck." })
 		return
@@ -792,6 +812,10 @@ end)
 NetworkService.SelectActiveDeckEvent.OnServerEvent:Connect(function(player: Player, deckId: any)
 	if not NetworkService.checkRateLimit(player, "General") then
 		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+	if RunManager.isRunActiveForPlayer(player) then
+		NetworkService.sendActionResult(player, { Action = "SelectActiveDeck", Success = false, Message = "Cannot modify decks during an active run." })
 		return
 	end
 	if not PersistenceService.isProfileLoaded(player) then
