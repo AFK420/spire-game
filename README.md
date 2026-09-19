@@ -19,9 +19,9 @@ The project architecture has completed comprehensive hardening across all major 
 * **Reaction V2 & 3D Attack Presentation (`ReactionService`, `CombatVFXController`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry). Bounded client timestamp validation with packet arrival grace (`0.20s`).
 
 ### 🧪 Verification Baseline
-* **76 In-Game Integration Suites** in `TestRunner.luau` covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
-* **1,420 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
-* **Authoritative Build Fingerprint**: `BUILD_ID = "campfire_merchant_lifecycle_20260919"` (`Campfire & Merchant Room Lifecycle Hardening`).
+* **76 In-Game Integration Suites** in `TestRunner.luau` (172 test assertions) covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
+* **1,473 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **Authoritative Build Fingerprint**: `BUILD_ID = "hardened_campfire_merchant_20260919"` (`Hardened Campfire Choices & Merchant Purchase Transactions`).
 * **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
 * **Clean Rojo compilation** (`rojo build -o build.rbxl` exits code 0).
@@ -143,6 +143,22 @@ Every class features unique base stats, starting decks, passive skill trees, and
 
 ---
 
+### 8. Hardened Room Lifecycle, Choices & Merchant Transactions (`RunManager.luau`)
+* **Campfire Choice Semantics & Disconnected Member Rule**:
+  * `Rest`: Restores 30% Max HP to connected party members (`m.IsConnected ~= false`), sets `CampfireUsed = true`, idempotently clears node, cleans room geometry, increments `StateRevision`, and transitions run to `MapSelect`. Disconnected party members receive zero healing.
+  * `Leave`: Exits without resting (0 healing, `CampfireUsed` remains false), clears node, cleans room, and transitions to `MapSelect`.
+  * Invalid choices: Cleanly rejected (`return false, err`) with fail-closed guarantee (zero healing, node uncleared, phase remains `ActiveRoom`).
+* **Authoritative Merchant Purchasing & Shared Party Stock**:
+  * **Shared Party Stock**: In co-op, merchant stock is shared across the party (stock = 1 per ware). Player A purchasing an item marks `IsPurchased = true`, locking out Player B.
+  * **Double-Purchase Prevention & Concurrency Locking**: In-memory lock keyed by `runId:itemId` serializes concurrent purchase attempts and rejects simultaneous actions with in-progress notifications.
+  * **Fail-Closed Card Grant Ordering**: `CardCollectionService.grantCard()` is verified and granted before deducting player gold or modifying the runtime deck. Any grant failure aborts without mutating gold, deck, or ware status.
+  * **Deterministic Shop Inventory**: Wares are generated deterministically from `(seed, act, tier, nodeId)` using 32-bit polynomial string hashing (`hashStringToSeed`) and bitwise mixing.
+* **Two-Stage Combat Failure Injection & State Rollback**:
+  * Stage 1: Pre-setup failure injection testing initial parameter validation and abort.
+  * Stage 2: Post-card-draw and resource initialization failure injection, verifying caller `RunManager.travelToNode` cleanly rolls back party HP, Shield, Energy, Hand, Deck, Discard, Exhaust, and downs status, resets `activeCombat = nil`, cleans room geometry, and keeps the run in `MapSelect`.
+
+---
+
 ## 📁 Repository Structure
 
 ```text
@@ -210,7 +226,7 @@ spire-game/
 │       └── CombatVFXController.client.luau # Client 3D attack motions, projectiles, and AoE
 │
 └── tests/
-    └── verify_phase1_integration.py    # 1,420 offline architecture & logic verifiers
+    └── verify_phase1_integration.py    # 1,473 offline architecture & logic verifiers
 ```
 
 ---
@@ -226,7 +242,7 @@ spire-game/
 ```bash
 python tests/verify_phase1_integration.py
 ```
-*Executes all 1,420 verifier checks against file schemas, network contracts, typing, and logic rules.*
+*Executes all 1,473 verifier checks against file schemas, network contracts, typing, and logic rules.*
 
 ### 2. Build Roblox Place File
 ```bash

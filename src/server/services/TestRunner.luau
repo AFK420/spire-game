@@ -1454,8 +1454,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "campfire_merchant_lifecycle_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "Campfire & Merchant Room Lifecycle Hardening", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "hardened_campfire_merchant_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "Hardened Campfire Choices & Merchant Purchase Transactions", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -2857,6 +2857,308 @@ local function runSuite76()
 		assertTest(travRecOk == true, "[Suite 76.117] travelToNode succeeds normally after disabling combat failure injection: " .. tostring(travRecErr))
 		assertTest(run.Phase == "ActiveRoom", "[Suite 76.118] Phase is ActiveRoom after successful combat recovery")
 		assertTest(CombatService.getActiveCombat() ~= nil, "[Suite 76.119] Active combat initialized on successful recovery")
+
+		CombatService.cleanupCombat()
+		WorldRoomService.cleanupRoom()
+	end
+
+	-- 76.16: Campfire "Leave", Invalid Choice & Disconnected Member Healing
+	do
+		RunManager.resetRunForTesting()
+		CombatService.cleanupCombat()
+		WorldRoomService.cleanupRoom()
+
+		local cP1 = { UserId = 84001, Name = "CampHero1", DisplayName = "CampHero1" }
+		local cP2 = { UserId = 84002, Name = "CampHero2", DisplayName = "CampHero2" }
+		local s1 = RunManager.addPlayer(cP1)
+		local s2 = RunManager.addPlayer(cP2)
+		assert(s1 and s2, "party players exist")
+		RunManager.startRun(cP1)
+
+		local run = RunManager.getRunState()
+		local dRun = RunManager.getDungeonRun()
+		assert(run and dRun, "run and dRun exist")
+
+		local campNode1: DungeonMap.DungeonNode = {
+			Id = "node_act1_t1_camp_choice",
+			Act = 1,
+			Tier = 1,
+			Lane = 1,
+			Type = "Campfire Rest",
+			IncomingNodeIds = {},
+			OutgoingNodeIds = { "node_act1_t2_choice_next" },
+		}
+		local nextNode: DungeonMap.DungeonNode = {
+			Id = "node_act1_t2_choice_next",
+			Act = 1,
+			Tier = 2,
+			Lane = 1,
+			Type = "Combat",
+			IncomingNodeIds = { "node_act1_t1_camp_choice" },
+			OutgoingNodeIds = {},
+		}
+		dRun.Acts[1].NodesById["node_act1_t1_camp_choice"] = campNode1
+		dRun.Acts[1].NodesById["node_act1_t2_choice_next"] = nextNode
+
+		s1.Resources.MaxHP = 100
+		s1.Resources.HP = 50
+		s2.Resources.MaxHP = 100
+		s2.Resources.HP = 50
+
+		-- Travel to campfire
+		local travOk, travErr = RunManager.travelToNode("node_act1_t1_camp_choice")
+		assertTest(travOk == true, "[Suite 76.120] travelToNode succeeds for campfire choice test: " .. tostring(travErr))
+		assertTest(run.Phase == "ActiveRoom", "[Suite 76.121] Run phase is ActiveRoom in campfire")
+
+		-- Test Invalid choice rejection
+		local badChoiceOk, badChoiceErr = RunManager.completeCampfire(cP1, "Dance")
+		assertTest(badChoiceOk == false, "[Suite 76.122] completeCampfire rejects invalid choice: " .. tostring(badChoiceErr))
+		assertTest(run.Phase == "ActiveRoom", "[Suite 76.123] Phase remains ActiveRoom after invalid choice")
+		assertTest(table.find(run.ClearedNodeIds, "node_act1_t1_camp_choice") == nil, "[Suite 76.124] Campfire node not cleared on invalid choice")
+		assertTest(s1.Resources.HP == 50 and s2.Resources.HP == 50, "[Suite 76.125] Zero healing applied on invalid choice")
+
+		-- Test "Leave" choice: 0 heal, cleans room, marks cleared, returns to MapSelect
+		local leaveOk, leaveErr = RunManager.completeCampfire(cP1, "Leave")
+		assertTest(leaveOk == true, "[Suite 76.126] completeCampfire with Leave succeeds: " .. tostring(leaveErr))
+		assertTest(s1.Resources.HP == 50 and s2.Resources.HP == 50, "[Suite 76.127] Zero healing applied on Leave choice")
+		assertTest(run.Phase == "MapSelect", "[Suite 76.128] Phase returned to MapSelect on Leave choice")
+		assertTest(table.find(run.ClearedNodeIds, "node_act1_t1_camp_choice") ~= nil, "[Suite 76.129] Campfire node cleared on Leave choice")
+		assertTest(WorldRoomService.getActiveRoomModel() == nil, "[Suite 76.130] 3D room cleaned up after Leave choice")
+
+		-- Test Disconnected Member Healing Rule:
+		-- Set up a second campfire room
+		local campNode2: DungeonMap.DungeonNode = {
+			Id = "node_act1_t2_camp_disc",
+			Act = 1,
+			Tier = 2,
+			Lane = 1,
+			Type = "Campfire Rest",
+			IncomingNodeIds = { "node_act1_t1_camp_choice" },
+			OutgoingNodeIds = {},
+		}
+		dRun.Acts[1].NodesById["node_act1_t2_camp_disc"] = campNode2
+		table.insert(run.AvailableNodeIds, "node_act1_t2_camp_disc")
+
+		-- s2 becomes disconnected
+		s2.IsConnected = false
+		s1.Resources.HP = 40
+		s2.Resources.HP = 40
+
+		local travOk2, travErr2 = RunManager.travelToNode("node_act1_t2_camp_disc")
+		assertTest(travOk2 == true, "[Suite 76.131] travelToNode succeeds for second campfire: " .. tostring(travErr2))
+
+		-- P1 rests
+		local restOk, restErr = RunManager.completeCampfire(cP1, "Rest")
+		assertTest(restOk == true, "[Suite 76.132] completeCampfire with Rest succeeds: " .. tostring(restErr))
+		assertTest(s1.Resources.HP == 70, string.format("[Suite 76.133] Connected member healed (+30%% HP, 40 -> 70, actual: %d)", s1.Resources.HP))
+		assertTest(s2.Resources.HP == 40, string.format("[Suite 76.134] Disconnected member received 0 healing (HP remained %d)", s2.Resources.HP))
+
+		s2.IsConnected = true
+		WorldRoomService.cleanupRoom()
+	end
+
+	-- 76.17: Deterministic Merchant Stock Generation
+	do
+		local seed1 = 987654
+		local waresA1 = RunManager.generateMerchantWares(seed1, 1, 1, "node_act1_t1_shop")
+		local waresA2 = RunManager.generateMerchantWares(seed1, 1, 1, "node_act1_t1_shop")
+
+		assertTest(#waresA1 == 4 and #waresA2 == 4, "[Suite 76.135] generateMerchantWares produces 4 wares")
+		local isIdentical = true
+		for i = 1, #waresA1 do
+			if waresA1[i].ItemId ~= waresA2[i].ItemId
+				or waresA1[i].Cost ~= waresA2[i].Cost
+				or waresA1[i].CardDefId ~= waresA2[i].CardDefId then
+				isIdentical = false
+				break
+			end
+		end
+		assertTest(isIdentical == true, "[Suite 76.136] generateMerchantWares is 100% deterministic for identical seed, act, tier, nodeId")
+
+		-- Different nodeId produces different stock
+		local waresDiffNode = RunManager.generateMerchantWares(seed1, 1, 1, "node_act1_t1_shop_other")
+		local isNodeDiff = false
+		for i = 1, #waresA1 do
+			if waresA1[i].CardDefId ~= waresDiffNode[i].CardDefId or waresA1[i].Cost ~= waresDiffNode[i].Cost then
+				isNodeDiff = true
+				break
+			end
+		end
+		assertTest(isNodeDiff == true, "[Suite 76.137] generateMerchantWares changes inventory when nodeId changes")
+
+		-- Different act or tier produces different stock
+		local waresDiffTier = RunManager.generateMerchantWares(seed1, 2, 2, "node_act1_t1_shop")
+		local isTierDiff = false
+		for i = 1, #waresA1 do
+			if waresA1[i].CardDefId ~= waresDiffTier[i].CardDefId or waresA1[i].Cost ~= waresDiffTier[i].Cost then
+				isTierDiff = true
+				break
+			end
+		end
+		assertTest(isTierDiff == true, "[Suite 76.138] generateMerchantWares changes inventory when act or tier changes")
+	end
+
+	-- 76.18: Merchant Shared Party Stock, Concurrency Lock & Fail-Closed Transaction
+	do
+		RunManager.resetRunForTesting()
+		CombatService.cleanupCombat()
+		WorldRoomService.cleanupRoom()
+
+		local buyerA = { UserId = 85001, Name = "BuyerA", DisplayName = "BuyerA" }
+		local buyerB = { UserId = 85002, Name = "BuyerB", DisplayName = "BuyerB" }
+		local sA = RunManager.addPlayer(buyerA)
+		local sB = RunManager.addPlayer(buyerB)
+		assert(sA and sB, "buyers exist")
+		RunManager.startRun(buyerA)
+
+		local run = RunManager.getRunState()
+		local dRun = RunManager.getDungeonRun()
+		assert(run and dRun, "run and dRun exist")
+
+		local shopNode: DungeonMap.DungeonNode = {
+			Id = "node_act1_t1_shared_shop",
+			Act = 1,
+			Tier = 1,
+			Lane = 1,
+			Type = "Merchant Shop",
+			IncomingNodeIds = {},
+			OutgoingNodeIds = {},
+		}
+		dRun.Acts[1].NodesById["node_act1_t1_shared_shop"] = shopNode
+
+		sA.Gold = 100
+		sB.Gold = 100
+		local preDeckA = #sA.Deck
+		local preDeckB = #sB.Deck
+
+		local travOk, travErr = RunManager.travelToNode("node_act1_t1_shared_shop")
+		assertTest(travOk == true, "[Suite 76.139] travelToNode succeeds for shared shop test: " .. tostring(travErr))
+		assertTest(run.ActiveRoom ~= nil and run.ActiveRoom.MerchantWares ~= nil, "[Suite 76.140] Merchant wares loaded")
+
+		local targetWare = run.ActiveRoom.MerchantWares[1]
+		local targetId = targetWare.ItemId
+
+		-- Buyer A purchases target ware
+		local buyAOk, buyAErr = RunManager.buyMerchantItem(buyerA, targetId)
+		assertTest(buyAOk == true, "[Suite 76.141] Player A purchase of ware succeeds: " .. tostring(buyAErr))
+		assertTest(targetWare.IsPurchased == true, "[Suite 76.142] Ware is marked IsPurchased across party")
+		assertTest(#sA.Deck == preDeckA + 1, "[Suite 76.143] Player A deck received purchased card")
+
+		-- Buyer B attempts to purchase the same ware (Shared Stock Rule)
+		local buyBOk, buyBErr = RunManager.buyMerchantItem(buyerB, targetId)
+		assertTest(buyBOk == false, "[Suite 76.144] Player B purchase of same ware rejected due to shared party stock")
+		assertTest(string.find(buyBErr or "", "already") ~= nil, "[Suite 76.145] Rejection message indicates item already purchased")
+		assertTest(sB.Gold == 100, "[Suite 76.146] Player B gold completely untouched (100)")
+		assertTest(#sB.Deck == preDeckB, "[Suite 76.147] Player B deck completely untouched")
+
+		-- Concurrency Lock Test:
+		-- Acquire lock on ware 2 manually to simulate in-flight purchase
+		local ware2 = run.ActiveRoom.MerchantWares[2]
+		local lockTable = RunManager.getMerchantPurchaseLocksForTesting()
+		local lockKey = string.format("%s:%s", tostring(run.RunId), tostring(ware2.ItemId))
+		lockTable[lockKey] = true
+
+		local lockedBuyOk, lockedBuyErr = RunManager.buyMerchantItem(buyerA, ware2.ItemId)
+		assertTest(lockedBuyOk == false, "[Suite 76.148] Concurrent purchase rejected when lock is held")
+		assertTest(string.find(lockedBuyErr or "", "processed") ~= nil or string.find(lockedBuyErr or "", "being") ~= nil,
+			"[Suite 76.149] Concurrency rejection message indicates purchase in progress")
+
+		-- Release lock
+		lockTable[lockKey] = nil
+
+		-- Fail-Closed Card Grant Transaction Test:
+		-- Inject invalid CardDefId into ware 3 to cause grantCard failure
+		local ware3 = run.ActiveRoom.MerchantWares[3]
+		local origCardDefId = ware3.CardDefId
+		ware3.CardDefId = "NonExistent_Invalid_Card_Def"
+		local preGoldA = sA.Gold
+		local preDeckSizeA = #sA.Deck
+
+		local failGrantOk, failGrantErr = RunManager.buyMerchantItem(buyerA, ware3.ItemId)
+		assertTest(failGrantOk == false, "[Suite 76.150] buyMerchantItem fails closed on invalid card definition")
+		assertTest(sA.Gold == preGoldA, "[Suite 76.151] Player gold untouched after failed card grant")
+		assertTest(#sA.Deck == preDeckSizeA, "[Suite 76.152] Player deck untouched after failed card grant")
+		assertTest(ware3.IsPurchased == false, "[Suite 76.153] Ware IsPurchased remains false after failed transaction")
+
+		-- Restore ware3
+		ware3.CardDefId = origCardDefId
+		WorldRoomService.cleanupRoom()
+	end
+
+	-- 76.19: Combat Startup Rollback with Post-Draw Stage 2 Failure Injection
+	do
+		RunManager.resetRunForTesting()
+		CombatService.cleanupCombat()
+		WorldRoomService.cleanupRoom()
+
+		local st2P1 = { UserId = 86001, Name = "Stage2Knight", DisplayName = "Stage2Knight" }
+		local st2State = RunManager.addPlayer(st2P1)
+		assert(st2State, "st2State exists")
+		RunManager.startRun(st2P1)
+
+		local run = RunManager.getRunState()
+		local dRun = RunManager.getDungeonRun()
+		assert(run and dRun, "run and dRun exist")
+
+		local nodeStage2: DungeonMap.DungeonNode = {
+			Id = "node_act1_t1_stage2_fail",
+			Act = 1,
+			Tier = 1,
+			Lane = 1,
+			Type = "Combat",
+			IncomingNodeIds = {},
+			OutgoingNodeIds = {},
+		}
+		dRun.Acts[1].NodesById["node_act1_t1_stage2_fail"] = nodeStage2
+
+		-- Baseline pre-combat player state
+		st2State.Resources.HP = 77
+		st2State.Resources.MaxHP = 100
+		st2State.Resources.Shield = 5
+		st2State.Resources.Energy = 2
+		st2State.Resources.MaxEnergy = 3
+		st2State.IsDowned = false
+		local baseDeckCount = #st2State.Deck
+		local baseHandCount = 0
+		for _ in st2State.Hand do baseHandCount += 1 end
+
+		-- Enable stage 2 failure injection (triggers AFTER CardService.drawCards and resource reset)
+		CombatService.setFailureInjectionForTesting(true, "Simulated stage 2 startCombat post-draw failure", 2)
+		assertTest(CombatService.isFailureInjectionEnabled() == true, "[Suite 76.154] CombatService stage 2 failure injection enabled")
+
+		-- Attempt travelToNode
+		local st2TravelOk, st2TravelErr = RunManager.travelToNode("node_act1_t1_stage2_fail")
+		assertTest(st2TravelOk == false, "[Suite 76.155] travelToNode fails when startCombat stage 2 throws after drawCards")
+		assertTest(string.find(tostring(st2TravelErr), "stage-2 failure") ~= nil or string.find(tostring(st2TravelErr), "post-draw") ~= nil,
+			"[Suite 76.156] Failure error contains stage 2 message: " .. tostring(st2TravelErr))
+
+		-- Verify full party state rollback (not corrupted by combat init or card draw)
+		assertTest(run.Phase == "MapSelect", "[Suite 76.157] Phase remains MapSelect after stage 2 combat failure")
+		assertTest(run.CurrentNodeId == nil, "[Suite 76.158] CurrentNodeId remains nil after stage 2 combat failure")
+		assertTest(table.find(run.ClearedNodeIds, "node_act1_t1_stage2_fail") == nil, "[Suite 76.159] Node not marked cleared on stage 2 failure")
+		assertTest(st2State.Resources.HP == 77, "[Suite 76.160] Player HP rolled back to 77")
+		assertTest(st2State.Resources.Shield == 5, "[Suite 76.161] Player Shield rolled back to 5")
+		assertTest(st2State.Resources.Energy == 2, "[Suite 76.162] Player Energy rolled back to 2 (not left at reset 3)")
+
+		local afterHandCount = 0
+		for _ in st2State.Hand do afterHandCount += 1 end
+		assertTest(afterHandCount == baseHandCount, string.format("[Suite 76.163] Player Hand size rolled back to %d (not corrupted by drawn cards)", baseHandCount))
+		assertTest(#st2State.Deck == baseDeckCount, "[Suite 76.164] Player Deck size rolled back to pre-combat size")
+		assertTest(#st2State.DiscardPile == 0, "[Suite 76.165] Player Discard pile rolled back to 0")
+		assertTest(#st2State.ExhaustPile == 0, "[Suite 76.166] Player Exhaust pile rolled back to 0")
+
+		-- Verify services cleaned up
+		assertTest(CombatService.getActiveCombat() == nil, "[Suite 76.167] Active combat is nil after stage 2 failure")
+		assertTest(WorldRoomService.getActiveRoomModel() == nil, "[Suite 76.168] 3D room cleaned up after stage 2 failure")
+
+		-- Disable failure injection & verify normal recovery
+		CombatService.setFailureInjectionForTesting(false)
+		assertTest(CombatService.isFailureInjectionEnabled() == false, "[Suite 76.169] Combat failure injection disabled")
+
+		local st2RecOk, st2RecErr = RunManager.travelToNode("node_act1_t1_stage2_fail")
+		assertTest(st2RecOk == true, "[Suite 76.170] travelToNode succeeds normally after disabling stage 2 failure injection: " .. tostring(st2RecErr))
+		assertTest(run.Phase == "ActiveRoom", "[Suite 76.171] Phase is ActiveRoom after successful combat recovery")
+		assertTest(CombatService.getActiveCombat() ~= nil, "[Suite 76.172] Active combat initialized on successful recovery")
 
 		CombatService.cleanupCombat()
 		WorldRoomService.cleanupRoom()

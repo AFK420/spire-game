@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "campfire_merchant_lifecycle_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = campfire_merchant_lifecycle_20260919")
-test('BUILD_NAME = "Campfire & Merchant Room Lifecycle Hardening"' in build_info_src, "BuildInfo declares BUILD_NAME = Campfire & Merchant Room Lifecycle Hardening")
+test('BUILD_ID = "hardened_campfire_merchant_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = hardened_campfire_merchant_20260919")
+test('BUILD_NAME = "Hardened Campfire Choices & Merchant Purchase Transactions"' in build_info_src, "BuildInfo declares BUILD_NAME = Hardened Campfire Choices & Merchant Purchase Transactions")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -1941,7 +1941,7 @@ test("NetworkService.ExitMerchantEvent.OnServerEvent:Connect" in init_server_src
 # CombatService Failure Injection
 test("function CombatService.setFailureInjectionForTesting" in combat_service_src, "CombatService exposes setFailureInjectionForTesting")
 test("function CombatService.isFailureInjectionEnabled" in combat_service_src, "CombatService exposes isFailureInjectionEnabled")
-test("if failureInjectionEnabled then" in combat_service_src, "CombatService triggers failure injection when enabled")
+test("if failureInjectionEnabled" in combat_service_src, "CombatService triggers failure injection when enabled")
 
 # RunManager Lifecycles
 test("function RunManager.completeCampfire" in run_mgr_src, "RunManager implements completeCampfire")
@@ -2001,6 +2001,72 @@ test("[Suite 76.116]" in testrunner_src, "Suite 76 tests CombatService failure i
 test("[Suite 76.117]" in testrunner_src, "Suite 76 tests travelToNode succeeds normally after disabling failure injection")
 test("[Suite 76.118]" in testrunner_src, "Suite 76 tests Phase is ActiveRoom after successful recovery")
 test("[Suite 76.119]" in testrunner_src, "Suite 76 tests Active combat initialized on successful recovery")
+
+# Check 72: Hardened Campfire Choices, Atomic Merchant Purchases & Stage 2 Combat Rollback
+print("\n--- [Check 72] Hardened Campfire Choices, Merchant Locks & Stage 2 Combat Rollback ---")
+
+# RunManager Campfire Choice Semantics & Disconnected Member Rule
+test('if choice ~= "Rest" and choice ~= "Leave" then' in run_mgr_src, "RunManager validates campfire choice ('Rest' or 'Leave')")
+test('if choice == "Rest" then' in run_mgr_src, "RunManager handles 'Rest' choice specifically")
+test('if m.IsConnected ~= false then' in run_mgr_src, "RunManager heals only connected party members at Campfire")
+test('Campfire left without resting' in run_mgr_src, "RunManager emits non-rest message on 'Leave' choice")
+
+# RunManager Deterministic Merchant Wares
+test("local function hashStringToSeed(str: string): number" in run_mgr_src, "RunManager implements hashStringToSeed helper")
+test("local function computeMerchantSeed(seed: number, act: number, tier: number, nodeId: string): number" in run_mgr_src, "RunManager implements computeMerchantSeed helper")
+test("RunManager.generateMerchantWares(dRun.Seed, node.Act, node.Tier, node.Id)" in run_mgr_src, "RunManager passes seed, act, tier, nodeId to generateMerchantWares")
+
+# RunManager Merchant Purchase Concurrency Lock & Atomic Fail-Closed Transaction
+test("local merchantPurchaseLocks: { [string]: boolean } = {}" in run_mgr_src, "RunManager declares merchantPurchaseLocks concurrency table")
+test("if merchantPurchaseLocks[lockKey] then" in run_mgr_src, "RunManager rejects concurrent purchase when lock is held")
+test("merchantPurchaseLocks[lockKey] = true" in run_mgr_src, "RunManager acquires purchase lock")
+test("merchantPurchaseLocks[lockKey] = nil" in run_mgr_src, "RunManager releases purchase lock")
+test("local grantOk, grantErr = CardCollectionService.grantCard" in run_mgr_src, "RunManager calls CardCollectionService.grantCard")
+test("if not grantOk then" in run_mgr_src, "RunManager checks grantOk before deducting gold or modifying deck")
+
+# CombatService Two-Stage Failure Injection
+test("local failureInjectionStage = 1" in combat_service_src, "CombatService declares failureInjectionStage")
+test("failureInjectionStage = stage or 1" in combat_service_src, "CombatService accepts stage parameter in setFailureInjectionForTesting")
+test("failureInjectionStage == 1" in combat_service_src, "CombatService supports stage 1 pre-setup failure injection")
+test("failureInjectionStage == 2" in combat_service_src, "CombatService supports stage 2 post-draw failure injection")
+
+# Suite 76 Invariants for Extended Scenarios
+test("[Suite 76.120]" in testrunner_src, "Suite 76 tests travelToNode succeeds for campfire choice test")
+test("[Suite 76.122]" in testrunner_src, "Suite 76 tests completeCampfire rejects invalid choice")
+test("[Suite 76.123]" in testrunner_src, "Suite 76 tests Phase remains ActiveRoom after invalid choice")
+test("[Suite 76.125]" in testrunner_src, "Suite 76 tests Zero healing applied on invalid choice")
+test("[Suite 76.126]" in testrunner_src, "Suite 76 tests completeCampfire with Leave succeeds")
+test("[Suite 76.127]" in testrunner_src, "Suite 76 tests Zero healing applied on Leave choice")
+test("[Suite 76.128]" in testrunner_src, "Suite 76 tests Phase returned to MapSelect on Leave choice")
+test("[Suite 76.129]" in testrunner_src, "Suite 76 tests Campfire node cleared on Leave choice")
+test("[Suite 76.130]" in testrunner_src, "Suite 76 tests 3D room cleaned up after Leave choice")
+test("[Suite 76.132]" in testrunner_src, "Suite 76 tests completeCampfire with Rest succeeds")
+test("[Suite 76.133]" in testrunner_src, "Suite 76 tests Connected member healed (+30% HP)")
+test("[Suite 76.134]" in testrunner_src, "Suite 76 tests Disconnected member received 0 healing")
+test("[Suite 76.135]" in testrunner_src, "Suite 76 tests generateMerchantWares produces 4 wares")
+test("[Suite 76.136]" in testrunner_src, "Suite 76 tests generateMerchantWares is 100% deterministic")
+test("[Suite 76.137]" in testrunner_src, "Suite 76 tests generateMerchantWares changes inventory when nodeId changes")
+test("[Suite 76.138]" in testrunner_src, "Suite 76 tests generateMerchantWares changes inventory when act or tier changes")
+test("[Suite 76.141]" in testrunner_src, "Suite 76 tests Player A purchase of ware succeeds")
+test("[Suite 76.142]" in testrunner_src, "Suite 76 tests Ware is marked IsPurchased across party")
+test("[Suite 76.144]" in testrunner_src, "Suite 76 tests Player B purchase of same ware rejected due to shared party stock")
+test("[Suite 76.146]" in testrunner_src, "Suite 76 tests Player B gold completely untouched")
+test("[Suite 76.147]" in testrunner_src, "Suite 76 tests Player B deck completely untouched")
+test("[Suite 76.148]" in testrunner_src, "Suite 76 tests Concurrent purchase rejected when lock is held")
+test("[Suite 76.150]" in testrunner_src, "Suite 76 tests buyMerchantItem fails closed on invalid card definition")
+test("[Suite 76.151]" in testrunner_src, "Suite 76 tests Player gold untouched after failed card grant")
+test("[Suite 76.152]" in testrunner_src, "Suite 76 tests Player deck untouched after failed card grant")
+test("[Suite 76.153]" in testrunner_src, "Suite 76 tests Ware IsPurchased remains false after failed transaction")
+test("[Suite 76.154]" in testrunner_src, "Suite 76 tests CombatService stage 2 failure injection enabled")
+test("[Suite 76.155]" in testrunner_src, "Suite 76 tests travelToNode fails when startCombat stage 2 throws")
+test("[Suite 76.157]" in testrunner_src, "Suite 76 tests Phase remains MapSelect after stage 2 combat failure")
+test("[Suite 76.160]" in testrunner_src, "Suite 76 tests Player HP rolled back to pre-combat HP after stage 2 failure")
+test("[Suite 76.162]" in testrunner_src, "Suite 76 tests Player Energy rolled back after stage 2 failure")
+test("[Suite 76.163]" in testrunner_src, "Suite 76 tests Player Hand size rolled back to pre-combat size")
+test("[Suite 76.164]" in testrunner_src, "Suite 76 tests Player Deck size rolled back after stage 2 failure")
+test("[Suite 76.167]" in testrunner_src, "Suite 76 tests Active combat is nil after stage 2 failure")
+test("[Suite 76.168]" in testrunner_src, "Suite 76 tests 3D room cleaned up after stage 2 failure")
+test("[Suite 76.170]" in testrunner_src, "Suite 76 tests travelToNode succeeds normally after disabling stage 2 failure")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

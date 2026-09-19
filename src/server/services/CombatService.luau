@@ -100,10 +100,12 @@ local isCombatIsolation = false
 
 local failureInjectionEnabled = false
 local failureInjectionMessage: string? = nil
+local failureInjectionStage = 1
 
-function CombatService.setFailureInjectionForTesting(enabled: boolean, message: string?)
+function CombatService.setFailureInjectionForTesting(enabled: boolean, message: string?, stage: number?)
 	failureInjectionEnabled = enabled
 	failureInjectionMessage = message
+	failureInjectionStage = stage or 1
 end
 
 function CombatService.isFailureInjectionEnabled(): boolean
@@ -858,7 +860,7 @@ function CombatService.startCombat(
 	partyRef = party
 	onCombatEndCallback = onEndCallback
 
-	if failureInjectionEnabled then
+	if failureInjectionEnabled and failureInjectionStage == 1 then
 		for _, pState in partyRef do
 			pState.Resources.Energy = 0
 			pState.Resources.Shield = 999
@@ -991,6 +993,10 @@ function CombatService.startCombat(
 
 		CardService.drawCards(playerState, GameConfig.Combat.BaseHandDrawCount)
 		SkillService.onTurnStart(playerState)
+	end
+
+	if failureInjectionEnabled and failureInjectionStage == 2 then
+		error(failureInjectionMessage or "CombatService: Injected stage-2 failure in startCombat for testing")
 	end
 
 	if turnTimerConnection then

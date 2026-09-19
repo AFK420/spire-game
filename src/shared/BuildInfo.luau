@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "campfire_merchant_lifecycle_20260919",
-	BUILD_NAME = "Campfire & Merchant Room Lifecycle Hardening",
+	BUILD_ID = "hardened_campfire_merchant_20260919",
+	BUILD_NAME = "Hardened Campfire Choices & Merchant Purchase Transactions",
 }
 
 return BuildInfo

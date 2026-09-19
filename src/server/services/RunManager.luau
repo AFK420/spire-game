@@ -131,12 +131,18 @@ local isIsolatedTesting = false
 local currentRun: StateTypes.RunState = liveRun
 local internalDungeonRun: DungeonMap.DungeonRun? = nil
 local liveDungeonRun: DungeonMap.DungeonRun? = nil
+local merchantPurchaseLocks: { [string]: boolean } = {}
+
+function RunManager.getMerchantPurchaseLocksForTesting(): { [string]: boolean }
+	return merchantPurchaseLocks
+end
 
 function RunManager.beginTestIsolation()
 	if not isIsolatedTesting then
 		liveDungeonRun = internalDungeonRun
 		isIsolatedTesting = true
 	end
+	table.clear(merchantPurchaseLocks)
 	isolatedTestRun = createInitialRun("run_test_isolated")
 	currentRun = isolatedTestRun
 	internalDungeonRun = nil
@@ -157,6 +163,7 @@ function RunManager.endTestIsolation()
 	currentRun = liveRun
 	internalDungeonRun = liveDungeonRun
 	liveDungeonRun = nil
+	table.clear(merchantPurchaseLocks)
 
 	local cs = getCombatService()
 	if cs and cs.endTestIsolation then
@@ -872,8 +879,35 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 end
 
-local function generateMerchantWares(seed: number, tier: number): { StateTypes.MerchantItemView }
-	local rng = Random.new(seed + tier * 71)
+local function hashStringToSeed(str: string): number
+	local hash = 5381
+	for i = 1, #str do
+		local byte = string.byte(str, i)
+		hash = bit32.band((bit32.lshift(hash, 5) + hash) + byte, 0x7FFFFFFF)
+	end
+	return hash
+end
+
+local function computeMerchantSeed(seed: number, act: number, tier: number, nodeId: string): number
+	local nodeHash = hashStringToSeed(nodeId)
+	local combined = bit32.bxor(
+		bit32.band(seed, 0x7FFFFFFF),
+		bit32.band(act * 73856093, 0x7FFFFFFF),
+		bit32.band(tier * 19349663, 0x7FFFFFFF),
+		nodeHash
+	)
+	if combined <= 0 then
+		combined = math.abs(combined) + 1
+	end
+	return combined
+end
+
+RunManager.hashStringToSeed = hashStringToSeed
+RunManager.computeMerchantSeed = computeMerchantSeed
+
+function RunManager.generateMerchantWares(seed: number, act: number, tier: number, nodeId: string): { StateTypes.MerchantItemView }
+	local shopSeed = computeMerchantSeed(seed, act, tier, nodeId)
+	local rng = Random.new(shopSeed)
 	local cardPool = { "HeavyBlow", "PoisonDart", "FirstAid", "Defend", "Strike" }
 	local chosenCards = {}
 	local poolCopy = table.clone(cardPool)
@@ -1138,7 +1172,7 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 	local wares: { StateTypes.MerchantItemView }? = nil
 	if node.Type == "Merchant Shop" then
-		wares = generateMerchantWares(dRun.Seed, node.Tier)
+		wares = RunManager.generateMerchantWares(dRun.Seed, node.Act, node.Tier, node.Id)
 	end
 
 	runToMutate.ActiveRoom = {
@@ -1521,15 +1555,24 @@ function RunManager.completeCampfire(player: any, choice: any, isLiveAction: boo
 		return false, "Caller is disconnected."
 	end
 
+	if choice ~= "Rest" and choice ~= "Leave" then
+		return false, string.format("Invalid campfire choice '%s'. Valid choices: 'Rest', 'Leave'.", tostring(choice))
+	end
+
 	if runToUse.Phase ~= "ActiveRoom" or not runToUse.ActiveRoom or runToUse.ActiveRoom.Type ~= "Campfire Rest" then
 		return false, "Not in a Campfire Rest room."
 	end
 
-	-- Heal 30% Max HP once per visit
-	if not runToUse.ActiveRoom.CampfireUsed then
+	if choice == "Rest" then
+		if runToUse.ActiveRoom.CampfireUsed then
+			return false, "Campfire rest has already been used in this room."
+		end
+		-- Heal 30% Max HP once per visit for connected party members only
 		for _, m in runToUse.PartyMembers do
-			local heal = math.floor(m.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
-			m.Resources.HP = math.min(m.Resources.MaxHP, m.Resources.HP + heal)
+			if m.IsConnected ~= false then
+				local heal = math.floor(m.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
+				m.Resources.HP = math.min(m.Resources.MaxHP, m.Resources.HP + heal)
+			end
 		end
 		runToUse.ActiveRoom.CampfireUsed = true
 	end
@@ -1574,11 +1617,15 @@ function RunManager.completeCampfire(player: any, choice: any, isLiveAction: boo
 		end)
 	end
 
-	print(string.format("[CAMPFIREFLOW][SERVER] Campfire completed by %s: Phase=MapSelect, Rev=%d",
-		member.DisplayName, runToUse.StateRevision))
+	print(string.format("[CAMPFIREFLOW][SERVER] Campfire completed (%s) by %s: Phase=MapSelect, Rev=%d",
+		tostring(choice), member.DisplayName, runToUse.StateRevision))
+
+	local broadcastMsg = if choice == "Rest"
+		then "🔥 Rested at the Campfire (+30% HP recovered). Select the next room on the Map."
+		else "Campfire left without resting. Select the next room on the Map."
 
 	if not isIsolatedTesting or isReal then
-		RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered). Select the next room on the Map.", isReal)
+		RunManager.broadcastRunSnapshots(broadcastMsg, isReal)
 	end
 
 	return true, nil
@@ -1639,31 +1686,78 @@ function RunManager.buyMerchantItem(player: any, itemId: string, isLiveAction: b
 		return false, string.format("Not enough gold (need %d, have %d).", targetItem.Cost, member.Gold)
 	end
 
-	-- Execute purchase
-	if targetItem.ItemType == "Card" then
-		local cardDefId = targetItem.CardDefId
-		if not cardDefId then
-			return false, "Invalid card item."
-		end
-		local newCardInst = CardService.createCardInstance(cardDefId, userId)
-		if not newCardInst then
-			return false, "Failed to create card instance."
-		end
-		member.Gold -= targetItem.Cost
-		table.insert(member.Deck, newCardInst)
-		local playerRef = member.PlayerInstance or player or { UserId = userId }
-		pcall(function()
-			CardCollectionService.grantCard(playerRef, cardDefId, 1)
-		end)
-	elseif targetItem.ItemType == "Heal" then
-		member.Gold -= targetItem.Cost
-		member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + 25)
-	else
-		return false, "Unknown item type."
+	-- Double Purchase Prevention & In-Memory Lock (keyed by runId:itemId)
+	-- Shared Party Stock: stock = 1 per ware across the party; serialized under lockKey
+	local lockKey = string.format("%s:%s", tostring(runToUse.RunId), tostring(itemId))
+	if merchantPurchaseLocks[lockKey] then
+		return false, "Item purchase is currently being processed."
 	end
+	merchantPurchaseLocks[lockKey] = true
 
-	targetItem.IsPurchased = true
-	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+	local txSuccess = false
+	local txErrMsg: string? = nil
+
+	local execOk, execErr = pcall(function()
+		-- Re-verify ware status under lock
+		if targetItem.IsPurchased then
+			txSuccess = false
+			txErrMsg = "Item has already been purchased."
+			return
+		end
+
+		if member.Gold < targetItem.Cost then
+			txSuccess = false
+			txErrMsg = string.format("Not enough gold (need %d, have %d).", targetItem.Cost, member.Gold)
+			return
+		end
+
+		if targetItem.ItemType == "Card" then
+			local cardDefId = targetItem.CardDefId
+			if not cardDefId or not CardData.getCard(cardDefId) then
+				txSuccess = false
+				txErrMsg = "Invalid card definition for item."
+				return
+			end
+			local newCardInst = CardService.createCardInstance(cardDefId, userId)
+			if not newCardInst then
+				txSuccess = false
+				txErrMsg = "Failed to create card instance."
+				return
+			end
+
+			local playerRef = member.PlayerInstance or player or { UserId = userId }
+			local grantOk, grantErr = CardCollectionService.grantCard(playerRef, cardDefId, 1)
+			if not grantOk then
+				txSuccess = false
+				txErrMsg = "Failed to grant card to collection: " .. tostring(grantErr)
+				return
+			end
+
+			-- Commit mutations only after grantCard succeeds
+			member.Gold -= targetItem.Cost
+			table.insert(member.Deck, newCardInst)
+		elseif targetItem.ItemType == "Heal" then
+			member.Gold -= targetItem.Cost
+			member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + 25)
+		else
+			txSuccess = false
+			txErrMsg = "Unknown item type."
+			return
+		end
+
+		targetItem.IsPurchased = true
+		runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+		txSuccess = true
+	end)
+
+	merchantPurchaseLocks[lockKey] = nil
+
+	if not execOk then
+		return false, "Purchase transaction error: " .. tostring(execErr)
+	end
+	if not txSuccess then
+		return false, txErrMsg or "Purchase failed."
+	end
 
 	print(string.format("[SHOPFLOW][SERVER] Item %s purchased by %s for %d gold (Rev=%d)",
 		targetItem.Name, member.DisplayName, targetItem.Cost, runToUse.StateRevision))
