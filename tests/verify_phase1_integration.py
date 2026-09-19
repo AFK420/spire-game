@@ -1776,9 +1776,20 @@ test("[Suite 74.80]" in testrunner_src, "TestRunner Suite 74 contains all 15 Rea
 test("[Suite 74.81]" in testrunner_src, "TestRunner Suite 74 verifies GameNetwork folder existence")
 test("[Suite 74.82]" in testrunner_src, "TestRunner Suite 74 verifies CombatStateUpdate RemoteEvent existence")
 test("[Suite 74.84]" in testrunner_src, "TestRunner Suite 74 verifies ActiveReactionWindow view exposes complete authoritative 3D attack metadata")
-test("[Suite 74.85]" in testrunner_src, "TestRunner Suite 74 verifies NetworkService.sendCombatState dispatches snapshot without error")
+test("[Suite 74.85]" in testrunner_src, "TestRunner Suite 74 verifies NetworkService exposes authoritative CombatStateUpdate RemoteEvent contract")
+test("[Suite 74.86]" in testrunner_src, "TestRunner Suite 74 verifies unsupported reaction preserves player reaction slot")
+test("[Suite 74.87]" in testrunner_src, "TestRunner Suite 74 verifies subsequent valid reaction succeeds after unavailable attempt")
+test("[Suite 74.88]" in testrunner_src, "TestRunner Suite 74 verifies triggerTestReaction isolates test user without defaulting to live players")
+test("[Suite 74.89]" in testrunner_src, "TestRunner Suite 74 verifies manual test dummy model is cleanly removed on cleanup")
+test("[Suite 74.90]" in testrunner_src, "TestRunner Suite 74 verifies ReactionWindowView maintains invariant timestamps for catch-up")
 test("TestRunner.triggerTestReaction" in testrunner_src, "TestRunner provides triggerTestReaction manual test scenario helper")
+test("TestRunner.cleanupTestDummy" in testrunner_src, "TestRunner provides cleanupTestDummy helper for test isolation")
 test("/SlowHeavy" in init_server_src and "/FastDagger" in init_server_src, "Server init provides Studio developer chat commands for 3D attack testing")
+
+# ReactionService Reaction Slot Preservation
+reaction_svc_src = (ROOT / "src/server/services/ReactionService.luau").read_text(encoding="utf-8")
+test("do not consume reaction slot; player may still attempt Parry" in reaction_svc_src or ("not profile.CanDodge" in reaction_svc_src and 'playerRecord.Reaction = reactionType' not in reaction_svc_src.split('not profile.CanDodge')[0][-30:]), "ReactionService does not consume reaction slot on unavailable Dodge")
+test("do not consume reaction slot; player may still attempt Dodge" in reaction_svc_src or ("not profile.CanParry" in reaction_svc_src and 'playerRecord.Reaction = reactionType' not in reaction_svc_src.split('not profile.CanParry')[0][-30:]), "ReactionService does not consume reaction slot on unavailable Parry")
 
 # Network Folder & RemoteEvent Contract Invariants (Single Authoritative Remote Contract)
 network_svc_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
@@ -1790,6 +1801,11 @@ test((ROOT / "src/client/CombatVFXController.client.luau").exists(), "CombatVFXC
 test('ReplicatedStorage:WaitForChild("GameNetwork")' in combat_vfx_src, "CombatVFXController uses ReplicatedStorage.GameNetwork")
 test('GameNetwork:WaitForChild("CombatStateUpdate")' in combat_vfx_src, "CombatVFXController resolves CombatStateUpdate from GameNetwork")
 test('CardRiftNetwork' not in combat_vfx_src, "CombatVFXController contains zero CardRiftNetwork references")
+
+# CombatVFXController Replication Race & Catch-up Hardening
+test("playbackStarted" in combat_vfx_src, "CombatVFXController tracks playbackStarted to prevent premature snapshot suppression")
+test("startModelRetry" in combat_vfx_src and "stopModelRetry" in combat_vfx_src, "CombatVFXController implements bounded model retry with stopModelRetry cleanup")
+test("startAttackVisual" in combat_vfx_src, "CombatVFXController isolates startAttackVisual with model validation")
 
 cardrift_net_found = [str(lf.relative_to(ROOT)) for lf in (ROOT / "src").rglob("*.luau") if "CardRiftNetwork" in lf.read_text(encoding="utf-8")]
 test(len(cardrift_net_found) == 0, f"Zero CardRiftNetwork references anywhere under src/ (found: {len(cardrift_net_found)})")

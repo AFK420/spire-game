@@ -11,6 +11,7 @@
 	3. Renders attacks for all clients in co-op (spectators and targets alike).
 	4. Moves enemy visual models as coherent assemblies using Model:PivotTo().
 	5. Supports Melee lunges, Jump arcs, Projectiles, and AoE charge/detonations.
+	6. Handles client replication races with bounded Heartbeat retry and deterministic catch-up.
 ]=]
 
 local Players = game:GetService("Players")
@@ -32,6 +33,9 @@ local localPlayer = Players.LocalPlayer
 --------------------------------------------------------------------------------
 
 local currentActiveWindowId: string? = nil
+local playbackStarted: { [string]: boolean } = {}
+local pendingRetryConnection: RBXScriptConnection? = nil
+local pendingRetryWindow: StateTypes.ReactionWindowView? = nil
 local activeAnimations: { [string]: RBXScriptConnection } = {}
 local activeConnections: { [string]: { RBXScriptConnection } } = {}
 local activeVfxInstances: { Instance } = {}
@@ -95,7 +99,17 @@ local function findEnemyModel(enemyInstanceId: string?): Model?
 	return nil
 end
 
+local function stopModelRetry()
+	if pendingRetryConnection then
+		pendingRetryConnection:Disconnect()
+		pendingRetryConnection = nil
+	end
+	pendingRetryWindow = nil
+end
+
 local function cleanupActiveAttack(windowId: string)
+	stopModelRetry()
+
 	local conns = activeConnections[windowId]
 	if conns then
 		for _, conn in conns do
@@ -127,6 +141,7 @@ local function cleanupActiveAttack(windowId: string)
 		end
 	end
 	table.clear(enemyOriginalPivots)
+	playbackStarted[windowId] = nil
 end
 
 --------------------------------------------------------------------------------
@@ -134,14 +149,20 @@ end
 --------------------------------------------------------------------------------
 
 -- A) MELEE ATTACK: Windup -> Lunge to Target at ImpactServerTime -> Recover
-local function playMeleeAttack(win: StateTypes.ReactionWindowView)
-	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+local function playMeleeAttack(win: StateTypes.ReactionWindowView, enemyModel: Model)
 	if not enemyModel or not enemyModel.PrimaryPart then return end
 
 	local originPivot = enemyModel:GetPivot()
 	enemyOriginalPivots[enemyModel] = originPivot
 
-	local targetPos = win.TargetWorldPosition or win.TargetWorldPos or Vector3.new(0, 1.2, 16)
+	local targetPos = win.TargetWorldPosition or win.TargetWorldPos
+	if not targetPos then
+		if localPlayer and localPlayer.Character and localPlayer.Character.PrimaryPart then
+			targetPos = localPlayer.Character.PrimaryPart.Position
+		else
+			targetPos = Vector3.new(0, 1.2, 16)
+		end
+	end
 	local dir = (targetPos - originPivot.Position)
 	local dist = dir.Magnitude
 	local unitDir = if dist > 0.1 then dir.Unit else Vector3.new(0, 0, 1)
@@ -202,14 +223,20 @@ local function playMeleeAttack(win: StateTypes.ReactionWindowView)
 end
 
 -- B) JUMP ATTACK: Crouch -> High Leap Arc -> Slam onto Target at ImpactServerTime -> Recover
-local function playJumpAttack(win: StateTypes.ReactionWindowView)
-	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+local function playJumpAttack(win: StateTypes.ReactionWindowView, enemyModel: Model)
 	if not enemyModel or not enemyModel.PrimaryPart then return end
 
 	local originPivot = enemyModel:GetPivot()
 	enemyOriginalPivots[enemyModel] = originPivot
 
-	local targetPos = win.TargetWorldPosition or win.TargetWorldPos or Vector3.new(0, 1.2, 16)
+	local targetPos = win.TargetWorldPosition or win.TargetWorldPos
+	if not targetPos then
+		if localPlayer and localPlayer.Character and localPlayer.Character.PrimaryPart then
+			targetPos = localPlayer.Character.PrimaryPart.Position
+		else
+			targetPos = Vector3.new(0, 1.2, 16)
+		end
+	end
 	local crouchPivot = originPivot * CFrame.new(0, -1.2, 0.4) * CFrame.Angles(math.rad(18), 0, 0)
 	local slamPivot = CFrame.new(targetPos + Vector3.new(0, 1.0, 0)) * CFrame.Angles(math.rad(25), 0, 0)
 
@@ -292,9 +319,8 @@ local function playJumpAttack(win: StateTypes.ReactionWindowView)
 	end
 end
 
--- C) PROJECTILE ATTACK: Cast Windup -> Single 3D Projectile Flights to Target -> Impact at ImpactServerTime
-local function playProjectileAttack(win: StateTypes.ReactionWindowView)
-	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+-- C) PROJECTILE ATTACK: Cast Windup -> Single 3D Projectile Flight to Target -> Impact at ImpactServerTime
+local function playProjectileAttack(win: StateTypes.ReactionWindowView, enemyModel: Model?)
 	local originPivot = (enemyModel and enemyModel:GetPivot()) or CFrame.new(0, 4, -16)
 	if enemyModel then
 		enemyOriginalPivots[enemyModel] = originPivot
@@ -311,22 +337,21 @@ local function playProjectileAttack(win: StateTypes.ReactionWindowView)
 	local recoveryDuration = win.RecoveryDuration or 0.30
 
 	local container = getVfxContainer()
+	local windowId = win.WindowId
 
 	-- Caster wind-up pose
 	if enemyModel and enemyModel.PrimaryPart then
 		local castCFrame = originPivot * CFrame.new(0, 0.6, -0.8) * CFrame.Angles(math.rad(-12), 0, 0)
-		local tCast = TweenService:Create(enemyModel.PrimaryPart :: BasePart, TweenInfo.new(castWindup, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = castCFrame })
+		local now = Workspace:GetServerTimeNow()
+		local remainingWindup = math.max(0.05, flightStartTime - now)
+		local tCast = TweenService:Create(enemyModel.PrimaryPart :: BasePart, TweenInfo.new(remainingWindup, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { CFrame = castCFrame })
 		tCast:Play()
 	end
 
-	-- Spawn single physical 3D projectile at flightStartTime
-	local windowId = win.WindowId
-	local proj: Part? = nil
-
-	task.delay(math.max(0, flightStartTime - Workspace:GetServerTimeNow()), function()
+	local function launchProjectile()
 		if currentActiveWindowId ~= windowId then return end
 
-		proj = Instance.new("Part")
+		local proj = Instance.new("Part")
 		proj.Name = "AttackProjectile_" .. windowId
 		proj.Shape = Enum.PartType.Ball
 		proj.Size = Vector3.new(2.2, 2.2, 2.2)
@@ -344,7 +369,7 @@ local function playProjectileAttack(win: StateTypes.ReactionWindowView)
 		light.Range = 16
 		light.Parent = proj
 
-		-- RenderStepped Heartbeat flight loop for exact impact arrival
+		-- Heartbeat flight loop for exact impact arrival synchronized to server time
 		local flightConnection: RBXScriptConnection? = nil
 		flightConnection = RunService.Heartbeat:Connect(function()
 			if not proj or not proj.Parent then
@@ -382,12 +407,18 @@ local function playProjectileAttack(win: StateTypes.ReactionWindowView)
 			trackConnection(windowId, flightConnection)
 			activeAnimations[windowId .. "_proj"] = flightConnection
 		end
-	end)
+	end
+
+	local now = Workspace:GetServerTimeNow()
+	if now >= flightStartTime then
+		launchProjectile()
+	else
+		task.delay(flightStartTime - now, launchProjectile)
+	end
 end
 
 -- D) AOE ATTACK: Ground Charge Expansion -> Detonation at ImpactServerTime -> Fade
-local function playAoEAttack(win: StateTypes.ReactionWindowView)
-	local enemyModel = findEnemyModel(win.EnemyInstanceId)
+local function playAoEAttack(win: StateTypes.ReactionWindowView, enemyModel: Model?)
 	local originPivot = (enemyModel and enemyModel:GetPivot()) or CFrame.new(0, 4, -16)
 	if enemyModel then
 		enemyOriginalPivots[enemyModel] = originPivot
@@ -416,34 +447,127 @@ local function playAoEAttack(win: StateTypes.ReactionWindowView)
 	aoeZone.Parent = container
 	table.insert(activeVfxInstances, aoeZone)
 
-	local tExpand = TweenService:Create(aoeZone, TweenInfo.new(totalChargeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-		Size = Vector3.new(0.2, 45, 45),
-		Transparency = 0.35,
-	})
-	tExpand:Play()
-
-	-- Detonation at impact moment
 	local windowId = win.WindowId
-	local delayUntilImpact = math.max(0, impactTime - Workspace:GetServerTimeNow())
-	task.delay(delayUntilImpact, function()
-		if currentActiveWindowId ~= windowId then return end
+	local aoeConn: RBXScriptConnection? = nil
+	local detonated = false
 
-		-- Flash explosion
-		local tDetonate = TweenService:Create(aoeZone, TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
-			Size = Vector3.new(0.8, 55, 55),
-			Color = Color3.fromRGB(255, 220, 100),
-			Transparency = 1,
-		})
-		tDetonate:Play()
-		task.delay(0.25, function()
-			if aoeZone and aoeZone.Parent then aoeZone:Destroy() end
-		end)
+	aoeConn = RunService.Heartbeat:Connect(function()
+		if not aoeZone or not aoeZone.Parent then
+			if aoeConn then aoeConn:Disconnect() end
+			return
+		end
+
+		local now = Workspace:GetServerTimeNow()
+		local alpha = math.clamp((now - startTime) / totalChargeTime, 0, 1)
+		local quadAlpha = alpha * alpha
+		local diam = 4 + (41 * quadAlpha)
+		aoeZone.Size = Vector3.new(0.2, diam, diam)
+		aoeZone.Transparency = 0.65 - (0.30 * quadAlpha)
+
+		if now >= impactTime and not detonated then
+			detonated = true
+			if aoeConn then
+				aoeConn:Disconnect()
+				activeAnimations[windowId .. "_aoe"] = nil
+			end
+
+			-- Flash explosion
+			local tDetonate = TweenService:Create(aoeZone, TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+				Size = Vector3.new(0.8, 55, 55),
+				Color = Color3.fromRGB(255, 220, 100),
+				Transparency = 1,
+			})
+			tDetonate:Play()
+			task.delay(0.25, function()
+				if aoeZone and aoeZone.Parent then aoeZone:Destroy() end
+			end)
+		end
 	end)
+
+	if aoeConn then
+		trackConnection(windowId, aoeConn)
+		activeAnimations[windowId .. "_aoe"] = aoeConn
+	end
 end
 
 --------------------------------------------------------------------------------
--- Reaction Window Synchronization
+-- Reaction Window Synchronization & Model Discovery Retry
 --------------------------------------------------------------------------------
+
+local function startAttackVisual(win: StateTypes.ReactionWindowView): boolean
+	local enemyInstanceId = win.EnemyInstanceId
+	local enemyModel = findEnemyModel(enemyInstanceId)
+
+	local aType = win.AttackType
+	if aType == "Melee" or aType == "Jump" then
+		-- Melee and Jump attacks strictly require the enemy model and its PrimaryPart
+		if not enemyModel or not enemyModel.PrimaryPart then
+			return false
+		end
+	elseif aType == "Projectile" or aType == "AoE" then
+		-- Projectile and AoE prefer having the enemy model, but can proceed if model is missing at/after flight/charge time
+		local now = Workspace:GetServerTimeNow()
+		local startTime = win.AttackStartServerTime
+		local impactTime = win.ImpactServerTime
+		local triggerTime = if aType == "Projectile"
+			then (startTime + math.max(0.15, (impactTime - startTime) * 0.25))
+			else impactTime
+
+		if (not enemyModel or not enemyModel.PrimaryPart) and now < triggerTime then
+			return false
+		end
+	end
+
+	playbackStarted[win.WindowId] = true
+
+	if aType == "Melee" then
+		playMeleeAttack(win, enemyModel :: Model)
+	elseif aType == "Jump" then
+		playJumpAttack(win, enemyModel :: Model)
+	elseif aType == "Projectile" then
+		playProjectileAttack(win, enemyModel)
+	elseif aType == "AoE" then
+		playAoEAttack(win, enemyModel)
+	else
+		warn(string.format("[CombatVFXController] Unknown attack type '%s' for attack '%s'; defaulting to Melee presentation.", tostring(aType), tostring(win.AttackName)))
+		if enemyModel and enemyModel.PrimaryPart then
+			playMeleeAttack(win, enemyModel)
+		else
+			return false
+		end
+	end
+
+	return true
+end
+
+local function startModelRetry(win: StateTypes.ReactionWindowView)
+	if pendingRetryWindow and pendingRetryWindow.WindowId == win.WindowId and pendingRetryConnection then
+		return
+	end
+
+	stopModelRetry()
+	pendingRetryWindow = win
+
+	local closeDeadline = win.ReactionCloseServerTime or (win.ImpactServerTime + (win.RecoveryDuration or 0.35) + 0.1)
+
+	pendingRetryConnection = RunService.Heartbeat:Connect(function()
+		if currentActiveWindowId ~= win.WindowId then
+			stopModelRetry()
+			return
+		end
+
+		local now = Workspace:GetServerTimeNow()
+		if now > closeDeadline then
+			stopModelRetry()
+			return
+		end
+
+		if startAttackVisual(win) then
+			stopModelRetry()
+			return
+		end
+	end)
+end
 
 local function onReactionWindowChanged(win: StateTypes.ReactionWindowView?)
 	if not win then
@@ -454,32 +578,25 @@ local function onReactionWindowChanged(win: StateTypes.ReactionWindowView?)
 		return
 	end
 
-	if currentActiveWindowId == win.WindowId then
+	-- If this exact window already successfully started playback, ignore duplicate snapshot
+	if currentActiveWindowId == win.WindowId and playbackStarted[win.WindowId] then
 		return
 	end
 
-	-- Clean up prior attack visual if active
-	if currentActiveWindowId then
+	-- If a different window was active, clean it up
+	if currentActiveWindowId and currentActiveWindowId ~= win.WindowId then
 		cleanupActiveAttack(currentActiveWindowId)
 	end
 
 	currentActiveWindowId = win.WindowId
 
-	-- Dispatch 3D presentation based on authoritative attack type
-	local aType = win.AttackType
-	if aType == "Melee" then
-		playMeleeAttack(win)
-	elseif aType == "Jump" then
-		playJumpAttack(win)
-	elseif aType == "Projectile" then
-		playProjectileAttack(win)
-	elseif aType == "AoE" then
-		playAoEAttack(win)
-	else
-		-- Unknown or unspecified attack type: log warning and safely default to Melee
-		warn(string.format("[CombatVFXController] Unknown attack type '%s' for attack '%s'; defaulting to Melee presentation.", tostring(aType), tostring(win.AttackName)))
-		playMeleeAttack(win)
+	-- Attempt to start visual immediately
+	if startAttackVisual(win) then
+		return
 	end
+
+	-- Enemy model not found yet. Begin bounded retry via Heartbeat.
+	startModelRetry(win)
 end
 
 --------------------------------------------------------------------------------

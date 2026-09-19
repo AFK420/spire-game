@@ -341,17 +341,17 @@ function ReactionService.submitReaction(
 	end
 
 	local timeDelta = evalTimestamp - impactTime -- Negative = Early, Positive = Late
-	playerRecord.Reaction = reactionType
-	playerRecord.SubmittedAt = evalTimestamp
-	playerRecord.TimeDelta = timeDelta
 
 	-- 3. Evaluate Dodge Timing
 	if reactionType == "Dodge" then
 		if not profile.CanDodge then
-			playerRecord.Result = "Unavailable"
-			playerRecord.Judgement = "Unavailable"
+			-- Unavailable: do not consume reaction slot; player may still attempt Parry if valid
 			return false, "This attack cannot be dodged!", "Unavailable", "Unavailable", timeDelta
 		end
+
+		playerRecord.Reaction = reactionType
+		playerRecord.SubmittedAt = evalTimestamp
+		playerRecord.TimeDelta = timeDelta
 
 		local absDelta = math.abs(timeDelta)
 		if absDelta <= profile.DodgePerfectTolerance then
@@ -383,10 +383,13 @@ function ReactionService.submitReaction(
 	-- 4. Evaluate Parry Timing
 	elseif reactionType == "Parry" then
 		if not profile.CanParry then
-			playerRecord.Result = "Unavailable"
-			playerRecord.Judgement = "Unavailable"
+			-- Unavailable: do not consume reaction slot; player may still attempt Dodge if valid
 			return false, "This attack cannot be parried!", "Unavailable", "Unavailable", timeDelta
 		end
+
+		playerRecord.Reaction = reactionType
+		playerRecord.SubmittedAt = evalTimestamp
+		playerRecord.TimeDelta = timeDelta
 
 		local absDelta = math.abs(timeDelta)
 		if absDelta <= profile.ParryPerfectTolerance then
@@ -426,8 +429,6 @@ function ReactionService.submitReaction(
 		end
 	end
 
-	playerRecord.Result = "Miss"
-	playerRecord.Judgement = "Miss"
 	return false, "Unknown reaction type.", "Miss", "Miss", 0
 end
 

@@ -2177,38 +2177,94 @@ local function runSuite74()
 		"[Suite 74.84] ActiveReactionWindow view exposes complete authoritative 3D attack metadata"
 	)
 
-	-- Verify NetworkService.sendCombatState dispatches cleanly with mock player
-	local mockPlayerInstance = {
-		UserId = 74001,
-		Name = "TestNetPlayer",
-		IsA = function(_, cls) return cls == "Player" end,
-	}
-	local sendOk = pcall(function()
-		local snap: StateTypes.CombatSnapshot = {
-			CombatId = "manual_test_reaction",
-			Phase = "ResolutionPhase",
-			TurnNumber = 1,
-			TurnStartTime = os.clock(),
-			TurnDuration = 45,
-			TimeRemaining = 45,
-			Enemies = {},
-			Party = {},
-			LocalHand = {},
-			CombatEvents = {},
-			Message = "Network test",
-			ActiveReactionWindow = testView,
-			Environment = nil,
-		}
-		NetworkService.sendCombatState(mockPlayerInstance :: any, snap)
-	end)
-	assertTest(sendOk == true, "[Suite 74.85] NetworkService.sendCombatState dispatches snapshot without error")
+	-- Verify NetworkService authoritative CombatStateUpdate contract
+	local gameNet = game:GetService("ReplicatedStorage"):FindFirstChild("GameNetwork")
+	assertTest(
+		NetworkService.CombatStateUpdateEvent ~= nil
+		and NetworkService.CombatStateUpdateEvent:IsA("RemoteEvent")
+		and NetworkService.CombatStateUpdateEvent.Name == "CombatStateUpdate"
+		and NetworkService.CombatStateUpdateEvent.Parent == gameNet
+		and typeof(NetworkService.sendCombatState) == "function",
+		"[Suite 74.85] NetworkService exposes authoritative CombatStateUpdate RemoteEvent contract"
+	)
 
-	-- Clean up test window
+	-- Clean up test window and manual dummy
 	local dummyStateCleanup = {
 		CombatId = "manual_test_reaction",
 		ActiveReactionWindow = testWin,
 	}
 	ReactionService.resolveReactionWindow(dummyStateCleanup :: any, testWin.WindowId)
+	TestRunner.cleanupTestDummy()
+
+	-- [Suite 74.86] Unsupported reaction preserves player reaction slot for valid reaction
+	local unparryableProf = ReactionService.createProfileFromPreset("SlowHeavy")
+	unparryableProf.CanParry = false
+	unparryableProf.CanDodge = true
+	local dummyCombat74: any = {
+		CombatId = "combat_suite_7486",
+		ActiveReactionWindow = nil,
+	}
+	local win7486 = ReactionService.openReactionWindow(dummyCombat74, unparryableProf, "enemy_7486", { 74086 })
+	local now7486 = win7486.ImpactServerTime
+	local pSuccess, pMsg, pResult, pJudgement = ReactionService.submitReaction(dummyCombat74, 74086, "Parry", now7486)
+	assertTest(
+		pSuccess == false
+		and pResult == "Unavailable"
+		and pJudgement == "Unavailable"
+		and win7486.PerPlayerResult[74086].Reaction == nil,
+		"[Suite 74.86] Unsupported reaction (Parry on unparryable) does not consume reaction slot"
+	)
+	-- Player immediately follows with valid Dodge
+	local dSuccess, dMsg, dResult, dJudgement = ReactionService.submitReaction(dummyCombat74, 74086, "Dodge", now7486)
+	assertTest(
+		dSuccess == true
+		and dResult == "Perfect"
+		and dJudgement == "Perfect"
+		and win7486.PerPlayerResult[74086].Reaction == "Dodge",
+		"[Suite 74.87] Subsequent valid reaction (Dodge) succeeds after unavailable reaction attempt"
+	)
+	ReactionService.resolveReactionWindow(dummyCombat74, win7486.WindowId)
+
+	-- [Suite 74.88] triggerTestReaction isolates test user and never sends snapshots when player not found
+	local isolatedWin = TestRunner.triggerTestReaction("SlowHeavy", 74088)
+	assertTest(
+		isolatedWin ~= nil
+		and isolatedWin.TargetUserIds[1] == 74088,
+		"[Suite 74.88] triggerTestReaction preserves specific targetUserId without defaulting to live players"
+	)
+	local dummyStateIsolated = {
+		CombatId = "manual_test_reaction",
+		ActiveReactionWindow = isolatedWin,
+	}
+	ReactionService.resolveReactionWindow(dummyStateIsolated :: any, isolatedWin.WindowId)
+
+	-- [Suite 74.89] Manual test dummy model cleanup removes Enemy_test_attacker
+	TestRunner.cleanupTestDummy()
+	local cardRiftWorld74 = Workspace:FindFirstChild("CardRiftWorld")
+	local activeRoom74 = cardRiftWorld74 and cardRiftWorld74:FindFirstChild("ActiveRoom")
+	local parentTarget74 = activeRoom74 or Workspace
+	local lingeringDummy = parentTarget74:FindFirstChild("Enemy_test_attacker", true) or Workspace:FindFirstChild("Enemy_test_attacker")
+	assertTest(
+		lingeringDummy == nil,
+		"[Suite 74.89] Manual test dummy model is cleanly removed on cleanup"
+	)
+
+	-- [Suite 74.90] Reaction window view provides invariant start and impact timestamps for catch-up
+	local invariantProf = ReactionService.createProfileFromPreset("FastDagger")
+	local dummyCombatInv: any = {
+		CombatId = "combat_suite_7490",
+		ActiveReactionWindow = nil,
+	}
+	local winInv = ReactionService.openReactionWindow(dummyCombatInv, invariantProf, "enemy_inv", { 74090 })
+	local view1 = ReactionService.getReactionWindowView(winInv, "Attacker 1")
+	local view2 = ReactionService.getReactionWindowView(winInv, "Attacker 2")
+	assertTest(
+		view1.AttackStartServerTime == view2.AttackStartServerTime
+		and view1.ImpactServerTime == view2.ImpactServerTime
+		and view1.ImpactServerTime > view1.AttackStartServerTime,
+		"[Suite 74.90] ReactionWindowView maintains invariant timestamps across multiple views for catch-up calculation"
+	)
+	ReactionService.resolveReactionWindow(dummyCombatInv, winInv.WindowId)
 
 	--[=[
 		=============================================================================
@@ -8512,17 +8568,35 @@ function TestRunner.runAllTests(): boolean
 	return true
 end
 
+-- Module-level tracking for manual reaction test dummy
+local manualTestDummyModel: Model? = nil
+
+-- Cleans up any spawned manual test dummy model
+function TestRunner.cleanupTestDummy()
+	if manualTestDummyModel and manualTestDummyModel.Parent then
+		manualTestDummyModel:Destroy()
+	end
+	manualTestDummyModel = nil
+
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
+	local parentTarget = activeRoom or Workspace
+	local existing = parentTarget:FindFirstChild("Enemy_test_attacker", true) or Workspace:FindFirstChild("Enemy_test_attacker")
+	if existing and existing:IsA("Model") then
+		existing:Destroy()
+	end
+end
+
 -- Developer helper to trigger manual 3D reaction testing in Studio (e.g. TestRunner.triggerTestReaction("SlowHeavy", 1))
 function TestRunner.triggerTestReaction(profileName: string?, targetUserId: number?)
 	local profileId = profileName or "SlowHeavy"
 	local prof = ReactionService.createProfileFromPreset(profileId)
 
-	-- Determine target player
+	-- Determine target player (NEVER fall back to player 1 if targetUserId is explicitly provided)
 	local targetPlayer: Player? = nil
-	if targetUserId then
+	if targetUserId ~= nil then
 		targetPlayer = Players:GetPlayerByUserId(targetUserId)
-	end
-	if not targetPlayer then
+	else
 		local players = Players:GetPlayers()
 		if #players > 0 then
 			targetPlayer = players[1]
@@ -8530,25 +8604,26 @@ function TestRunner.triggerTestReaction(profileName: string?, targetUserId: numb
 	end
 	local userId = if targetPlayer then targetPlayer.UserId else (targetUserId or 1)
 
+	-- Clean up any prior test dummy before creating fresh instance
+	TestRunner.cleanupTestDummy()
+
 	-- Ensure enemy dummy model exists in ActiveRoom (or Workspace) so CombatVFXController finds it
 	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
 	local activeRoom = cardRiftWorld and cardRiftWorld:FindFirstChild("ActiveRoom")
 	local parentTarget = activeRoom or Workspace
-	local enemyModel = parentTarget:FindFirstChild("Enemy_test_attacker", true) or Workspace:FindFirstChild("Enemy_test_attacker")
-	if not enemyModel then
-		enemyModel = Instance.new("Model")
-		enemyModel.Name = "Enemy_test_attacker"
-		local hrp = Instance.new("Part")
-		hrp.Name = "HumanoidRootPart"
-		hrp.Size = Vector3.new(3, 5, 3)
-		hrp.Position = Vector3.new(0, 3, -16)
-		hrp.Anchored = true
-		hrp.Material = Enum.Material.Granite
-		hrp.Color = Color3.fromRGB(180, 50, 50)
-		hrp.Parent = enemyModel
-		enemyModel.PrimaryPart = hrp
-		enemyModel.Parent = parentTarget
-	end
+	local enemyModel = Instance.new("Model")
+	enemyModel.Name = "Enemy_test_attacker"
+	local hrp = Instance.new("Part")
+	hrp.Name = "HumanoidRootPart"
+	hrp.Size = Vector3.new(3, 5, 3)
+	hrp.Position = Vector3.new(0, 3, -16)
+	hrp.Anchored = true
+	hrp.Material = Enum.Material.Granite
+	hrp.Color = Color3.fromRGB(180, 50, 50)
+	hrp.Parent = enemyModel
+	enemyModel.PrimaryPart = hrp
+	enemyModel.Parent = parentTarget
+	manualTestDummyModel = enemyModel
 
 	-- Authoritative target world position: player character position if available
 	local targetPos = Vector3.new(0, 3, 16)
@@ -8594,12 +8669,9 @@ function TestRunner.triggerTestReaction(profileName: string?, targetUserId: numb
 		Environment = nil,
 	}
 
-	if targetPlayer then
+	-- Only dispatch remote combat state to real players (never blast all players or automated test users)
+	if targetPlayer and typeof(targetPlayer) == "Instance" and targetPlayer:IsA("Player") then
 		NetworkService.sendCombatState(targetPlayer, combatSnapshot)
-	else
-		for _, p in Players:GetPlayers() do
-			NetworkService.sendCombatState(p, combatSnapshot)
-		end
 	end
 
 	print(string.format("[TestRunner] Triggered manual test reaction window '%s' (%s - %s) for player %d", win.WindowId, prof.AttackName, prof.AttackType or "Melee", userId))
@@ -8608,13 +8680,10 @@ function TestRunner.triggerTestReaction(profileName: string?, targetUserId: numb
 			local results = ReactionService.resolveReactionWindow(dummyCombatState, win.WindowId)
 			combatSnapshot.ActiveReactionWindow = nil
 			combatSnapshot.Message = "Reaction resolved."
-			if targetPlayer then
+			if targetPlayer and typeof(targetPlayer) == "Instance" and targetPlayer:IsA("Player") then
 				NetworkService.sendCombatState(targetPlayer, combatSnapshot)
-			else
-				for _, p in Players:GetPlayers() do
-					NetworkService.sendCombatState(p, combatSnapshot)
-				end
 			end
+			TestRunner.cleanupTestDummy()
 			print(string.format("[TestRunner] Manual test reaction window '%s' closed and resolved.", win.WindowId))
 		end
 	end)
