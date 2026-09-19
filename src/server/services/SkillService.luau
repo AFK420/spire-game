@@ -447,28 +447,45 @@ function SkillService.useSkill(
 	end
 
 	-- 5. Pre-validate effect types and conditions before capturing snapshot or executing
+	local anyApplicable = false
 	for _, eff in def.Effects do
 		if not EffectResolver.isSupportedEffectType(eff.Type) then
 			return false, "Unsupported effect type: " .. tostring(eff.Type)
 		end
+		local conditionApplies = true
 		if eff.Condition and eff.Condition ~= "" then
-			if eff.Condition ~= "TargetDowned" and eff.Condition ~= "TargetLiving" and eff.Condition ~= "LowHP" then
+			if eff.Condition == "TargetDowned" then
+				conditionApplies = (resolvedTarget.PlayerTarget ~= nil and resolvedTarget.PlayerTarget.IsDowned == true)
+			elseif eff.Condition == "TargetLiving" then
+				conditionApplies = (resolvedTarget.PlayerTarget == nil or resolvedTarget.PlayerTarget.IsDowned ~= true)
+			elseif eff.Condition == "LowHP" then
+				local p = resolvedTarget.PlayerTarget or playerState
+				conditionApplies = (p.Resources.HP < (p.Resources.MaxHP * 0.5))
+			else
 				return false, "Unknown effect condition: " .. tostring(eff.Condition)
 			end
 		end
-		if eff.Type == "Damage" then
-			if not resolvedTarget.EnemyTarget or resolvedTarget.EnemyTarget.HP <= 0 then
-				return false, "No living enemy target."
-			end
-		elseif eff.Type == "Heal" then
-			if resolvedTarget.PlayerTarget and resolvedTarget.PlayerTarget.IsDowned then
-				return false, "Cannot heal downed player."
-			end
-		elseif eff.Type == "Revive" then
-			if resolvedTarget.PlayerTarget and not resolvedTarget.PlayerTarget.IsDowned then
-				return false, "Player is not downed."
+
+		if conditionApplies then
+			anyApplicable = true
+			if eff.Type == "Damage" then
+				if not resolvedTarget.EnemyTarget or resolvedTarget.EnemyTarget.HP <= 0 then
+					return false, "No living enemy target."
+				end
+			elseif eff.Type == "Heal" then
+				if resolvedTarget.PlayerTarget and resolvedTarget.PlayerTarget.IsDowned then
+					return false, "Cannot heal downed player."
+				end
+			elseif eff.Type == "Revive" then
+				if resolvedTarget.PlayerTarget and not resolvedTarget.PlayerTarget.IsDowned then
+					return false, "Player is not downed."
+				end
 			end
 		end
+	end
+
+	if #def.Effects > 0 and not anyApplicable then
+		return false, "No applicable skill effects for target state."
 	end
 
 	-- 6. Collect modifiers deterministically

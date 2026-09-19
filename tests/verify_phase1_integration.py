@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "authority_room_transactions_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = authority_room_transactions_20260919")
-test('BUILD_NAME = "Final Authority & Room Transaction Hardening"' in build_info_src, "BuildInfo declares BUILD_NAME = Final Authority & Room Transaction Hardening")
+test('BUILD_ID = "first_aid_transactions_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = first_aid_transactions_20260919")
+test('BUILD_NAME = "First Aid Transaction Semantics & Effect Fail-Closed"' in build_info_src, "BuildInfo declares BUILD_NAME = First Aid Transaction Semantics & Effect Fail-Closed")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -1861,6 +1861,63 @@ test("TelegraphDuration: Intentional visible anticipation" in reaction_data_src,
 
 # README Class Claims Audit
 test("Class Implementation & Combat Gimmick Roadmap Status" in readme_src, "README documents implemented vs roadmap class gimmicks without misleading claims")
+
+# --- [Check 70] First Aid Transaction Semantics, Effect Fail-Closed & Room Failure Injection ---
+print("\n--- [Check 70] First Aid Transaction Semantics, Effect Fail-Closed & Room Failure Injection ---")
+effect_resolver_src = (ROOT / "src/server/services/EffectResolver.luau").read_text(encoding="utf-8")
+combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+skill_svc_src = (ROOT / "src/server/services/SkillService.luau").read_text(encoding="utf-8")
+world_room_src = (ROOT / "src/server/services/WorldRoomService.luau").read_text(encoding="utf-8")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+
+# Generic Condition Pre-Evaluation Semantics
+test("function EffectResolver.evaluateCondition(" in effect_resolver_src, "EffectResolver exports evaluateCondition")
+test("Unknown condition '%s'. Failing closed." in effect_resolver_src, "EffectResolver.evaluateCondition fails closed on unknown condition")
+test("Pre-evaluate conditions against pre-action target state" in effect_resolver_src or "Pre-evaluate condition" in effect_resolver_src, "EffectResolver pre-evaluates conditions against pre-action target state")
+test("prep.isSatisfied" in effect_resolver_src, "EffectResolver executes effects using pre-evaluated condition satisfaction")
+test('card == "FirstAid"' not in effect_resolver_src and 'cardDef.Id == "FirstAid"' not in effect_resolver_src, "EffectResolver contains 0 FirstAid hardcoding")
+
+# ApplyStatus Fail-Closed Semantics
+test("local appliedInst = StatusService.applyStatus(" in effect_resolver_src, "EffectResolver.ApplyStatus captures StatusService.applyStatus return value")
+test("if not appliedInst then" in effect_resolver_src, "EffectResolver.ApplyStatus guards against nil StatusInstance")
+test("Failed to apply status '%s': unknown or unimplemented" in effect_resolver_src, "EffectResolver.ApplyStatus returns explicit error for invalid/unimplemented status")
+
+# CombatService & SkillService Condition Applicability
+test("conditionApplies = (targetPlayer ~= nil and targetPlayer.IsDowned == true)" in combat_svc_src, "CombatService checks TargetDowned applicability")
+test("conditionApplies = (targetPlayer == nil or targetPlayer.IsDowned ~= true)" in combat_svc_src, "CombatService checks TargetLiving applicability")
+test("conditionApplies = (resolvedTarget.PlayerTarget ~= nil and resolvedTarget.PlayerTarget.IsDowned == true)" in skill_svc_src, "SkillService checks TargetDowned applicability")
+test("conditionApplies = (resolvedTarget.PlayerTarget == nil or resolvedTarget.PlayerTarget.IsDowned ~= true)" in skill_svc_src, "SkillService checks TargetLiving applicability")
+
+# Room Failure Injection Invariants
+test("WorldRoomService.setFailureInjectionForTesting" in world_room_src, "WorldRoomService exposes setFailureInjectionForTesting")
+test("if failureInjectionEnabled then" in world_room_src, "WorldRoomService triggers failure injection inside loadRoom pcall")
+test("error(failureInjectionMessage)" in world_room_src, "WorldRoomService raises failureInjectionMessage before room publish")
+
+# Suite 76 Extended Assertions
+test("[Suite 76.26]" in testrunner_src, "Suite 76 tests loadRoom fails when failure injection is enabled")
+test("[Suite 76.28]" in testrunner_src, "Suite 76 tests getActiveRoomModel returns nil on failed room load")
+test("[Suite 76.29]" in testrunner_src, "Suite 76 tests zero ActiveRoom published to CardRiftWorld on failed load")
+test("[Suite 76.32]" in testrunner_src, "Suite 76 tests travelToNode fails when room construction fails")
+test("[Suite 76.33]" in testrunner_src, "Suite 76 tests travel failure rollback leaves Phase as MapSelect")
+test("[Suite 76.34]" in testrunner_src, "Suite 76 tests travel failure preserves CurrentNodeId as nil")
+test("[Suite 76.36]" in testrunner_src, "Suite 76 tests travel failure does not mark dungeon node cleared")
+test("[Suite 76.37]" in testrunner_src, "Suite 76 tests failure injection successfully disabled")
+test("[Suite 76.39]" in testrunner_src, "Suite 76 tests FirstAid on living ally succeeds")
+test("[Suite 76.40]" in testrunner_src, "Suite 76 tests FirstAid increases living ally HP by 30")
+test("[Suite 76.41]" in testrunner_src, "Suite 76 tests living ally remains not downed after FirstAid")
+test("[Suite 76.44]" in testrunner_src, "Suite 76 tests FirstAid on downed ally succeeds without rollback")
+test("[Suite 76.45]" in testrunner_src, "Suite 76 tests downed ally IsDowned cleared to false")
+test("[Suite 76.46]" in testrunner_src, "Suite 76 tests downed ally HP becomes exactly 30 without double-healing")
+test("[Suite 76.49]" in testrunner_src, "Suite 76 tests FirstAid fails when player has insufficient energy")
+test("[Suite 76.51]" in testrunner_src, "Suite 76 tests player energy remains unchanged on insufficient energy")
+test("[Suite 76.54]" in testrunner_src, "Suite 76 tests card remains in player hand after energy rejection")
+test("[Suite 76.56]" in testrunner_src, "Suite 76 tests valid Poison ApplyStatus succeeds")
+test("[Suite 76.57]" in testrunner_src, "Suite 76 tests unknown status ApplyStatus fails closed")
+test("[Suite 76.59]" in testrunner_src, "Suite 76 tests unimplemented status (Shock) ApplyStatus fails closed")
+test("[Suite 76.60]" in testrunner_src, "Suite 76 tests card with invalid status effect fails execution")
+test("[Suite 76.61]" in testrunner_src, "Suite 76 tests energy rolled back on failed status card execution")
+test("[Suite 76.62]" in testrunner_src, "Suite 76 tests enemy HP undamaged and rolled back on transaction rollback")
+test("[Suite 76.63]" in testrunner_src, "Suite 76 tests bad card remains in hand after transaction rollback")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

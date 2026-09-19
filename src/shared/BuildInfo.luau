@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "authority_room_transactions_20260919",
-	BUILD_NAME = "Final Authority & Room Transaction Hardening",
+	BUILD_ID = "first_aid_transactions_20260919",
+	BUILD_NAME = "First Aid Transaction Semantics & Effect Fail-Closed",
 }
 
 return BuildInfo

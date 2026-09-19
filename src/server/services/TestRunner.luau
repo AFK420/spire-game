@@ -1454,8 +1454,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "authority_room_transactions_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "Final Authority & Room Transaction Hardening", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "first_aid_transactions_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "First Aid Transaction Semantics & Effect Fail-Closed", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -2437,7 +2437,197 @@ local function runSuite76()
 	assert(heavyProf, "heavyProf exists")
 	assertTest(heavyProf.TelegraphDuration <= heavyProf.ImpactDelay, "[Suite 76.25] SlowHeavy TelegraphDuration <= ImpactDelay")
 
+	-- 76.9: Deterministic Room Failure-Injection & Rollback Verification
 	WorldRoomService.cleanupRoom()
+	WorldRoomService.setFailureInjectionForTesting(true, "Simulated room construction failure for testing.")
+
+	local failRoomOk, failRoomErr = pcall(function()
+		return WorldRoomService.loadRoom("Combat", 1, 1, "enc_test_76_fail", "None", 76002)
+	end)
+	assertTest(failRoomOk == false, "[Suite 76.26] WorldRoomService.loadRoom fails when failure injection is enabled")
+	assertTest(string.find(tostring(failRoomErr), "Simulated room construction failure") ~= nil, "[Suite 76.27] loadRoom failure error matches injected message")
+	assertTest(WorldRoomService.getActiveRoomModel() == nil, "[Suite 76.28] getActiveRoomModel returns nil on failed room load")
+	local failWorld = Workspace:FindFirstChild("CardRiftWorld")
+	assertTest(failWorld == nil or failWorld:FindFirstChild("ActiveRoom") == nil, "[Suite 76.29] No ActiveRoom published to CardRiftWorld on failed load")
+
+	-- 76.10: travelToNode rollback under failure injection
+	RunManager.resetRunForTesting()
+	local failRmRun = RunManager.getRunState()
+	local pTravel = { UserId = 76020, Name = "PartyMemberTravel", DisplayName = "PartyMemberTravel", IsA = function(_, cls) return cls == "Player" end }
+	RunManager.addPlayer(pTravel :: any)
+	RunManager.startRun(pTravel :: any)
+	assertTest(failRmRun.Phase == "MapSelect", "[Suite 76.30] RunState enters MapSelect after startRun")
+	assertTest(failRmRun.CurrentNodeId == nil, "[Suite 76.31] CurrentNodeId is nil before travel")
+	local targetNodeId = failRmRun.AvailableNodeIds[1]
+	assert(targetNodeId, "targetNodeId exists")
+
+	local dRun = RunManager.getDungeonRun()
+	assert(dRun, "dRun exists")
+	local wasCleared = table.find(dRun.ClearedNodeIds, targetNodeId) ~= nil
+
+	local travOk, _travErr = RunManager.travelToNode(targetNodeId)
+	assertTest(travOk == false, "[Suite 76.32] travelToNode fails when room construction fails")
+	assertTest(failRmRun.Phase == "MapSelect", "[Suite 76.33] travelToNode failure rollback leaves Phase as MapSelect")
+	assertTest(failRmRun.CurrentNodeId == nil, "[Suite 76.34] travelToNode failure preserves CurrentNodeId as nil")
+	assertTest(WorldRoomService.getActiveRoomModel() == nil, "[Suite 76.35] getActiveRoomModel remains nil after travel failure")
+	local isClearedAfter = table.find(dRun.ClearedNodeIds, targetNodeId) ~= nil
+	assertTest(isClearedAfter == wasCleared, "[Suite 76.36] travel failure does not mark dungeon node cleared")
+
+	-- Restore failure injection to false
+	WorldRoomService.setFailureInjectionForTesting(false)
+	assertTest(WorldRoomService.isFailureInjectionEnabled() == false, "[Suite 76.37] failure injection successfully disabled")
+
+	-- Verify subsequent room load succeeds
+	local recoveryRoom = WorldRoomService.loadRoom("Combat", 1, 1, "enc_test_76_rec", "None", 76003)
+	assertTest(recoveryRoom ~= nil and recoveryRoom.Parent == Workspace:FindFirstChild("CardRiftWorld"), "[Suite 76.38] Room construction succeeds normally after disabling failure injection")
+	WorldRoomService.cleanupRoom()
+
+	-- 76.11: FirstAid Revive & Heal Real API Behavior
+	local pFaCaster = { UserId = 76031, Name = "FaCaster", DisplayName = "FaCaster", IsA = function(_, cls) return cls == "Player" end }
+	local pFaTarget = { UserId = 76032, Name = "FaTarget", DisplayName = "FaTarget", IsA = function(_, cls) return cls == "Player" end }
+	RunManager.resetRunForTesting()
+	local pFaCasterState = RunManager.addPlayer(pFaCaster :: any)
+	local pFaTargetState = RunManager.addPlayer(pFaTarget :: any)
+	assert(pFaCasterState and pFaTargetState, "party member states exist")
+
+	local partyMembersMap = {
+		[pFaCaster.UserId] = pFaCasterState,
+		[pFaTarget.UserId] = pFaTargetState,
+	}
+
+	CombatService.cleanupCombat()
+	local faCombat = CombatService.startCombat(
+		"enc_test_fa",
+		"Combat",
+		1,
+		partyMembersMap,
+		function(_outcome) end
+	)
+	assert(faCombat, "faCombat instantiated")
+
+	-- A. FirstAid on living ally
+	local faCardLiving = CardService.createCardInstance("FirstAid", pFaCaster.UserId)
+	assert(faCardLiving, "faCardLiving created")
+	pFaCasterState.Hand[faCardLiving.InstanceId] = faCardLiving
+	pFaCasterState.Resources.Energy = 3
+	pFaTargetState.Resources.HP = 40
+	pFaTargetState.Resources.MaxHP = 100
+	pFaTargetState.IsDowned = false
+
+	local playLivOk, playLivErr = CombatService.playCard(pFaCaster, faCardLiving.InstanceId, pFaTarget.UserId)
+	assertTest(playLivOk == true and playLivErr == nil, "[Suite 76.39] FirstAid on living ally succeeds: " .. tostring(playLivErr))
+	assertTest(pFaTargetState.Resources.HP == 70, string.format("[Suite 76.40] FirstAid increases living ally HP by 30 (40 -> 70, actual: %d)", pFaTargetState.Resources.HP))
+	assertTest(pFaTargetState.IsDowned == false, "[Suite 76.41] Living ally remains not downed after FirstAid")
+	assertTest(pFaCasterState.Hand[faCardLiving.InstanceId] == nil, "[Suite 76.42] FirstAid card consumed from hand on successful play")
+	assertTest(table.find(pFaCasterState.DiscardPile, faCardLiving) ~= nil, "[Suite 76.43] FirstAid card moved to discard pile")
+
+	-- B. FirstAid on downed ally
+	local faCardDowned = CardService.createCardInstance("FirstAid", pFaCaster.UserId)
+	assert(faCardDowned, "faCardDowned created")
+	pFaCasterState.Hand[faCardDowned.InstanceId] = faCardDowned
+	pFaCasterState.Resources.Energy = 3
+	pFaTargetState.Resources.HP = 0
+	pFaTargetState.IsDowned = true
+
+	local playDownOk, playDownErr = CombatService.playCard(pFaCaster, faCardDowned.InstanceId, pFaTarget.UserId)
+	assertTest(playDownOk == true and playDownErr == nil, "[Suite 76.44] FirstAid on downed ally succeeds without rollback: " .. tostring(playDownErr))
+	assertTest(pFaTargetState.IsDowned == false, "[Suite 76.45] Downed ally IsDowned cleared to false")
+	assertTest(pFaTargetState.Resources.HP == 30, string.format("[Suite 76.46] Downed ally HP becomes exactly 30 without double-healing (actual: %d)", pFaTargetState.Resources.HP))
+	assertTest(pFaCasterState.Hand[faCardDowned.InstanceId] == nil, "[Suite 76.47] FirstAid card consumed from hand after revive")
+	assertTest(table.find(pFaCasterState.DiscardPile, faCardDowned) ~= nil, "[Suite 76.48] FirstAid card placed in discard pile after revive")
+
+	-- C. FirstAid with insufficient energy
+	local faCardNoEnergy = CardService.createCardInstance("FirstAid", pFaCaster.UserId)
+	assert(faCardNoEnergy, "faCardNoEnergy created")
+	pFaCasterState.Hand[faCardNoEnergy.InstanceId] = faCardNoEnergy
+	pFaCasterState.Resources.Energy = 1 -- FirstAid costs 2
+	local preTargetHP = pFaTargetState.Resources.HP
+	local preTargetDowned = pFaTargetState.IsDowned
+	local preDiscardCount = #pFaCasterState.DiscardPile
+
+	local playNoEnOk, playNoEnErr = CombatService.playCard(pFaCaster, faCardNoEnergy.InstanceId, pFaTarget.UserId)
+	assertTest(playNoEnOk == false, "[Suite 76.49] FirstAid fails when player has insufficient energy")
+	assertTest(string.find(playNoEnErr or "", "energy") ~= nil or string.find(playNoEnErr or "", "Energy") ~= nil, "[Suite 76.50] Failure error indicates insufficient energy")
+	assertTest(pFaCasterState.Resources.Energy == 1, "[Suite 76.51] Player energy remains unchanged at 1")
+	assertTest(pFaTargetState.Resources.HP == preTargetHP, "[Suite 76.52] Target HP remains unchanged on energy failure")
+	assertTest(pFaTargetState.IsDowned == preTargetDowned, "[Suite 76.53] Target downed state remains unchanged on energy failure")
+	assertTest(pFaCasterState.Hand[faCardNoEnergy.InstanceId] ~= nil, "[Suite 76.54] Card remains in hand after energy rejection")
+	assertTest(#pFaCasterState.DiscardPile == preDiscardCount, "[Suite 76.55] Discard pile unchanged after energy rejection")
+
+	-- 76.12: ApplyStatus Fail-Closed & Transaction Rollback
+	-- Test 1: Valid Poison applies successfully
+	local targetEntity: any = {
+		UserId = pFaTarget.UserId,
+		DisplayName = pFaTarget.DisplayName,
+		Resources = { HP = 50, MaxHP = 100, Shield = 0, Energy = 3, MaxEnergy = 3 },
+	}
+	local targetResolved: StateTypes.ResolvedTarget = {
+		Success = true,
+		TargetKind = "Player",
+		PlayerTarget = targetEntity,
+		EnemyTarget = nil,
+		TargetId = tostring(pFaTarget.UserId),
+		TargetName = pFaTarget.DisplayName,
+	}
+	local poisonCtx: EffectResolver.ActionContext = {
+		SourcePlayer = pFaCasterState,
+		Target = targetResolved,
+	}
+	local poisonRes = EffectResolver.resolveEffects({
+		{ Type = "ApplyStatus", StatusId = "Poison", Stacks = 2, Target = "Ally" }
+	}, poisonCtx)
+	assertTest(#poisonRes == 1 and poisonRes[1].Success == true, "[Suite 76.56] Valid Poison ApplyStatus succeeds")
+
+	-- Test 2: Unknown status fails closed
+	local unkStatusRes = EffectResolver.resolveEffects({
+		{ Type = "ApplyStatus", StatusId = "TotallyFakeStatus_9999", Stacks = 2, Target = "Ally" }
+	}, poisonCtx)
+	assertTest(#unkStatusRes == 1 and unkStatusRes[1].Success == false, "[Suite 76.57] Unknown status ApplyStatus fails closed")
+	assertTest(string.find(unkStatusRes[1].Message or "", "unknown") ~= nil or string.find(unkStatusRes[1].Message or "", "Failed") ~= nil, "[Suite 76.58] Unknown status returns appropriate error message")
+
+	-- Test 3: Unimplemented status (Shock has Implemented = false) fails closed
+	local unimpStatusRes = EffectResolver.resolveEffects({
+		{ Type = "ApplyStatus", StatusId = "Shock", Stacks = 2, Target = "Ally" }
+	}, poisonCtx)
+	assertTest(#unimpStatusRes == 1 and unimpStatusRes[1].Success == false, "[Suite 76.59] Unimplemented status (Shock) ApplyStatus fails closed")
+
+	-- Test 4: Card with invalid ApplyStatus causes transactional rollback
+	local badStatusCardDef: CardData.Card = {
+		Id = "BadStatusCardTest",
+		Name = "Bad Status Card",
+		Cost = 1,
+		Target = "Enemy",
+		Effects = {
+			{ Type = "Damage", Value = 15, Target = "Enemy" },
+			{ Type = "ApplyStatus", StatusId = "UnimplementedFakeStatus", Stacks = 3, Target = "Enemy" },
+		},
+		Description = "Deal 15 damage and apply fake status.",
+		Color = Color3.fromRGB(100, 100, 100),
+		Icon = "❓",
+	}
+	local badCardInst: StateTypes.CardInstance = {
+		InstanceId = "bad_status_card_inst_1",
+		DefinitionId = "BadStatusCardTest",
+		OwnerUserId = pFaCaster.UserId,
+		CardData = badStatusCardDef,
+		Upgraded = false,
+	}
+
+	pFaCasterState.Hand[badCardInst.InstanceId] = badCardInst
+	pFaCasterState.Resources.Energy = 3
+	local firstEnemy = next(faCombat.Enemies) and faCombat.Enemies[next(faCombat.Enemies)]
+	assert(firstEnemy, "firstEnemy exists in faCombat")
+	local preEnemyHP = firstEnemy.HP
+
+	local badPlayOk, _badPlayErr = CombatService.playCard(pFaCaster, badCardInst.InstanceId, firstEnemy.InstanceId)
+	assertTest(badPlayOk == false, "[Suite 76.60] Card with invalid status effect fails execution")
+	assertTest(pFaCasterState.Resources.Energy == 3, "[Suite 76.61] Energy rolled back to 3 on failed status card execution")
+	assertTest(firstEnemy.HP == preEnemyHP, "[Suite 76.62] Enemy HP rolled back and undamaged on transaction rollback")
+	assertTest(pFaCasterState.Hand[badCardInst.InstanceId] ~= nil, "[Suite 76.63] Bad card remains in player hand after rollback")
+
+	CombatService.cleanupCombat()
+	WorldRoomService.cleanupRoom()
+	RunManager.resetRunForTesting()
 end
 
 function TestRunner.runAllTests(): boolean

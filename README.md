@@ -19,12 +19,13 @@ The project architecture has completed comprehensive hardening across all major 
 * **Reaction V2 & 3D Attack Presentation (`ReactionService`, `CombatVFXController`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry). Bounded client timestamp validation with packet arrival grace (`0.20s`).
 
 ### 🧪 Verification Baseline
-* **75 In-Game Integration Suites** in `TestRunner.luau` covering state machines, combat mechanics, network boundaries, and deterministic timing math.
-* **1,283 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **76 In-Game Integration Suites** in `TestRunner.luau` covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
+* **1,355 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **Authoritative Build Fingerprint**: `BUILD_ID = "first_aid_transactions_20260919"` (`First Aid Transaction Semantics & Effect Fail-Closed`).
 * **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
 * **Clean Rojo compilation** (`rojo build -o build.rbxl` exits code 0).
-* **Note on 3D Visual Rendering**: Automated tests prove network contracts, server authorization, and timing math; visual rendering and animation smoothness require interactive testing in Roblox Studio using developer commands (`/SlowHeavy`, `/FastDagger`, `/JumpAttack`, `/ProjectileBolt`, `/UnreactableExplosion`).
+* **Static & Offline vs. In-Game & Interactive Verification**: Offline verification (`tests/verify_phase1_integration.py` and `luau-compile.exe`) guarantees schema, condition semantics, and contract invariants; in-game automated testing (`TestRunner.luau`) validates runtime transactions and state recovery on boot; 3D visual rendering and reaction feel are verified interactively in Roblox Studio using developer commands (`/SlowHeavy`, `/FastDagger`, `/JumpAttack`, `/ProjectileBolt`, `/UnreactableExplosion`).
 
 ---
 

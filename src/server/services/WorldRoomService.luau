@@ -91,6 +91,20 @@ function WorldRoomService.getActiveEnvironmentId(): StateTypes.EnvironmentId?
 	return currentEnvironmentId
 end
 
+local failureInjectionEnabled = false
+local failureInjectionMessage = "Simulated room construction failure for testing."
+
+function WorldRoomService.setFailureInjectionForTesting(enabled: boolean, message: string?)
+	failureInjectionEnabled = enabled
+	if message then
+		failureInjectionMessage = message
+	end
+end
+
+function WorldRoomService.isFailureInjectionEnabled(): boolean
+	return failureInjectionEnabled
+end
+
 --------------------------------------------------------------------------------
 -- Room Construction Engine
 --------------------------------------------------------------------------------
@@ -580,6 +594,9 @@ function WorldRoomService.loadRoom(
 
 	-- 4. Construct geometry and visuals under pcall
 	local constructOk, constructErr = pcall(function()
+		if failureInjectionEnabled then
+			error(failureInjectionMessage)
+		end
 		if roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss" then
 			buildCombatArena(geometry, spawnPoints, env)
 		elseif roomType == "Event" then

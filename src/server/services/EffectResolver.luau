@@ -76,28 +76,62 @@ end
 
 -- Evaluates a condition against action context
 -- Returns (isSatisfied: boolean, isValid: boolean, errorMsg: string?)
-local function evaluateCondition(condition: string?, context: ActionContext, resolvedTarget: StateTypes.ResolvedTarget?): (boolean, boolean, string?)
-	if not condition or condition == "" then
+function EffectResolver.evaluateCondition(
+	conditionOrDef: any,
+	contextOrSource: any?,
+	resolvedTargetOrTarget: any?,
+	_combatState: any?
+): (boolean, boolean, string?)
+	local conditionStr: string? = nil
+	if typeof(conditionOrDef) == "table" and conditionOrDef ~= nil then
+		conditionStr = conditionOrDef.Condition
+	elseif typeof(conditionOrDef) == "string" then
+		conditionStr = conditionOrDef
+	elseif conditionOrDef == nil then
 		return true, true, nil
 	end
 
-	local t = resolvedTarget or context.Target
+	if not conditionStr or conditionStr == "" then
+		return true, true, nil
+	end
 
-	if condition == "TargetDowned" then
-		local p = t.PlayerTarget
-		return (p ~= nil and p.IsDowned == true), true, nil
+	-- Determine target player or fallback
+	local targetPlayer: StateTypes.PlayerState? = nil
+	if typeof(resolvedTargetOrTarget) == "table" and resolvedTargetOrTarget ~= nil then
+		if resolvedTargetOrTarget.PlayerTarget then
+			targetPlayer = resolvedTargetOrTarget.PlayerTarget
+		elseif resolvedTargetOrTarget.UserId and resolvedTargetOrTarget.Resources then
+			targetPlayer = resolvedTargetOrTarget
+		end
+	end
 
-	elseif condition == "TargetLiving" then
-		local p = t.PlayerTarget
-		return (p == nil or p.IsDowned ~= true), true, nil
+	if not targetPlayer and typeof(contextOrSource) == "table" and contextOrSource ~= nil then
+		if contextOrSource.Target and contextOrSource.Target.PlayerTarget then
+			targetPlayer = contextOrSource.Target.PlayerTarget
+		elseif contextOrSource.PlayerTarget then
+			targetPlayer = contextOrSource.PlayerTarget
+		elseif contextOrSource.UserId and contextOrSource.Resources then
+			targetPlayer = contextOrSource
+		end
+	end
 
-	elseif condition == "LowHP" then
-		local p = t.PlayerTarget or context.SourcePlayer
-		return (p.Resources.HP < (p.Resources.MaxHP * 0.5)), true, nil
+	if conditionStr == "TargetDowned" then
+		return (targetPlayer ~= nil and targetPlayer.IsDowned == true), true, nil
+	elseif conditionStr == "TargetLiving" then
+		return (targetPlayer == nil or targetPlayer.IsDowned ~= true), true, nil
+	elseif conditionStr == "LowHP" then
+		local p = targetPlayer
+		if not p and typeof(contextOrSource) == "table" and contextOrSource ~= nil then
+			p = contextOrSource.SourcePlayer or contextOrSource
+		end
+		if p and p.Resources then
+			return (p.Resources.HP < (p.Resources.MaxHP * 0.5)), true, nil
+		end
+		return false, true, nil
 	end
 
 	-- Fail closed on unknown conditions
-	local msg = string.format("Unknown condition '%s'. Failing closed.", tostring(condition))
+	local msg = string.format("Unknown condition '%s'. Failing closed.", tostring(conditionStr))
 	warn("[EffectResolver] " .. msg)
 	return false, false, msg
 end
@@ -335,7 +369,14 @@ handlers["ApplyStatus"] = function(effect: CardData.Effect, context: ActionConte
 		return { Success = false, EffectType = "ApplyStatus", Message = resolvedTarget.Error or "Invalid target for status." }
 	end
 
-	StatusService.applyStatus(targetId, statusId, stacks, duration, tostring(context.SourcePlayer.UserId), targetEntity)
+	local appliedInst = StatusService.applyStatus(targetId, statusId, stacks, duration, tostring(context.SourcePlayer.UserId), targetEntity)
+	if not appliedInst then
+		return {
+			Success = false,
+			EffectType = "ApplyStatus",
+			Message = string.format("Failed to apply status '%s': unknown or unimplemented status definition.", statusId),
+		}
+	end
 
 	if context.LogEvent then
 		local eventName = (statusId == "Poison") and "PoisonApplied" or "StatusApplied"
@@ -657,46 +698,96 @@ function EffectResolver.isSupportedEffectType(effectType: string): boolean
 end
 
 -- Resolves an array of card/action effects against the given context
-function EffectResolver.resolveEffects(effects: { CardData.Effect }, context: ActionContext): { EffectExecutionResult }
+function EffectResolver.resolveEffects(effects: any, context: ActionContext?): any
 	if currentDepth >= MAX_RECURSION_DEPTH then
 		local msg = "[EffectResolver] Exceeded maximum recursion depth of " .. tostring(MAX_RECURSION_DEPTH)
 		warn(msg)
-		return {
+		local recRes = {
 			{
 				Success = false,
 				EffectType = "Recursion",
 				Message = msg,
 			}
 		}
+		(recRes :: any).Success = false
+		(recRes :: any).Error = msg
+		return recRes
 	end
 
 	currentDepth += 1
 	local results: { EffectExecutionResult } = {}
 
+	local effectsList: { CardData.Effect }
+	local actualContext: ActionContext
+
+	if typeof(effects) == "table" and (effects :: any).Effects ~= nil then
+		local callTable = effects :: any
+		effectsList = callTable.Effects
+		actualContext = {
+			SourcePlayer = callTable.Caster or callTable.SourcePlayer,
+			Target = if callTable.Target and (callTable.Target.TargetKind ~= nil or callTable.Target.Success ~= nil) then callTable.Target else {
+				Success = true,
+				TargetKind = "Enemy",
+				EnemyTarget = callTable.Target,
+				PlayerTarget = nil,
+				TargetId = if callTable.Target then tostring(callTable.Target.InstanceId or callTable.Target.UserId or "") else "",
+				TargetName = if callTable.Target then tostring(callTable.Target.Name or "") else "",
+			},
+			CombatState = callTable.CombatState,
+			Party = callTable.Party,
+		}
+	else
+		effectsList = effects
+		actualContext = context :: ActionContext
+	end
+
 	local ok, err = pcall(function()
-		for _, effect in effects do
+		type PreparedEffect = {
+			effect: CardData.Effect,
+			handler: EffectHandler?,
+			resolvedTarget: StateTypes.ResolvedTarget,
+			isSatisfied: boolean,
+			isValid: boolean,
+			condErr: string?,
+		}
+
+		-- 1. Pre-evaluate conditions against pre-action target state
+		local prepared: { PreparedEffect } = {}
+		for _, effect in effectsList do
 			local handler = handlers[effect.Type]
-			if not handler then
-				local msg = "[EffectResolver] No handler registered for effect type: " .. tostring(effect.Type)
+			local resolvedTarget = resolveEffectTarget(effect, actualContext)
+			local isSatisfied, isValid, condErr = EffectResolver.evaluateCondition(effect.Condition, actualContext, resolvedTarget)
+			table.insert(prepared, {
+				effect = effect,
+				handler = handler,
+				resolvedTarget = resolvedTarget,
+				isSatisfied = isSatisfied,
+				isValid = isValid,
+				condErr = condErr,
+			})
+		end
+
+		-- 2. Execute effects using pre-evaluated condition satisfaction
+		for _, prep in prepared do
+			if not prep.handler then
+				local msg = "[EffectResolver] No handler registered for effect type: " .. tostring(prep.effect.Type)
 				warn(msg)
 				table.insert(results, {
 					Success = false,
-					EffectType = tostring(effect.Type),
+					EffectType = tostring(prep.effect.Type),
 					Message = msg,
 				})
 				continue
 			end
 
-			local resolvedTarget = resolveEffectTarget(effect, context)
-			local isSatisfied, isValid, condErr = evaluateCondition(effect.Condition, context, resolvedTarget)
-			if not isValid then
+			if not prep.isValid then
 				table.insert(results, {
 					Success = false,
-					EffectType = tostring(effect.Type),
-					Message = condErr or ("Unknown condition: " .. tostring(effect.Condition)),
+					EffectType = tostring(prep.effect.Type),
+					Message = prep.condErr or ("Unknown condition: " .. tostring(prep.effect.Condition)),
 				})
-			elseif isSatisfied then
-				local res = handler(effect, context, resolvedTarget)
+			elseif prep.isSatisfied then
+				local res = prep.handler(prep.effect, actualContext, prep.resolvedTarget)
 				table.insert(results, res)
 			end
 		end
@@ -712,6 +803,21 @@ function EffectResolver.resolveEffects(effects: { CardData.Effect }, context: Ac
 			Message = msg,
 		})
 	end
+
+	-- Attach helper properties for callers expecting a summary object
+	local allSuccess = #results > 0
+	local firstError: string? = nil
+	for _, r in results do
+		if not r.Success then
+			allSuccess = false
+			firstError = r.Message or "Effect resolution failed."
+			break
+		end
+	end
+
+	local retAny: any = results
+	retAny.Success = allSuccess
+	retAny.Error = firstError
 
 	return results
 end

@@ -1043,28 +1043,45 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	local targetPlayer = resolvedTarget.PlayerTarget
 
 	-- Pre-validate effect preconditions before mutating any state or resources
+	local anyApplicable = false
 	for _, eff in cardDef.Effects do
 		if not EffectResolver.isSupportedEffectType(eff.Type) then
 			return false, "Unsupported effect type: " .. tostring(eff.Type)
 		end
+		local conditionApplies = true
 		if eff.Condition and eff.Condition ~= "" then
-			if eff.Condition ~= "TargetDowned" and eff.Condition ~= "TargetLiving" and eff.Condition ~= "LowHP" then
+			if eff.Condition == "TargetDowned" then
+				conditionApplies = (targetPlayer ~= nil and targetPlayer.IsDowned == true)
+			elseif eff.Condition == "TargetLiving" then
+				conditionApplies = (targetPlayer == nil or targetPlayer.IsDowned ~= true)
+			elseif eff.Condition == "LowHP" then
+				local p = targetPlayer or playerState
+				conditionApplies = (p.Resources.HP < (p.Resources.MaxHP * 0.5))
+			else
 				return false, "Unknown effect condition: " .. tostring(eff.Condition)
 			end
 		end
-		if eff.Type == "Damage" then
-			if not targetEnemy or targetEnemy.HP <= 0 then
-				return false, "No living enemy target."
-			end
-		elseif eff.Type == "Heal" then
-			if targetPlayer and targetPlayer.IsDowned then
-				return false, "Cannot heal downed player."
-			end
-		elseif eff.Type == "Revive" then
-			if targetPlayer and not targetPlayer.IsDowned then
-				return false, "Player is not downed."
+
+		if conditionApplies then
+			anyApplicable = true
+			if eff.Type == "Damage" then
+				if not targetEnemy or targetEnemy.HP <= 0 then
+					return false, "No living enemy target."
+				end
+			elseif eff.Type == "Heal" then
+				if targetPlayer and targetPlayer.IsDowned then
+					return false, "Cannot heal downed player."
+				end
+			elseif eff.Type == "Revive" then
+				if targetPlayer and not targetPlayer.IsDowned then
+					return false, "Player is not downed."
+				end
 			end
 		end
+	end
+
+	if #cardDef.Effects > 0 and not anyApplicable then
+		return false, "No applicable card effects for target state."
 	end
 
 	-- Energy verification with StatResolver CostReduction
