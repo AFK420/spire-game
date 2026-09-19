@@ -261,7 +261,7 @@ type DeckBuilderController = {
 	toggle: () -> (),
 	show: () -> (),
 	hide: () -> (),
-	onDeckListUpdate: (decks: { StateTypes.DeckSummaryView }, activeDeckId: string) -> (),
+	onDeckListUpdate: (decks: { StateTypes.DeckSummaryView }, activeDeckId: string, slotInfo: StateTypes.DeckSlotView?) -> (),
 	onDeckDetailUpdate: (detail: StateTypes.DeckDetailView) -> (),
 	onCardCollectionUpdate: (collectionView: StateTypes.CardCollectionView) -> (),
 	handleActionResult: (res: any) -> boolean,
@@ -298,10 +298,10 @@ local function createDeckBuilderController(): DeckBuilderController
 	UIFactory.createCorner(deckBuilderHeader, 14)
 
 	local deckBuilderHeaderTitle = Instance.new("TextLabel")
-	deckBuilderHeaderTitle.Size = UDim2.new(0, 320, 1, 0)
+	deckBuilderHeaderTitle.Size = UDim2.new(0, 240, 1, 0)
 	deckBuilderHeaderTitle.Position = UDim2.new(0, 18, 0, 0)
 	deckBuilderHeaderTitle.BackgroundTransparency = 1
-	deckBuilderHeaderTitle.Text = "🎴 DECK BUILDER & COLLECTION"
+	deckBuilderHeaderTitle.Text = "🎴 DECK BUILDER"
 	deckBuilderHeaderTitle.TextColor3 = Color3.fromRGB(120, 190, 255)
 	deckBuilderHeaderTitle.Font = Enum.Font.GothamBold
 	deckBuilderHeaderTitle.TextSize = 16
@@ -309,10 +309,25 @@ local function createDeckBuilderController(): DeckBuilderController
 	deckBuilderHeaderTitle.ZIndex = 32
 	deckBuilderHeaderTitle.Parent = deckBuilderHeader
 
+	local deckBuilderSlotLabel = Instance.new("TextLabel")
+	deckBuilderSlotLabel.Name = "DeckBuilderSlotLabel"
+	deckBuilderSlotLabel.Size = UDim2.new(0, 110, 0, 26)
+	deckBuilderSlotLabel.Position = UDim2.new(0, 260, 0.5, -13)
+	deckBuilderSlotLabel.BackgroundColor3 = Color3.fromRGB(30, 36, 48)
+	deckBuilderSlotLabel.BorderSizePixel = 0
+	deckBuilderSlotLabel.Text = "Slots: -- / --"
+	deckBuilderSlotLabel.TextColor3 = Color3.fromRGB(240, 200, 80)
+	deckBuilderSlotLabel.Font = Enum.Font.GothamBold
+	deckBuilderSlotLabel.TextSize = 12
+	deckBuilderSlotLabel.ZIndex = 32
+	deckBuilderSlotLabel.Parent = deckBuilderHeader
+	UIFactory.createCorner(deckBuilderSlotLabel, 6)
+	UIFactory.createStroke(deckBuilderSlotLabel, Color3.fromRGB(60, 75, 100), 1)
+
 	local deckBuilderStatusLabel = Instance.new("TextLabel")
 	deckBuilderStatusLabel.Name = "DeckBuilderStatus"
 	deckBuilderStatusLabel.Size = UDim2.new(1, -430, 1, 0)
-	deckBuilderStatusLabel.Position = UDim2.new(0, 350, 0, 0)
+	deckBuilderStatusLabel.Position = UDim2.new(0, 380, 0, 0)
 	deckBuilderStatusLabel.BackgroundTransparency = 1
 	deckBuilderStatusLabel.Text = "Select or create a deck to begin editing."
 	deckBuilderStatusLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
@@ -628,6 +643,7 @@ local function createDeckBuilderController(): DeckBuilderController
 	local deckDetailCache: { [string]: { [string]: number } } = {}
 	local cachedActiveDeckId: string = ""
 	local cachedCollection: { [string]: number } = {}
+	local cachedSlotInfo: StateTypes.DeckSlotView? = nil
 	local currentEditedDeckId: string? = nil
 	local currentDraftCards: { [string]: number } = {}
 	local originalDeckCards: { [string]: number } = {}
@@ -664,6 +680,12 @@ local function createDeckBuilderController(): DeckBuilderController
 	local renderCollectionBrowser: () -> ()
 
 	renderDecksList = function()
+		if cachedSlotInfo then
+			decksSidebarTitle.Text = string.format("MY DECKS (%d/%d)", cachedSlotInfo.UsedSlots, cachedSlotInfo.TotalSlots)
+		else
+			decksSidebarTitle.Text = "MY DECKS"
+		end
+
 		for _, child in decksListScroll:GetChildren() do
 			if child:IsA("Frame") then
 				child:Destroy()
@@ -800,6 +822,10 @@ local function createDeckBuilderController(): DeckBuilderController
 				for _ in cachedDecks do totalDecks += 1 end
 				if totalDecks >= GameConfig.Deck.MaxDeckSlots then
 					setDeckStatus("⚠️ Maximum deck slots reached.", Color3.fromRGB(255, 90, 90))
+					return
+				end
+				if cachedSlotInfo and cachedSlotInfo.AvailableSlots <= 0 then
+					setDeckStatus("⚠️ Deck slot entitlement limit reached.", Color3.fromRGB(255, 90, 90))
 					return
 				end
 				isDeckActionPending = true
@@ -1042,9 +1068,11 @@ local function createDeckBuilderController(): DeckBuilderController
 			local cardDef = CardData.getCard(cardId)
 			local cardName = cardDef and cardDef.Name or cardId
 			local cost = cardDef and cardDef.Cost or 0
+			local target = cardDef and cardDef.Target or "None"
+			local description = cardDef and cardDef.Description or ""
 
 			local item = Instance.new("Frame")
-			item.Size = UDim2.new(1, -4, 0, 52)
+			item.Size = UDim2.new(1, -4, 0, 72)
 			item.BackgroundColor3 = Color3.fromRGB(28, 32, 44)
 			item.BorderSizePixel = 0
 			item.ZIndex = 34
@@ -1066,7 +1094,7 @@ local function createDeckBuilderController(): DeckBuilderController
 			UIFactory.createCorner(costBadge, 11)
 
 			local nameLabel = Instance.new("TextLabel")
-			nameLabel.Size = UDim2.new(1, -110, 0, 20)
+			nameLabel.Size = UDim2.new(1, -195, 0, 20)
 			nameLabel.Position = UDim2.new(0, 34, 0, 6)
 			nameLabel.BackgroundTransparency = 1
 			nameLabel.Text = cardName
@@ -1078,17 +1106,48 @@ local function createDeckBuilderController(): DeckBuilderController
 			nameLabel.ZIndex = 35
 			nameLabel.Parent = item
 
+			local targetBadge = Instance.new("TextLabel")
+			targetBadge.Name = "TargetBadge"
+			targetBadge.Size = UDim2.new(0, 75, 0, 18)
+			targetBadge.Position = UDim2.new(1, -155, 0, 7)
+			targetBadge.BackgroundColor3 = Color3.fromRGB(40, 50, 68)
+			targetBadge.BorderSizePixel = 0
+			targetBadge.Text = "🎯 " .. tostring(target)
+			targetBadge.TextColor3 = Color3.fromRGB(175, 205, 245)
+			targetBadge.Font = Enum.Font.GothamBold
+			targetBadge.TextSize = 9
+			targetBadge.ZIndex = 35
+			targetBadge.Parent = item
+			UIFactory.createCorner(targetBadge, 4)
+
 			local descLabel = Instance.new("TextLabel")
-			descLabel.Size = UDim2.new(1, -110, 0, 16)
-			descLabel.Position = UDim2.new(0, 34, 0, 28)
+			descLabel.Name = "DescLabel"
+			descLabel.Size = UDim2.new(1, -85, 0, 24)
+			descLabel.Position = UDim2.new(0, 34, 0, 27)
 			descLabel.BackgroundTransparency = 1
-			descLabel.Text = string.format("Owned: %d | In Deck: %d", owned, inDraft)
-			descLabel.TextColor3 = Color3.fromRGB(160, 175, 195)
+			descLabel.Text = description
+			descLabel.TextColor3 = Color3.fromRGB(170, 180, 200)
 			descLabel.Font = Enum.Font.Gotham
 			descLabel.TextSize = 10
+			descLabel.TextWrapped = true
 			descLabel.TextXAlignment = Enum.TextXAlignment.Left
+			descLabel.TextYAlignment = Enum.TextYAlignment.Top
+			descLabel.TextTruncate = Enum.TextTruncate.AtEnd
 			descLabel.ZIndex = 35
 			descLabel.Parent = item
+
+			local copiesLabel = Instance.new("TextLabel")
+			copiesLabel.Name = "CopiesLabel"
+			copiesLabel.Size = UDim2.new(1, -85, 0, 16)
+			copiesLabel.Position = UDim2.new(0, 34, 0, 52)
+			copiesLabel.BackgroundTransparency = 1
+			copiesLabel.Text = string.format("Owned: %d  |  In Draft: %d / %d max", owned, inDraft, maxCopies)
+			copiesLabel.TextColor3 = Color3.fromRGB(140, 155, 180)
+			copiesLabel.Font = Enum.Font.GothamMedium
+			copiesLabel.TextSize = 10
+			copiesLabel.TextXAlignment = Enum.TextXAlignment.Left
+			copiesLabel.ZIndex = 35
+			copiesLabel.Parent = item
 
 			local canAdd = (currentEditedDeckId ~= nil)
 				and (totalDraft < maxSize)
@@ -1096,8 +1155,8 @@ local function createDeckBuilderController(): DeckBuilderController
 				and (inDraft < owned)
 
 			local addBtn = Instance.new("TextButton")
-			addBtn.Size = UDim2.new(0, 64, 0, 32)
-			addBtn.Position = UDim2.new(1, -70, 0.5, -16)
+			addBtn.Size = UDim2.new(0, 64, 0, 36)
+			addBtn.Position = UDim2.new(1, -72, 0.5, -18)
 			addBtn.BackgroundColor3 = if canAdd then Color3.fromRGB(45, 140, 80) else Color3.fromRGB(40, 45, 55)
 			addBtn.BorderSizePixel = 0
 			addBtn.Text = if not currentEditedDeckId then "No Deck"
@@ -1129,6 +1188,10 @@ local function createDeckBuilderController(): DeckBuilderController
 		for _ in cachedDecks do totalDecks += 1 end
 		if totalDecks >= GameConfig.Deck.MaxDeckSlots then
 			setDeckStatus("⚠️ Maximum deck slots reached.", Color3.fromRGB(255, 90, 90))
+			return
+		end
+		if cachedSlotInfo and cachedSlotInfo.AvailableSlots <= 0 then
+			setDeckStatus("⚠️ Deck slot entitlement limit reached.", Color3.fromRGB(255, 90, 90))
 			return
 		end
 		isDeckActionPending = true
@@ -1248,8 +1311,22 @@ local function createDeckBuilderController(): DeckBuilderController
 		hide = function()
 			deckBuilderView.Visible = false
 		end,
-		onDeckListUpdate = function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string)
+		onDeckListUpdate = function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string, slotInfo: StateTypes.DeckSlotView?)
 			cachedActiveDeckId = activeDeckId or ""
+			cachedSlotInfo = slotInfo
+			if slotInfo then
+				deckBuilderSlotLabel.Text = string.format("Slots: %d / %d", slotInfo.UsedSlots, slotInfo.TotalSlots)
+				if slotInfo.AvailableSlots <= 0 then
+					deckBuilderSlotLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+				else
+					deckBuilderSlotLabel.TextColor3 = Color3.fromRGB(240, 200, 80)
+				end
+			else
+				local totalDecks = #decks
+				deckBuilderSlotLabel.Text = string.format("Slots: %d / %d", totalDecks, GameConfig.Deck.MaxDeckSlots)
+				deckBuilderSlotLabel.TextColor3 = Color3.fromRGB(240, 200, 80)
+			end
+
 			table.clear(cachedDecks)
 			for _, d in decks do
 				cachedDecks[d.DeckId] = d
@@ -3275,9 +3352,9 @@ end
 
 -- 6. Deck & Collection Event Listeners (Phase 4)
 if DeckListUpdateEvent then
-	DeckListUpdateEvent.OnClientEvent:Connect(function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string)
+	DeckListUpdateEvent.OnClientEvent:Connect(function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string, slotInfo: StateTypes.DeckSlotView?)
 		if DeckBuilder then
-			DeckBuilder.onDeckListUpdate(decks, activeDeckId)
+			DeckBuilder.onDeckListUpdate(decks, activeDeckId, slotInfo)
 		end
 	end)
 end

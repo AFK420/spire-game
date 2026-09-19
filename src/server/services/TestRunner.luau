@@ -854,9 +854,8 @@ local function runSuite67()
 		assert(pState, "pState exists")
 
 		-- 2. Select and lock class
-		ClassService.selectClass(soloPlayer :: any, "Ironclad")
-		ClassService.lockClass(soloPlayer :: any)
-		assertTest(pState.ClassLocked == true, "[Suite 67.2] Solo player class is locked")
+		local selectOk, selectErr = ClassService.selectClass(soloPlayer :: any, pState, "Warlord", "Titan")
+		assertTest(selectOk == true and pState.ClassLocked == true, "[Suite 67.2] Solo player class is locked: " .. tostring(selectErr))
 
 		-- 3. Start Run
 		local startOk = RunManager.startRun(soloPlayer :: any)
@@ -1096,9 +1095,8 @@ local function runSuite68()
 		assertTest(pState ~= nil, "[Suite 68.1] addPlayer succeeds for test player")
 		assert(pState, "pState exists")
 
-		ClassService.selectClass(soloPlayer :: any, "Ironclad")
-		ClassService.lockClass(soloPlayer :: any)
-		assertTest(pState.ClassLocked == true, "[Suite 68.2] Test player class is locked")
+		local selectOk, selectErr = ClassService.selectClass(soloPlayer :: any, pState, "Warlord", "Titan")
+		assertTest(selectOk == true and pState.ClassLocked == true, "[Suite 68.2] Test player class is locked: " .. tostring(selectErr))
 
 		local startOk = RunManager.startRun(soloPlayer :: any)
 		assertTest(startOk == true, "[Suite 68.3] startRun succeeds")
@@ -1152,8 +1150,8 @@ local function runSuite68()
 		PersistenceService.loadProfile(failPlayer :: any)
 		local pState = RunManager.addPlayer(failPlayer :: any)
 		assert(pState, "pState exists")
-		ClassService.selectClass(failPlayer :: any, "Ironclad")
-		ClassService.lockClass(failPlayer :: any)
+		local selectOk, selectErr = ClassService.selectClass(failPlayer :: any, pState, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 		local startOk = RunManager.startRun(failPlayer :: any)
 		assertTest(startOk == true, "[Suite 68.22] startRun succeeds for rollback test")
 
@@ -1210,8 +1208,8 @@ local function runSuite69()
 		PersistenceService.loadProfile(rewardPlayer :: any)
 		local pState = RunManager.addPlayer(rewardPlayer :: any)
 		assert(pState, "pState exists")
-		ClassService.selectClass(rewardPlayer :: any, "Ironclad")
-		ClassService.lockClass(rewardPlayer :: any)
+		local selectOk, selectErr = ClassService.selectClass(rewardPlayer :: any, pState, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 		local startOk = RunManager.startRun(rewardPlayer :: any)
 		assertTest(startOk == true, "[Suite 69.1] startRun succeeds for reward test")
 
@@ -1281,8 +1279,8 @@ local function runSuite69()
 		PersistenceService.loadProfile(bossPlayer :: any)
 		local pState = RunManager.addPlayer(bossPlayer :: any)
 		assert(pState, "pState exists")
-		ClassService.selectClass(bossPlayer :: any, "Ironclad")
-		ClassService.lockClass(bossPlayer :: any)
+		local selectOk, selectErr = ClassService.selectClass(bossPlayer :: any, pState, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 		RunManager.startRun(bossPlayer :: any)
 
 		local runState = RunManager.getRunState()
@@ -1369,8 +1367,8 @@ local function runSuite70()
 		PersistenceService.loadProfile(p1 :: any)
 		local p1State = RunManager.addPlayer(p1 :: any)
 		assert(p1State, "p1State exists")
-		p1State.ClassLocked = true
-		p1State.ClassId = "Ironclad"
+		local selectOk, selectErr = ClassService.selectClass(p1 :: any, p1State, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 
 		local combatParty = { [p1.UserId] = p1State }
 		local combatEndOutcome: string? = nil
@@ -1471,8 +1469,8 @@ local function runSuite71()
 		PersistenceService.loadProfile(flowPlayer :: any)
 		local pState = RunManager.addPlayer(flowPlayer :: any)
 		assert(pState, "flowPlayer pState exists")
-		ClassService.selectClass(flowPlayer :: any, "Ironclad")
-		ClassService.lockClass(flowPlayer :: any)
+		local selectOk, selectErr = ClassService.selectClass(flowPlayer :: any, pState, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 
 		local startOk = RunManager.startRun(flowPlayer :: any)
 		assertTest(startOk == true, "[Suite 71.3] startRun transitions to MapSelect")
@@ -1571,9 +1569,10 @@ local function runSuite71()
 			IsA = function(_, cls) return cls == "Player" end,
 		}
 		PersistenceService.loadProfile(failPlayer :: any)
-		RunManager.addPlayer(failPlayer :: any)
-		ClassService.selectClass(failPlayer :: any, "Ironclad")
-		ClassService.lockClass(failPlayer :: any)
+		local pState = RunManager.addPlayer(failPlayer :: any)
+		assert(pState, "failPlayer pState exists")
+		local selectOk, selectErr = ClassService.selectClass(failPlayer :: any, pState, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 		RunManager.startRun(failPlayer :: any)
 
 		local runState = RunManager.getRunState()
@@ -1612,9 +1611,10 @@ local function runSuite71()
 			IsA = function(_, cls) return cls == "Player" end,
 		}
 		PersistenceService.loadProfile(recoveryPlayer :: any)
-		RunManager.addPlayer(recoveryPlayer :: any)
-		ClassService.selectClass(recoveryPlayer :: any, "Ironclad")
-		ClassService.lockClass(recoveryPlayer :: any)
+		local pState = RunManager.addPlayer(recoveryPlayer :: any)
+		assert(pState, "recoveryPlayer pState exists")
+		local selectOk, selectErr = ClassService.selectClass(recoveryPlayer :: any, pState, "Warlord", "Titan")
+		assert(selectOk, "selectClass succeeds: " .. tostring(selectErr))
 		RunManager.startRun(recoveryPlayer :: any)
 
 		local runState = RunManager.getRunState()
@@ -3180,11 +3180,16 @@ local function runSuite76()
 		PersistenceService.loadProfile(pReward :: any)
 		RunManager.addPlayer(pReward :: any)
 		run.Phase = "Rewards"
+		local strikeCard = CardData.getCard("Strike")
+		local defendCard = CardData.getCard("Defend")
+		local bashCard = CardData.getCard("Bash")
+		assert(strikeCard and defendCard and bashCard, "Card definitions exist")
+
 		run.PendingRewards = {
 			GoldAmount = 50,
 			AetherShardsAmount = 15,
 			OfferedCardsByPlayer = {
-				[76200] = { "Strike", "Defend", "Bash" },
+				[76200] = { strikeCard, defendCard, bashCard },
 			},
 			ClaimedCards = {},
 		}
@@ -3255,7 +3260,7 @@ local function runSuite76()
 			"[Suite 76.187] toCollectionView reflects newly granted cards")
 
 		-- Create custom deck
-		local createOk, createErr, createdDeck = DeckService.createDeck(pDeck :: any, "Custom Test Deck", nil, "Ironclad")
+		local createOk, createErr, createdDeck = DeckService.createDeck(pDeck :: any, "Custom Test Deck", nil, "Warlord")
 		assertTest(createOk == true and createdDeck ~= nil, "[Suite 76.188] DeckService.createDeck succeeds with server GUID")
 		assert(createdDeck, "createdDeck exists")
 		assertTest(createdDeck.Name == "Custom Test Deck", "[Suite 76.189] createDeck sets correct deck name")
@@ -3319,6 +3324,13 @@ local function runSuite76()
 		assert(emptyDeck, "emptyDeck exists")
 		local setEmptyOk, _ = DeckService.setActiveDeck(pDeck :: any, emptyDeck.DeckId)
 		assertTest(setEmptyOk == false, "[Suite 76.202] setActiveDeck rejects invalid (empty) deck")
+
+		-- Verify slot entitlement query
+		local slotInfo = DeckService.getSlotEntitlement(pDeck :: any)
+		assertTest(slotInfo.BaseSlots == 4 and slotInfo.TotalSlots >= 4,
+			"[Suite 76.203] getSlotEntitlement returns valid slot entitlement view")
+		assertTest(slotInfo.UsedSlots >= 1 and slotInfo.AvailableSlots >= 0,
+			"[Suite 76.204] getSlotEntitlement UsedSlots and AvailableSlots are consistent")
 
 		PersistenceService.resetForTesting(76210)
 	end

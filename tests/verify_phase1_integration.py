@@ -2105,15 +2105,25 @@ test("SaveDeckEvent:FireServer(currentEditedDeckId, currentDraftCards)" in ui_ct
 test("SelectActiveDeckEvent:FireServer(deck.DeckId)" in ui_ctrl_src, "UIController binds Set Active button to SelectActiveDeckEvent")
 test("DeleteDeckEvent:FireServer(deck.DeckId)" in ui_ctrl_src, "UIController binds Delete button to DeleteDeckEvent")
 test("DuplicateDeckEvent:FireServer(deck.DeckId" in ui_ctrl_src, "UIController binds Copy button to DuplicateDeckEvent")
+test("deckBuilderSlotLabel" in ui_ctrl_src, "UIController renders deckBuilderSlotLabel for slot entitlement capacity")
+test("cachedSlotInfo" in ui_ctrl_src, "UIController maintains cachedSlotInfo for authoritative slot entitlement")
+test("TargetBadge" in ui_ctrl_src, "UIController renders TargetBadge in card collection browser")
+test("DescLabel" in ui_ctrl_src, "UIController renders DescLabel with text wrapping in card collection browser")
+test("CopiesLabel" in ui_ctrl_src, "UIController renders CopiesLabel with owned and in-draft copies")
 
 # Client UIController Remote Wiring
 test("DeckListUpdateEvent.OnClientEvent:Connect" in ui_ctrl_src, "UIController listens to DeckListUpdateEvent")
 test("DeckDetailUpdateEvent.OnClientEvent:Connect" in ui_ctrl_src, "UIController listens to DeckDetailUpdateEvent")
 test("CardCollectionUpdateEvent.OnClientEvent:Connect" in ui_ctrl_src, "UIController listens to CardCollectionUpdateEvent")
+test("DeckListUpdateEvent.OnClientEvent:Connect(function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string, slotInfo: StateTypes.DeckSlotView?)" in ui_ctrl_src, "UIController DeckListUpdateEvent listener receives authoritative slotInfo")
 
 # Client UIController ActiveRoom Fail-Closed Routing
 test("Synchronizing room state..." in ui_ctrl_src, "UIController sets banner to synchronizing on invalid room type")
 test("RequestStateSyncEvent:FireServer()" in ui_ctrl_src, "UIController fires RequestStateSyncEvent on invalid room type")
+
+# TestRunner Stale API Elimination (Zero Stale APIs)
+test("ClassService.lockClass" not in testrunner_src, "Zero occurrences of stale ClassService.lockClass in TestRunner")
+test("Ironclad" not in testrunner_src, "Zero occurrences of stale Ironclad in TestRunner")
 
 # Suite 76 Extended Assertions (Suite 76.20 & 76.21)
 test("[Suite 76.173]" in testrunner_src, "Suite 76 tests getRewardClaimLocksForTesting returns table")
@@ -2141,6 +2151,8 @@ test("[Suite 76.198]" in testrunner_src, "Suite 76 tests saveDeck succeeds for v
 test("[Suite 76.200]" in testrunner_src, "Suite 76 tests DeckSummaryView contains Cards table for client caching")
 test("[Suite 76.201]" in testrunner_src, "Suite 76 tests setActiveDeck succeeds for valid legal deck")
 test("[Suite 76.202]" in testrunner_src, "Suite 76 tests setActiveDeck rejects invalid empty deck")
+test("[Suite 76.203]" in testrunner_src, "Suite 76 tests getSlotEntitlement returns valid slot entitlement view")
+test("[Suite 76.204]" in testrunner_src, "Suite 76 tests getSlotEntitlement UsedSlots and AvailableSlots are consistent")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess
