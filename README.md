@@ -6,21 +6,19 @@ Up to 4 players form an adventuring party, choose from 10 distinct RPG Hero clas
 
 ---
 
-## 🚀 Current Project Status: Phase 1 – 4.1, 3D Rooms, Events & Reaction V2
+## 🚀 Current Project Status: Phase 4 Persistent Decks, Deck Builder Frontend, 3D Rooms / Events / Merchant / Campfire, Reaction V2 & Server Hardening
 
-The project architecture has completed comprehensive hardening across all major pillars:
-* **Phase 1 (1.0 – 1.2)**: Single Source of Truth architecture, elimination of legacy monoliths, unified `RunManager` and `CombatService`, CardInstance unique GUIDs, multi-enemy support, and reactive visualizers.
-* **Phase 2 (2.0 – 2.4)**: Decoupled combat pipeline (`DamagePipeline`, `ModifierResolver`, `TargetResolver`, `StatusService`, `EffectResolver`), card schema hardening, and strict target kinds.
-* **Phase 3 (3.0 – 3.3)**: RPG foundation (`EquipmentService`, `StatResolver`, `SkillService`, `PassiveService`), runtime modifier resolution, network ownership boundary closure, and server-authoritative provisioning.
-* **Phase 4 (4.0 – 4.1)**: Persistent account profile (`ProfileVersion = 1`), permanent `CardCollectionService`, configurable `DeckService` (slot entitlements, validation, active deck fallback), fail-closed DataStore loading, `UpdateAsync` concurrency safety, and remote security.
-* **3D Physical Room Streaming (`WorldRoomService`)**: Canonical room geometry lifecycle owner (`Workspace.CardRiftWorld.ActiveRoom`), streaming combat arenas, event chambers, campfire groves, and merchant bazaars with zero asset leakage.
-* **Interactive Co-op Event Chambers (`EventService`, `EventData`)**: 3D cooperative puzzle encounters (rune sequence puzzles, statue riddles) with physical ClickDetectors and shared/individual clues.
-* **Dynamic Elemental Environments (`EnvironmentService`, `EnvironmentData`)**: Battlefield weather affinities (Rain-Soaked, Scorched Ground, Frozen Wastes, Arcane Storm, Toxic Swamp) with damage modifiers, status bonuses, and in-combat transformations.
-* **Reaction V2 & 3D Attack Presentation (`ReactionService`, `CombatVFXController`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry). Bounded client timestamp validation with packet arrival grace (`0.20s`).
+The current codebase implements and hardens the following foundational pillars:
+* **Phase 4 Persistent Collection & Decks (`CardCollectionService.luau`, `DeckService.luau`, `PersistenceService.luau`)**: Profile versioning (`ProfileVersion = 1`), permanent card collection ownership tracking, configurable deck slot entitlements (4 base, up to 20), class-agnostic saved decks (`classId = nil`), and deterministic active deck fallback.
+* **Deck Builder Frontend (`UIController.client.luau`)**: 3-column interactive modal interface, client-side draft editing with legal bounds validation (8–30 cards, max 3 copies), collection browser with search filter, and authoritative remote synchronization.
+* **3D Physical Room Streaming & Encounters (`WorldRoomService.luau`, `EventService.luau`, `RunManager.luau`)**: Physical room geometry lifecycle streaming (`Workspace.CardRiftWorld.ActiveRoom`), interactive co-op event puzzles, shared merchant party stock with double-purchase concurrency locks, campfire choice semantics (Rest vs. Leave), and two-stage failure injection state rollbacks.
+* **Reaction V2 & 3D Attack Presentation (`ReactionService.luau`, `CombatVFXController.client.luau`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry) with bounded latency compensation.
+* **Server-Authoritative Invariants & Hardening (`DeckService.luau`, `init.server.luau`, `RunManager.luau`)**: Server-authoritative deck deletion rules (strictly rejecting deletion of sole or active decks), mid-run mutation boundary guards outside Lobby (`Phase ~= "Lobby"`), and fail-closed card grant test seams with zero persistence side effects.
+* **Core Combat & RPG Subsystems (`CombatService.luau`, `DamagePipeline.luau`, `ClassService.luau`)**: Decoupled combat execution, dynamic co-op HP scaling, multi-enemy support, equipment/stat/skill/passive services, and 8 implemented class combat gimmicks (with remaining gimmicks reserved on the roadmap).
 
 ### 🧪 Verification Baseline
 * **76 In-Game Integration Suites** in `TestRunner.luau` (244 test assertions in Suite 76 alone, hundreds of assertions across all suites) covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
-* **1,593 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **Offline verifier contains 1,429 checks** in `tests/verify_phase1_integration.py`; runtime execution must be performed locally/Studio.
 * **Authoritative Build Fingerprint**: `BUILD_ID = "hardened_server_deck_contracts_20260919"` (`Hardened Server Deck Invariants & Contracts`).
 * **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
@@ -244,7 +242,7 @@ spire-game/
 │       └── CombatVFXController.client.luau # Client 3D attack motions, projectiles, and AoE
 │
 └── tests/
-    └── verify_phase1_integration.py    # 1,525 offline architecture & logic verifiers
+    └── verify_phase1_integration.py    # 1,429 offline architecture & logic verifiers
 ```
 
 ---
@@ -260,7 +258,7 @@ spire-game/
 ```bash
 python tests/verify_phase1_integration.py
 ```
-*Executes all 1,525 verifier checks against file schemas, network contracts, typing, and logic rules.*
+*Executes all 1,429 verifier checks against file schemas, network contracts, typing, and logic rules.*
 
 ### 2. Build Roblox Place File
 ```bash
