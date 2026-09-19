@@ -174,7 +174,8 @@ local function playMeleeAttack(win: StateTypes.ReactionWindowView, enemyModel: M
 
 	local startTime = win.AttackStartServerTime
 	local impactTime = win.ImpactServerTime
-	local totalWindupTime = math.max(0.1, (impactTime - startTime) * 0.40)
+	local totalDuration = math.max(0.1, impactTime - startTime)
+	local totalWindupTime = math.clamp(win.TelegraphDuration or (totalDuration * 0.40), 0.05, totalDuration - 0.05)
 	local lungeStartTime = startTime + totalWindupTime
 	local recoveryDuration = win.RecoveryDuration or 0.35
 	local endTime = impactTime + recoveryDuration
@@ -242,7 +243,8 @@ local function playJumpAttack(win: StateTypes.ReactionWindowView, enemyModel: Mo
 
 	local startTime = win.AttackStartServerTime
 	local impactTime = win.ImpactServerTime
-	local crouchTime = math.max(0.1, (impactTime - startTime) * 0.30)
+	local totalDuration = math.max(0.1, impactTime - startTime)
+	local crouchTime = math.clamp(win.TelegraphDuration or (totalDuration * 0.30), 0.05, totalDuration - 0.05)
 	local leapStartTime = startTime + crouchTime
 	local recoveryDuration = win.RecoveryDuration or 0.45
 	local endTime = impactTime + recoveryDuration
@@ -331,7 +333,8 @@ local function playProjectileAttack(win: StateTypes.ReactionWindowView, enemyMod
 
 	local startTime = win.AttackStartServerTime
 	local impactTime = win.ImpactServerTime
-	local castWindup = math.max(0.15, (impactTime - startTime) * 0.25)
+	local totalDuration = math.max(0.1, impactTime - startTime)
+	local castWindup = math.clamp(win.TelegraphDuration or (totalDuration * 0.25), 0.05, totalDuration - 0.05)
 	local flightStartTime = startTime + castWindup
 	local flightDuration = math.max(0.05, impactTime - flightStartTime)
 	local recoveryDuration = win.RecoveryDuration or 0.30

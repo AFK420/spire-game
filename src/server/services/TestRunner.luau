@@ -904,6 +904,7 @@ local function runSuite67()
 
 		-- 8. Clean up
 		CombatService.cleanupCombat()
+		RunManager.getRunState().Phase = "RunVictory"
 		RunManager.resetToLobby(soloPlayer :: any)
 		assertTest(RunManager.getRunState().Phase == "Lobby", "[Suite 67.20] Clean reset to Lobby completes")
 	end
@@ -1453,8 +1454,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "reaction_v2_20260918", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "Reaction V2 3D Attack & Timing Hardening", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "authority_room_transactions_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "Final Authority & Room Transaction Hardening", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -2356,6 +2357,85 @@ local function runSuite75()
 	local view = EnvironmentService.getEnvironmentView(rainState)
 	assertTest(view ~= nil and view.EnvironmentId == "FrozenWastes", "[Suite 75.14] getEnvironmentView returns FrozenWastes snapshot")
 	assertTest(view.Icon == "❄️", "[Suite 75.15] FrozenWastes view includes snowflake icon")
+
+	WorldRoomService.cleanupRoom()
+end
+
+local function runSuite76()
+	print("\n--- [Suite 76] Final Authority & Room Transaction Hardening ---")
+
+	-- 76.1: Transactional room loading in WorldRoomService
+	WorldRoomService.cleanupRoom()
+	local activeRoom = WorldRoomService.loadRoom("Combat", 1, 1, "enc_test_76", "None", 76001)
+	assertTest(typeof(activeRoom) == "Instance" and activeRoom:IsA("Model"), "[Suite 76.1] loadRoom returns Model instance")
+	assertTest(activeRoom.Name == "ActiveRoom", "[Suite 76.2] loadRoom returns Model named ActiveRoom")
+	assertTest(activeRoom.Parent == Workspace:FindFirstChild("CardRiftWorld"), "[Suite 76.3] ActiveRoom parented to Workspace.CardRiftWorld")
+	assertTest(activeRoom:GetAttribute("TemplateId") == "tpl_Combat_1", "[Suite 76.4] ActiveRoom has matching TemplateId attribute")
+	assertTest(WorldRoomService.getActiveRoomModel() == activeRoom, "[Suite 76.5] getActiveRoomModel matches returned model")
+
+	-- 76.2: Cleanup removes room completely
+	WorldRoomService.cleanupRoom()
+	assertTest(WorldRoomService.getActiveRoomModel() == nil, "[Suite 76.6] cleanupRoom clears active room reference")
+	local world = Workspace:FindFirstChild("CardRiftWorld")
+	assertTest(world == nil or world:FindFirstChild("ActiveRoom") == nil, "[Suite 76.7] cleanupRoom leaves zero orphan ActiveRoom in world")
+
+	-- 76.3: ContinueFromRewards security: outsider rejected
+	RunManager.resetRunForTesting()
+	local rmRun = RunManager.getRunState()
+	rmRun.Phase = "Rewards"
+	local pIn = { UserId = 76010, Name = "PartyMember1", DisplayName = "PartyMember1", IsA = function(_, cls) return cls == "Player" end }
+	RunManager.addPlayer(pIn :: any)
+	rmRun.Phase = "Rewards"
+	rmRun.PendingRewards = {
+		GoldAmount = 25,
+		AetherShardsAmount = 10,
+		OfferedCardsByPlayer = {},
+		ClaimedCards = {},
+	}
+	local outsider = { UserId = 99999, Name = "Outsider", DisplayName = "Outsider", IsA = function(_, cls) return cls == "Player" end }
+	local outOk, outErr = RunManager.continueFromRewards(outsider :: any)
+	assertTest(outOk == false, "[Suite 76.8] continueFromRewards rejects outsider player")
+	assertTest(string.find(outErr or "", "party") ~= nil, "[Suite 76.9] continueFromRewards returns outsider error message")
+	assertTest(rmRun.Phase == "Rewards", "[Suite 76.10] outsider rejection leaves Phase as Rewards")
+	assertTest(rmRun.PendingRewards ~= nil, "[Suite 76.11] outsider rejection preserves PendingRewards")
+
+	-- 76.4: ContinueFromRewards security: disconnected player rejected
+	local pState = RunManager.getPlayerState(pIn)
+	assert(pState, "pState exists")
+	pState.IsConnected = false
+	local discOk, discErr = RunManager.continueFromRewards(pIn :: any)
+	assertTest(discOk == false, "[Suite 76.12] continueFromRewards rejects disconnected party member")
+	assertTest(string.find(discErr or "", "disconnected") ~= nil, "[Suite 76.13] continueFromRewards returns disconnected error message")
+	assertTest(rmRun.Phase == "Rewards", "[Suite 76.14] disconnected rejection leaves Phase as Rewards")
+	pState.IsConnected = true
+
+	-- 76.5: ReturnToLobby security: outsider rejected
+	rmRun.Phase = "RunVictory"
+	local retOutOk, retOutErr = RunManager.resetToLobby(outsider :: any)
+	assertTest(retOutOk == false, "[Suite 76.15] resetToLobby rejects outsider player")
+	assertTest(string.find(retOutErr or "", "party") ~= nil, "[Suite 76.16] resetToLobby returns outsider error message")
+	assertTest(rmRun.Phase == "RunVictory", "[Suite 76.17] outsider reset rejection leaves Phase as RunVictory")
+
+	-- 76.6: ReturnToLobby security: in-progress run rejected
+	rmRun.Phase = "ActiveRoom"
+	local retProgOk, retProgErr = RunManager.resetToLobby(pIn :: any)
+	assertTest(retProgOk == false, "[Suite 76.18] resetToLobby rejects in-progress run")
+	assertTest(string.find(retProgErr or "", "progress") ~= nil, "[Suite 76.19] resetToLobby returns in-progress error message")
+	assertTest(rmRun.Phase == "ActiveRoom", "[Suite 76.20] in-progress rejection leaves Phase as ActiveRoom")
+
+	-- 76.7: ReturnToLobby security: valid party member in RunVictory succeeds
+	rmRun.Phase = "RunVictory"
+	local retValidOk, retValidErr = RunManager.resetToLobby(pIn :: any)
+	assertTest(retValidOk == true, "[Suite 76.21] resetToLobby succeeds for party member on RunVictory")
+	assertTest(RunManager.getRunState().Phase == "Lobby", "[Suite 76.22] successful resetToLobby returns Phase to Lobby")
+
+	-- 76.8: Reaction timing semantics in ReactionData
+	local wUp, impDelay = ReactionData.resolveProjectileTiming(30, 30, 0.40)
+	assertTest(wUp == 0.40, "[Suite 76.23] resolveProjectileTiming returns exact cast windup")
+	assertTest(impDelay == 1.40, "[Suite 76.24] resolveProjectileTiming ensures ImpactDelay = TelegraphDuration + travelTime (1.40s)")
+	local heavyProf = ReactionData.getTimingProfile("SlowHeavy")
+	assert(heavyProf, "heavyProf exists")
+	assertTest(heavyProf.TelegraphDuration <= heavyProf.ImpactDelay, "[Suite 76.25] SlowHeavy TelegraphDuration <= ImpactDelay")
 
 	WorldRoomService.cleanupRoom()
 end
@@ -8487,6 +8567,7 @@ function TestRunner.runAllTests(): boolean
 		DisplayName = "CapPlayer1",
 		IsA = function(_, cls) return cls == "Player" end,
 	}
+	RunManager.getRunState().Phase = "RunVictory"
 	RunManager.resetToLobby(lobbyPlayer :: any)
 	local resetState = RunManager.getRunState()
 	assertTest(resetState.Phase == "Lobby", "[Suite 64.19a] resetToLobby returns Phase to Lobby")
@@ -8545,6 +8626,11 @@ function TestRunner.runAllTests(): boolean
 	-- SUITE 75: ENVIRONMENT SERVICE ELEMENTAL AFFINITIES & TRANSFORMATIONS
 	----------------------------------------------------------------------------
 	runSuite75()
+
+	----------------------------------------------------------------------------
+	-- SUITE 76: FINAL AUTHORITY & ROOM TRANSACTION HARDENING
+	----------------------------------------------------------------------------
+	runSuite76()
 
 	-- Final Cleanup
 	CombatService.cleanupCombat()

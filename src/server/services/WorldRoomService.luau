@@ -96,12 +96,9 @@ end
 --------------------------------------------------------------------------------
 
 local function buildActiveRoomContainer(templateId: string): (Model, Folder, Folder, Folder, Folder, Folder)
-	local world = getOrCreateWorldContainer()
-
 	local roomModel = Instance.new("Model")
 	roomModel.Name = ACTIVE_ROOM_NAME
 	roomModel:SetAttribute("TemplateId", templateId)
-	roomModel.Parent = world
 
 	local geometryFolder = Instance.new("Folder")
 	geometryFolder.Name = "Geometry"
@@ -331,15 +328,16 @@ end
 -- Environmental Presentation
 --------------------------------------------------------------------------------
 
-function WorldRoomService.applyEnvironmentVisuals(environmentId: StateTypes.EnvironmentId)
-	if not currentActiveRoom then return end
-	local effectsFolder = currentActiveRoom:FindFirstChild("Effects") :: Folder?
+function WorldRoomService.applyEnvironmentVisuals(environmentId: StateTypes.EnvironmentId, targetRoom: Model?)
+	local room = targetRoom or currentActiveRoom
+	if not room then return end
+	local effectsFolder = room:FindFirstChild("Effects") :: Folder?
 	if not effectsFolder then return end
 
 	-- Clean up previous effects
 	effectsFolder:ClearAllChildren()
 
-	local geometryFolder = currentActiveRoom:FindFirstChild("Geometry") :: Folder?
+	local geometryFolder = room:FindFirstChild("Geometry") :: Folder?
 	local floorPart = geometryFolder and geometryFolder:FindFirstChildWhichIsA("BasePart")
 
 	if environmentId == "RainSoaked" then
@@ -575,30 +573,47 @@ function WorldRoomService.loadRoom(
 
 	-- 2. Deterministic template identification
 	local env = environmentId or "None"
-	currentEnvironmentId = env
-	currentRoomTemplateId = string.format("tpl_%s_%d", string.gsub(roomType, "%s+", "_"), tier)
+	local templateId = string.format("tpl_%s_%d", string.gsub(roomType, "%s+", "_"), tier)
 
-	-- 3. Build container tree
-	local roomModel, geometry, spawnPoints, interactables, hazards, effects = buildActiveRoomContainer(currentRoomTemplateId)
+	-- 3. Build container tree in isolation (unparented to world)
+	local roomModel, geometry, spawnPoints, interactables, hazards, effects = buildActiveRoomContainer(templateId)
+
+	-- 4. Construct geometry and visuals under pcall
+	local constructOk, constructErr = pcall(function()
+		if roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss" then
+			buildCombatArena(geometry, spawnPoints, env)
+		elseif roomType == "Event" then
+			buildEventChamber(geometry, spawnPoints, encounterId)
+		elseif roomType == "Campfire Rest" then
+			buildCampfireGrove(geometry, spawnPoints)
+		elseif roomType == "Merchant Shop" then
+			buildMerchantBazaar(geometry, spawnPoints)
+		else
+			buildCombatArena(geometry, spawnPoints, env)
+		end
+
+		if env ~= "None" then
+			WorldRoomService.applyEnvironmentVisuals(env, roomModel)
+		end
+	end)
+
+	if not constructOk then
+		-- Failure: destroy temporary model, ensure no partial room published
+		pcall(function()
+			roomModel:Destroy()
+		end)
+		currentActiveRoom = nil
+		currentEnvironmentId = "None"
+		currentRoomTemplateId = "tpl_default"
+		error(string.format("Room construction failed for %s (%s): %s", roomType, templateId, tostring(constructErr)))
+	end
+
+	-- 5. Construction succeeded completely: publish ActiveRoom to Workspace.CardRiftWorld
+	local world = getOrCreateWorldContainer()
+	roomModel.Parent = world
 	currentActiveRoom = roomModel
-
-	-- 4. Construct geometry based on RoomType
-	if roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss" then
-		buildCombatArena(geometry, spawnPoints, env)
-	elseif roomType == "Event" then
-		buildEventChamber(geometry, spawnPoints, encounterId)
-	elseif roomType == "Campfire Rest" then
-		buildCampfireGrove(geometry, spawnPoints)
-	elseif roomType == "Merchant Shop" then
-		buildMerchantBazaar(geometry, spawnPoints)
-	else
-		buildCombatArena(geometry, spawnPoints, env)
-	end
-
-	-- 5. Apply environment visual preset if applicable
-	if env ~= "None" then
-		WorldRoomService.applyEnvironmentVisuals(env)
-	end
+	currentEnvironmentId = env
+	currentRoomTemplateId = templateId
 
 	return roomModel
 end

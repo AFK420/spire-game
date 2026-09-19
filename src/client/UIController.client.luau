@@ -756,6 +756,7 @@ environmentLabel.Parent = environmentBadge
 
 -- Combat Reaction 3D Attack Presentation & Unobtrusive HUD
 local activeReactionWindowId: string? = nil
+local submittedReactionWindowId: string? = nil
 local currentReactionWindowView: StateTypes.ReactionWindowView? = nil
 
 -- Small, unobtrusive reaction prompt bar positioned above hand
@@ -869,7 +870,9 @@ function submitReactionAttempt(reactionType: "Dodge" | "Parry")
 
 	local winId = activeReactionWindowId
 	local winView = currentReactionWindowView
+	submittedReactionWindowId = winId
 	activeReactionWindowId = nil -- Prevent multiple local submissions
+	currentReactionWindowView = nil
 	reactionWidget.Visible = false -- Dismiss prompt bar immediately on reaction
 
 	-- Synchronized server-time evaluation for client prediction feedback
@@ -1690,7 +1693,11 @@ if CombatStateUpdateEvent then
 		-- Active Reaction Window Update (3D Attack Timing & Reaction Prompt)
 		if snapshot.ActiveReactionWindow then
 			local win = snapshot.ActiveReactionWindow
-			if activeReactionWindowId ~= win.WindowId then
+			if win.WindowId == submittedReactionWindowId then
+				-- Player has already submitted a reaction for this window; suppress reopening prompt
+				reactionWidget.Visible = false
+			elseif activeReactionWindowId ~= win.WindowId then
+				submittedReactionWindowId = nil
 				activeReactionWindowId = win.WindowId
 				currentReactionWindowView = win
 				startReactionOpportunity(win)
@@ -1698,6 +1705,7 @@ if CombatStateUpdateEvent then
 		else
 			activeReactionWindowId = nil
 			currentReactionWindowView = nil
+			submittedReactionWindowId = nil
 			reactionWidget.Visible = false
 		end
 

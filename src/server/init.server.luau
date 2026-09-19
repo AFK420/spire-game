@@ -781,12 +781,11 @@ NetworkService.ReturnToLobbyEvent.OnServerEvent:Connect(function(player: Player)
 		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = false, Message = "Rate limit exceeded." })
 		return
 	end
-	local runState = RunManager.getRunState()
-	if runState.Phase == "RunVictory" or runState.Phase == "RunDefeat" then
-		RunManager.resetToLobby()
+	local success, err = RunManager.resetToLobby(player)
+	if success then
 		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = true })
 	else
-		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = false, Message = "Cannot return to lobby while run is in progress." })
+		NetworkService.sendActionResult(player, { Action = "ReturnToLobby", Success = false, Message = err or "Cannot return to lobby while run is in progress." })
 	end
 end)
 

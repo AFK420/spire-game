@@ -859,6 +859,26 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 end
 
+local function validateLoadedRoom(roomInstance: any, expectedTemplateId: string?): (boolean, string?)
+	if not roomInstance or typeof(roomInstance) ~= "Instance" or not roomInstance:IsA("Model") then
+		return false, "loadRoom result is not a Model"
+	end
+	local cardRiftWorld = Workspace:FindFirstChild("CardRiftWorld")
+	if not cardRiftWorld or roomInstance.Parent ~= cardRiftWorld then
+		return false, "ActiveRoom is not parented under Workspace.CardRiftWorld"
+	end
+	if roomInstance.Name ~= "ActiveRoom" then
+		return false, string.format("ActiveRoom model has invalid name '%s'", tostring(roomInstance.Name))
+	end
+	if expectedTemplateId then
+		local tplAttr = roomInstance:GetAttribute("TemplateId")
+		if tplAttr and tplAttr ~= expectedTemplateId then
+			return false, string.format("ActiveRoom TemplateId mismatch: expected '%s', got '%s'", expectedTemplateId, tostring(tplAttr))
+		end
+	end
+	return true, nil
+end
+
 function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): (boolean, string?)
 	local dRun = if (isIsolatedTesting and isLiveAction) then liveDungeonRun else internalDungeonRun
 	local runToMutate = if (isIsolatedTesting and isLiveAction) then liveRun else currentRun
@@ -874,7 +894,65 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		return false, err or "Invalid target node."
 	end
 
-	-- Stage 2: If combat or event node, attempt encounter initialization in pcall BEFORE mutating run state or dungeon
+	-- Stage 2: Transactional 3D room loading and encounter setup BEFORE mutating run or dungeon state
+	local wrs = getWorldRoomService()
+	local activeRoom: Model? = nil
+	local encounterId = "enc_" .. node.Id
+	if node.Type == "Event" then
+		local rng = Random.new(dRun.Seed + node.Tier * 13)
+		encounterId = if rng:NextNumber() < 0.5 then "rune_sequence_puzzle" else "statue_riddle"
+	end
+	local expectedTemplateId = string.format("tpl_%s_%d", string.gsub(node.Type, "%s+", "_"), node.Tier)
+
+	if wrs then
+		local roomOk, roomResult = pcall(function()
+			return wrs.loadRoom(
+				node.Type :: StateTypes.ActiveRoomType,
+				node.Tier,
+				node.Act,
+				encounterId,
+				"None",
+				dRun.Seed
+			)
+		end)
+
+		if not roomOk then
+			local loadErr = tostring(roomResult)
+			local isCombat = (node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss")
+			if isCombat then
+				warn(string.format("[MAPFLOW][SERVER] combat room load failed: %s", loadErr))
+			elseif node.Type == "Event" then
+				warn(string.format("[MAPFLOW][SERVER] event room load failed: %s", loadErr))
+			else
+				warn(string.format("[MAPFLOW][SERVER] room load failed: %s", loadErr))
+			end
+			print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", loadErr))
+			pcall(function()
+				wrs.cleanupRoom()
+			end)
+			return false, "Failed to load active room: " .. loadErr
+		end
+
+		local isValid, validErr = validateLoadedRoom(roomResult, expectedTemplateId)
+		if not isValid then
+			local loadErr = validErr or "ActiveRoom validation failed"
+			local isCombat = (node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss")
+			if isCombat then
+				warn(string.format("[MAPFLOW][SERVER] combat room load failed: %s", loadErr))
+			elseif node.Type == "Event" then
+				warn(string.format("[MAPFLOW][SERVER] event room load failed: %s", loadErr))
+			else
+				warn(string.format("[MAPFLOW][SERVER] room validation failed: %s", loadErr))
+			end
+			print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", loadErr))
+			pcall(function()
+				wrs.cleanupRoom()
+			end)
+			return false, "Failed to load active room: " .. loadErr
+		end
+		activeRoom = roomResult :: Model
+	end
+
 	local activeCombat = nil
 	local activeEvent = nil
 	if node.Type == "Combat" or node.Type == "Elite Monster" or node.Type == "Act Boss" then
@@ -883,32 +961,6 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		end
 
 		print(string.format("[MAPFLOW][SERVER] 5. combat START: Node=%s", node.Id))
-		local encounterId = "enc_" .. node.Id
-
-		-- Ensure ActiveRoom exists in Workspace BEFORE combat initialization so enemy models are parented inside ActiveRoom
-		local wrs = getWorldRoomService()
-		if wrs then
-			local roomOk, roomResult = pcall(function()
-				return wrs.loadRoom(
-					node.Type :: StateTypes.ActiveRoomType,
-					node.Tier,
-					node.Act,
-					encounterId,
-					"None",
-					dRun.Seed
-				)
-			end)
-			local activeRoom = (roomOk and typeof(roomResult) == "Instance" and roomResult:IsA("Model") and roomResult.Parent ~= nil and roomResult) or (wrs.getActiveRoomModel and wrs.getActiveRoomModel())
-			if not activeRoom then
-				local loadErr = if not roomOk then tostring(roomResult) else "ActiveRoom failed to instantiate"
-				warn(string.format("[MAPFLOW][SERVER] combat room load failed: %s", loadErr))
-				print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", loadErr))
-				pcall(function()
-					wrs.cleanupRoom()
-				end)
-				return false, "Failed to load active room: " .. loadErr
-			end
-		end
 
 		local combatOk, combatResult = pcall(function()
 			return CombatService.startCombat(
@@ -939,36 +991,16 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		-- Apply environment visuals to already loaded ActiveRoom if selected by combat
 		if wrs and activeCombat and activeCombat.Environment and activeCombat.Environment.EnvironmentId ~= "None" then
 			pcall(function()
-				wrs.applyEnvironmentVisuals(activeCombat.Environment.EnvironmentId)
+				wrs.applyEnvironmentVisuals(activeCombat.Environment.EnvironmentId, activeRoom)
 			end)
 		end
 		print(string.format("[MAPFLOW][SERVER] 6. combat SUCCESS: Node=%s", node.Id))
 	elseif node.Type == "Event" then
 		local es = getEventService()
 		if es then
-			local rng = Random.new(dRun.Seed + node.Tier * 13)
-			local eventId = if rng:NextNumber() < 0.5 then "rune_sequence_puzzle" else "statue_riddle"
-
-			local wrs = getWorldRoomService()
-			if wrs then
-				local roomOk, roomResult = pcall(function()
-					return wrs.loadRoom("Event", node.Tier, node.Act, eventId, "None", dRun.Seed)
-				end)
-				local activeRoom = (roomOk and typeof(roomResult) == "Instance" and roomResult:IsA("Model") and roomResult.Parent ~= nil and roomResult) or (wrs.getActiveRoomModel and wrs.getActiveRoomModel())
-				if not activeRoom then
-					local loadErr = if not roomOk then tostring(roomResult) else "Event ActiveRoom failed to instantiate"
-					warn(string.format("[MAPFLOW][SERVER] event room load failed: %s", loadErr))
-					print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", loadErr))
-					pcall(function()
-						wrs.cleanupRoom()
-					end)
-					return false, "Failed to load active room: " .. loadErr
-				end
-			end
-
 			local eventOk, eventResult = pcall(function()
 				return es.startEvent(
-					eventId,
+					encounterId,
 					runToMutate.PartyMembers,
 					dRun.Seed + node.Tier,
 					function(outcome: "Success" | "Failure", eventState: StateTypes.EventState)
@@ -1050,20 +1082,7 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		end
 	end
 
-	-- Stage 5: Load physical 3D room for non-combat/non-event rooms, and teleport players
-	local wrs = getWorldRoomService()
-	if wrs and node.Type ~= "Event" and node.Type ~= "Combat" and node.Type ~= "Elite Monster" and node.Type ~= "Act Boss" then
-		pcall(function()
-			wrs.loadRoom(
-				node.Type :: StateTypes.ActiveRoomType,
-				node.Tier,
-				node.Act,
-				"enc_" .. node.Id,
-				envId,
-				dRun.Seed
-			)
-		end)
-	end
+	-- Stage 5: Teleport players to loaded 3D room
 	if wrs then
 		pcall(function()
 			wrs.teleportPlayers(runToMutate.PartyMembers)
@@ -1284,7 +1303,7 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 	return true, nil
 end
 
-function RunManager.continueFromRewards(player: any): boolean
+function RunManager.continueFromRewards(player: any): (boolean, string?)
 	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
 	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
 		isReal = true
@@ -1292,23 +1311,47 @@ function RunManager.continueFromRewards(player: any): boolean
 	local runToUse = if (isIsolatedTesting and isReal) then liveRun else currentRun
 	local dRun = if (isIsolatedTesting and isReal) then liveDungeonRun else internalDungeonRun
 
-	local userId = if typeof(player) == "table" or (typeof(player) == "Instance" and player:IsA("Player")) then player.UserId else "?"
+	local userId: number? = nil
+	if typeof(player) == "number" then
+		userId = player
+	elseif typeof(player) == "Instance" and player:IsA("Player") then
+		userId = player.UserId
+	elseif typeof(player) == "table" and typeof(player.UserId) == "number" then
+		userId = player.UserId
+	end
+
 	print(string.format("[REWARDFLOW][SERVER][3] continueFromRewards requested: Player=%s, Phase=%s", tostring(userId), tostring(runToUse.Phase)))
+
+	if not userId then
+		warn("[REWARDFLOW][SERVER][3] rejected: Invalid player reference.")
+		return false, "Invalid player reference."
+	end
+
+	local member = runToUse.PartyMembers[userId]
+	if not member then
+		warn(string.format("[REWARDFLOW][SERVER][3] rejected: Player %s not in party.", tostring(userId)))
+		return false, "Caller is not an active party member."
+	end
+
+	if member.IsConnected == false then
+		warn(string.format("[REWARDFLOW][SERVER][3] rejected: Player %s is disconnected.", tostring(userId)))
+		return false, "Caller is disconnected."
+	end
 
 	-- Strict security guard: only allowed in Rewards phase and never during active combat or active room
 	if runToUse.Phase ~= "Rewards" and (runToUse :: any).RoomPhase ~= "Rewards" then
 		warn("[REWARDFLOW][SERVER][3] rejected: Not in Rewards phase.")
-		return false
+		return false, "Not in Rewards phase."
 	end
 	if runToUse.Phase == "ActiveRoom" or (runToUse :: any).RoomPhase == "ActiveRoom" or runToUse.ActiveCombat ~= nil then
 		warn(string.format("[REWARDFLOW][SERVER][3] rejected: ActiveRoom or ActiveCombat non-nil (Phase=%s, ActiveCombat=%s)",
 			tostring(runToUse.Phase), tostring(runToUse.ActiveCombat)))
-		return false
+		return false, "Cannot continue during active room or combat."
 	end
 
 	if not dRun then
 		warn("[REWARDFLOW][SERVER][3] rejected: No dungeon run found.")
-		return false
+		return false, "No dungeon run found."
 	end
 
 	-- Check if continuing after an Act Boss (Tier 10) was cleared: advance to the next Act
@@ -1359,7 +1402,7 @@ function RunManager.continueFromRewards(player: any): boolean
 	if not isIsolatedTesting or isReal then
 		RunManager.broadcastRunSnapshots("Select the next room on the Map.", isReal)
 	end
-	return true
+	return true, nil
 end
 
 --------------------------------------------------------------------------------
@@ -1416,7 +1459,41 @@ function RunManager.getLiveDungeonRun(): DungeonMap.DungeonRun?
 end
 
 -- Resets existing party to clean Lobby state for a new expedition run
-function RunManager.resetToLobby()
+function RunManager.resetToLobby(callingPlayer: any?): (boolean, string?)
+	local isReal = (typeof(callingPlayer) == "Instance" and callingPlayer:IsA("Player"))
+	if typeof(callingPlayer) == "table" and callingPlayer._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+	local targetRun = if (isIsolatedTesting and isReal) then liveRun else currentRun
+
+	if callingPlayer ~= nil then
+		local userId: number? = nil
+		if typeof(callingPlayer) == "number" then
+			userId = callingPlayer
+		elseif typeof(callingPlayer) == "Instance" and callingPlayer:IsA("Player") then
+			userId = callingPlayer.UserId
+		elseif typeof(callingPlayer) == "table" and typeof(callingPlayer.UserId) == "number" then
+			userId = callingPlayer.UserId
+		end
+
+		if not userId then
+			return false, "Invalid player reference."
+		end
+
+		local member = targetRun.PartyMembers[userId]
+		if not member then
+			return false, "Caller is not an active party member."
+		end
+
+		if member.IsConnected == false then
+			return false, "Caller is disconnected."
+		end
+
+		if targetRun.Phase ~= "RunVictory" and targetRun.Phase ~= "RunDefeat" then
+			return false, "Cannot return to lobby while run is in progress."
+		end
+	end
+
 	local runsToReset = { currentRun }
 	if isIsolatedTesting and liveRun and liveRun ~= currentRun then
 		table.insert(runsToReset, liveRun)
@@ -1487,6 +1564,7 @@ function RunManager.resetToLobby()
 	if not isIsolatedTesting then
 		RunManager.broadcastRunSnapshots("Returned to Lobby.")
 	end
+	return true, nil
 end
 
 -- Resets the single run container to clean Lobby state (used for testing and new runs)

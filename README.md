@@ -63,6 +63,11 @@ Every class features unique base stats, starting decks, passive skill trees, and
   * *Predator*: Wolf attacks inflict Bleed / +25% damage vulnerability.
   * *Symbiote*: Wolf absorbs 50% of incoming damage directed at the hero.
 
+> [!NOTE]
+> **Class Implementation & Combat Gimmick Roadmap Status**:
+> - **Fully Implemented in Combat Engine (`ClassService.luau`)**: Warlord (*Rage* & *Berserker*), Shadowblade (*Combo*, *Assassin* crits, *Venomancer* poison), Aether Mage (*Overload*, *Pyromancer* burst, *Cryomancer* shields), Blood Priest (*Sacrifice* HP for energy, *Zealot* shields, *Inquisitor* shockwaves), Gambler (*Luck Rolls*, *High Roller* coin flips, *Card Sharp* refunds), Mechanist (*Gears* scrap generation, *Sentry Turrets*, *Artificer* shields), Necrobinder (*Soul Tokens*, *Reaper* healing, *Bone Servants*), and Beastmaster (*Spirit Wolf* turn-end attack companion).
+> - **Roadmap Class Gimmicks**: Chronomancer (*Rewind* timeline undo & *Paradox* card loops), Plague Doctor (*Infection* contagion poison splash & *Apothecary* healing), and Beastmaster advanced subclass perks (*Predator* vulnerability & *Symbiote* damage interception) are designed in `ClassData.luau` schemas and scheduled for future combat expansions without stub pollution.
+
 ---
 
 ### 2. Procedural 4-Act Spire (`DungeonMap.luau`, `DungeonService.luau`)

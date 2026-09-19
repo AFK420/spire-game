@@ -5,6 +5,10 @@
 	Mapped to: ReplicatedStorage.Shared.ReactionData
 	Data-driven attack timing profiles for the 3D Attack Reaction System.
 	1. Defines telegraph duration, impact delay, and recovery timing per attack type.
+	   - AttackStartServerTime: Authoritative Workspace:GetServerTimeNow() timestamp when attack begins.
+	   - TelegraphDuration: Intentional visible anticipation / windup duration before active motion.
+	   - ImpactDelay: Total duration from AttackStartServerTime to impact (ImpactServerTime = AttackStart + ImpactDelay).
+	   - Projectiles: ImpactDelay = TelegraphDuration + travelTime (where travelTime = distance / ProjectileSpeed).
 	2. Defines tight Perfect and wider Good tolerances for Dodge and Parry.
 	3. Authoritatively gates whether an attack CanDodge, CanParry, or is Unreactable.
 ]=]

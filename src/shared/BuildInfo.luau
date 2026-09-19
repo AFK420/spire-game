@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "reaction_v2_playability_20260919",
-	BUILD_NAME = "Reaction V2 End-to-End Playability & Visual Synchronization",
+	BUILD_ID = "authority_room_transactions_20260919",
+	BUILD_NAME = "Final Authority & Room Transaction Hardening",
 }
 
 return BuildInfo

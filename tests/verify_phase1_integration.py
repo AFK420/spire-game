@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "reaction_v2_playability_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = reaction_v2_playability_20260919")
-test('BUILD_NAME = "Reaction V2 End-to-End Playability & Visual Synchronization"' in build_info_src, "BuildInfo declares BUILD_NAME = Reaction V2 End-to-End Playability & Visual Synchronization")
+test('BUILD_ID = "authority_room_transactions_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = authority_room_transactions_20260919")
+test('BUILD_NAME = "Final Authority & Room Transaction Hardening"' in build_info_src, "BuildInfo declares BUILD_NAME = Final Authority & Room Transaction Hardening")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -1817,6 +1817,50 @@ test('CombatStateUpdate' in ui_ctrl_src and 'CombatStateUpdate' in combat_vfx_sr
 # Hardened Room Loading Invariants
 test("combat room load failed" in run_mgr_src, "RunManager catches room loading failures and aborts combat initialization")
 test("event room load failed" in run_mgr_src, "RunManager catches event room loading failures and aborts event initialization")
+
+# Check 69: Final Authority & Room Transaction Hardening
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+world_room_src = (ROOT / "src/server/services/WorldRoomService.luau").read_text(encoding="utf-8")
+run_mgr_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+combat_vfx_src = (ROOT / "src/client/CombatVFXController.client.luau").read_text(encoding="utf-8")
+reaction_data_src = (ROOT / "src/shared/ReactionData.luau").read_text(encoding="utf-8")
+readme_src = (ROOT / "README.md").read_text(encoding="utf-8")
+
+print("\n--- [Check 69] Final Authority & Room Transaction Hardening ---")
+test("local function runSuite76()" in testrunner_src, "TestRunner includes Suite 76 definition")
+test("runSuite76()" in testrunner_src, "TestRunner invokes Suite 76 in runAllTests")
+test("[Suite 76.1]" in testrunner_src, "Suite 76 tests loadRoom returns Model instance")
+test("[Suite 76.4]" in testrunner_src, "Suite 76 tests ActiveRoom has matching TemplateId attribute")
+test("[Suite 76.7]" in testrunner_src, "Suite 76 tests cleanupRoom leaves zero orphan ActiveRoom in world")
+test("[Suite 76.8]" in testrunner_src, "Suite 76 tests continueFromRewards rejects outsider player")
+test("[Suite 76.12]" in testrunner_src, "Suite 76 tests continueFromRewards rejects disconnected party member")
+test("[Suite 76.15]" in testrunner_src, "Suite 76 tests resetToLobby rejects outsider player")
+test("[Suite 76.18]" in testrunner_src, "Suite 76 tests resetToLobby rejects in-progress run")
+test("[Suite 76.21]" in testrunner_src, "Suite 76 tests resetToLobby succeeds for party member on RunVictory")
+test("[Suite 76.24]" in testrunner_src, "Suite 76 tests resolveProjectileTiming ensures ImpactDelay = TelegraphDuration + travelTime")
+
+# WorldRoomService Transactional Loading
+test("buildActiveRoomContainer" in world_room_src and "roomModel.Parent = world" in world_room_src.split("if not constructOk then")[1], "WorldRoomService parents ActiveRoom to world ONLY after construction succeeds")
+test("currentActiveRoom = nil" in world_room_src.split("if not constructOk then")[1], "WorldRoomService cleans up partial room and resets currentActiveRoom on failure")
+
+# RunManager Transactional Travel & Validation
+test("local function validateLoadedRoom" in run_mgr_src, "RunManager implements validateLoadedRoom helper")
+test("getActiveRoomModel" not in run_mgr_src.split("function RunManager.travelToNode")[1].split("end\n\nfunction RunManager.onCombatCompleted")[0], "RunManager travelToNode never uses getActiveRoomModel fallback on failed load")
+
+# Authority Hardening for ContinueFromRewards & ReturnToLobby
+test("Caller is not an active party member." in run_mgr_src, "RunManager rejects non-party members in continueFromRewards and resetToLobby")
+test("Caller is disconnected." in run_mgr_src, "RunManager rejects disconnected members")
+test("RunManager.resetToLobby(player)" in init_server_src, "Server init delegates ReturnToLobby authorization to RunManager.resetToLobby(player)")
+
+# Reaction Timing Semantics & Single Submission UI Guard
+test("win.TelegraphDuration" in combat_vfx_src, "CombatVFXController drives attack windup directly from win.TelegraphDuration")
+test("submittedReactionWindowId" in ui_ctrl_src, "UIController tracks submittedReactionWindowId to suppress duplicate reaction prompt opening")
+test("TelegraphDuration: Intentional visible anticipation" in reaction_data_src, "ReactionData documents standard reaction timing semantics")
+
+# README Class Claims Audit
+test("Class Implementation & Combat Gimmick Roadmap Status" in readme_src, "README documents implemented vs roadmap class gimmicks without misleading claims")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess
