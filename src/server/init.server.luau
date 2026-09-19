@@ -331,6 +331,65 @@ NetworkService.ContinueFromRewardsEvent.OnServerEvent:Connect(function(player: P
 	end
 end)
 
+-- 8a. Campfire Choice (Rest or Leave)
+NetworkService.CampfireChoiceEvent.OnServerEvent:Connect(function(player: Player, choice: any)
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "CampfireChoice", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+
+	print(string.format("[CAMPFIREFLOW][SERVER] CampfireChoice received from %s (choice: %s)", player.Name, tostring(choice)))
+	local success, err = RunManager.completeCampfire(player, choice)
+	if not success then
+		warn(string.format("[CAMPFIREFLOW][SERVER] CampfireChoice failed for %s: %s", player.Name, tostring(err)))
+		NetworkService.sendActionResult(player, { Action = "CampfireChoice", Success = false, Message = tostring(err or "Failed to complete campfire.") })
+	else
+		print(string.format("[CAMPFIREFLOW][SERVER] CampfireChoice succeeded for %s", player.Name))
+		NetworkService.sendActionResult(player, { Action = "CampfireChoice", Success = true })
+	end
+end)
+
+-- 8b. Buy Merchant Item
+NetworkService.BuyMerchantItemEvent.OnServerEvent:Connect(function(player: Player, itemId: any)
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "BuyMerchantItem", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+
+	if typeof(itemId) ~= "string" or #itemId == 0 then
+		NetworkService.sendActionResult(player, { Action = "BuyMerchantItem", Success = false, Message = "Invalid item ID." })
+		return
+	end
+
+	print(string.format("[SHOPFLOW][SERVER] BuyMerchantItem received from %s: ItemId=%s", player.Name, itemId))
+	local success, err = RunManager.buyMerchantItem(player, itemId)
+	if not success then
+		warn(string.format("[SHOPFLOW][SERVER] BuyMerchantItem failed for %s: %s", player.Name, tostring(err)))
+		NetworkService.sendActionResult(player, { Action = "BuyMerchantItem", Success = false, Message = tostring(err or "Failed to purchase item.") })
+	else
+		print(string.format("[SHOPFLOW][SERVER] BuyMerchantItem succeeded for %s: ItemId=%s", player.Name, itemId))
+		NetworkService.sendActionResult(player, { Action = "BuyMerchantItem", Success = true })
+	end
+end)
+
+-- 8c. Exit Merchant Shop
+NetworkService.ExitMerchantEvent.OnServerEvent:Connect(function(player: Player)
+	if not NetworkService.checkRateLimit(player, "General") then
+		NetworkService.sendActionResult(player, { Action = "ExitMerchant", Success = false, Message = "Rate limit exceeded." })
+		return
+	end
+
+	print(string.format("[SHOPFLOW][SERVER] ExitMerchant received from %s", player.Name))
+	local success, err = RunManager.exitMerchantShop(player)
+	if not success then
+		warn(string.format("[SHOPFLOW][SERVER] ExitMerchant failed for %s: %s", player.Name, tostring(err)))
+		NetworkService.sendActionResult(player, { Action = "ExitMerchant", Success = false, Message = tostring(err or "Cannot exit merchant shop.") })
+	else
+		print(string.format("[SHOPFLOW][SERVER] ExitMerchant succeeded for %s", player.Name))
+		NetworkService.sendActionResult(player, { Action = "ExitMerchant", Success = true })
+	end
+end)
+
 -- 9. Client Full State Sync Request
 NetworkService.RequestStateSyncEvent.OnServerEvent:Connect(function(player: Player)
 	if not RunManager.getPlayerState(player) then

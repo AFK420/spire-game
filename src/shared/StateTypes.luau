@@ -495,6 +495,16 @@ export type ActiveRoomType =
 	| "Act Boss"
 	| "Event"
 
+export type MerchantItemView = {
+	ItemId: string,
+	Name: string,
+	ItemType: "Card" | "Heal",
+	Cost: number,
+	CardDefId: string?,
+	Description: string,
+	IsPurchased: boolean,
+}
+
 export type ActiveRoom = {
 	NodeId: string,
 	Type: ActiveRoomType,
@@ -506,6 +516,7 @@ export type ActiveRoom = {
 	EventId: string?,
 	CampfireUsed: boolean?,
 	ShopVisited: boolean?,
+	MerchantWares: { MerchantItemView }?,
 }
 
 export type RunRewards = {
@@ -631,6 +642,15 @@ export type ActionResult = {
 	ReactionTimeDelta: number?,
 }
 
+export type ActiveRoomView = {
+	NodeId: string,
+	Type: ActiveRoomType,
+	Tier: number,
+	ActIndex: number,
+	CampfireUsed: boolean?,
+	MerchantWares: { MerchantItemView }?,
+}
+
 export type RunSnapshot = {
 	RunId: string,
 	Phase: RunPhase,
@@ -642,6 +662,7 @@ export type RunSnapshot = {
 	AvailableNodeIds: { string },
 	MapNodes: { MapNodeView }?,
 	Party: { [string]: PlayerView },
+	ActiveRoom: ActiveRoomView?,
 	Event: EventView?,
 	Rewards: {
 		GoldAmount: number,

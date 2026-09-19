@@ -55,6 +55,9 @@ local RequestStateSyncEvent = getEvent("RequestStateSync")
 local ReturnToLobbyEvent = getEvent("ReturnToLobby")
 local SubmitCombatReactionEvent = getEvent("SubmitCombatReaction")
 local InteractEventObjectEvent = getEvent("InteractEventObject")
+local CampfireChoiceEvent = getEvent("CampfireChoice")
+local BuyMerchantItemEvent = getEvent("BuyMerchantItem")
+local ExitMerchantEvent = getEvent("ExitMerchant")
 
 -- Server -> Client State
 local RunStateUpdateEvent = getEvent("RunStateUpdate")
@@ -1489,19 +1492,228 @@ local function renderEventChamber(eventView: StateTypes.EventView)
 end
 
 --------------------------------------------------------------------------------
+-- VIEW 7: Campfire Rest View
+--------------------------------------------------------------------------------
+
+local campfireView = Instance.new("Frame")
+campfireView.Name = "CampfireView"
+campfireView.Size = UDim2.new(0, 560, 0, 360)
+campfireView.Position = UDim2.new(0.5, -280, 0.5, -180)
+campfireView.BackgroundColor3 = Color3.fromRGB(24, 18, 16)
+campfireView.BackgroundTransparency = 0.1
+campfireView.BorderSizePixel = 0
+campfireView.Visible = false
+campfireView.ZIndex = 15
+campfireView.Parent = mainFrame
+UIFactory.createCorner(campfireView, 14)
+UIFactory.createStroke(campfireView, Color3.fromRGB(230, 110, 40), 2.5)
+
+local campfireHeader = Instance.new("Frame")
+campfireHeader.Size = UDim2.new(1, 0, 0, 55)
+campfireHeader.BackgroundColor3 = Color3.fromRGB(36, 22, 18)
+campfireHeader.BorderSizePixel = 0
+campfireHeader.ZIndex = 16
+campfireHeader.Parent = campfireView
+UIFactory.createCorner(campfireHeader, 14)
+
+local campfireTitle = Instance.new("TextLabel")
+campfireTitle.Size = UDim2.new(1, -40, 0, 30)
+campfireTitle.Position = UDim2.new(0, 20, 0, 12)
+campfireTitle.BackgroundTransparency = 1
+campfireTitle.Text = "🔥 CAMPFIRE GROVE"
+campfireTitle.TextColor3 = Color3.fromRGB(255, 170, 70)
+campfireTitle.Font = Enum.Font.GothamBold
+campfireTitle.TextSize = 20
+campfireTitle.TextXAlignment = Enum.TextXAlignment.Left
+campfireTitle.ZIndex = 17
+campfireTitle.Parent = campfireHeader
+
+local campfireDesc = Instance.new("TextLabel")
+campfireDesc.Size = UDim2.new(1, -40, 0, 70)
+campfireDesc.Position = UDim2.new(0, 20, 0, 75)
+campfireDesc.BackgroundTransparency = 1
+campfireDesc.Text = "The warm embers of the grove offer solace amidst the rift.\nResting here will restore 30% of each hero's Max HP."
+campfireDesc.TextColor3 = Color3.fromRGB(220, 200, 180)
+campfireDesc.Font = Enum.Font.Gotham
+campfireDesc.TextSize = 15
+campfireDesc.TextWrapped = true
+campfireDesc.TextXAlignment = Enum.TextXAlignment.Center
+campfireDesc.ZIndex = 17
+campfireDesc.Parent = campfireView
+
+local campfireRestBtn = UIFactory.createButton(campfireView, "🔥 Rest by the Fire (+30% HP)", Color3.fromRGB(200, 75, 25), function()
+	if CampfireChoiceEvent then
+		CampfireChoiceEvent:FireServer("Rest")
+	end
+end)
+campfireRestBtn.Size = UDim2.new(0, 300, 0, 48)
+campfireRestBtn.Position = UDim2.new(0.5, -150, 0, 165)
+campfireRestBtn.ZIndex = 17
+
+local campfireLeaveBtn = UIFactory.createButton(campfireView, "Continue Expedition ➔", Color3.fromRGB(70, 70, 85), function()
+	if CampfireChoiceEvent then
+		CampfireChoiceEvent:FireServer("Leave")
+	end
+end)
+campfireLeaveBtn.Size = UDim2.new(0, 260, 0, 40)
+campfireLeaveBtn.Position = UDim2.new(0.5, -130, 0, 230)
+campfireLeaveBtn.ZIndex = 17
+
+--------------------------------------------------------------------------------
+-- VIEW 8: Merchant Bazaar View
+--------------------------------------------------------------------------------
+
+local merchantView = Instance.new("Frame")
+merchantView.Name = "MerchantView"
+merchantView.Size = UDim2.new(0, 680, 0, 460)
+merchantView.Position = UDim2.new(0.5, -340, 0.5, -230)
+merchantView.BackgroundColor3 = Color3.fromRGB(18, 22, 28)
+merchantView.BackgroundTransparency = 0.1
+merchantView.BorderSizePixel = 0
+merchantView.Visible = false
+merchantView.ZIndex = 15
+merchantView.Parent = mainFrame
+UIFactory.createCorner(merchantView, 14)
+UIFactory.createStroke(merchantView, Color3.fromRGB(215, 175, 45), 2.5)
+
+local merchantHeader = Instance.new("Frame")
+merchantHeader.Size = UDim2.new(1, 0, 0, 55)
+merchantHeader.BackgroundColor3 = Color3.fromRGB(26, 32, 42)
+merchantHeader.BorderSizePixel = 0
+merchantHeader.ZIndex = 16
+merchantHeader.Parent = merchantView
+UIFactory.createCorner(merchantHeader, 14)
+
+local merchantTitle = Instance.new("TextLabel")
+merchantTitle.Size = UDim2.new(0, 300, 0, 30)
+merchantTitle.Position = UDim2.new(0, 20, 0, 12)
+merchantTitle.BackgroundTransparency = 1
+merchantTitle.Text = "💰 RIFT MERCHANT BAZAAR"
+merchantTitle.TextColor3 = Color3.fromRGB(255, 215, 80)
+merchantTitle.Font = Enum.Font.GothamBold
+merchantTitle.TextSize = 20
+merchantTitle.TextXAlignment = Enum.TextXAlignment.Left
+merchantTitle.ZIndex = 17
+merchantTitle.Parent = merchantHeader
+
+local merchantGoldLabel = Instance.new("TextLabel")
+merchantGoldLabel.Size = UDim2.new(0, 200, 0, 30)
+merchantGoldLabel.Position = UDim2.new(1, -220, 0, 12)
+merchantGoldLabel.BackgroundTransparency = 1
+merchantGoldLabel.Text = "Gold: 0 🪙"
+merchantGoldLabel.TextColor3 = Color3.fromRGB(255, 230, 100)
+merchantGoldLabel.Font = Enum.Font.GothamBold
+merchantGoldLabel.TextSize = 16
+merchantGoldLabel.TextXAlignment = Enum.TextXAlignment.Right
+merchantGoldLabel.ZIndex = 17
+merchantGoldLabel.Parent = merchantHeader
+
+local waresContainer = Instance.new("Frame")
+waresContainer.Size = UDim2.new(1, -40, 0, 300)
+waresContainer.Position = UDim2.new(0, 20, 0, 70)
+waresContainer.BackgroundTransparency = 1
+waresContainer.ZIndex = 16
+waresContainer.Parent = merchantView
+
+local waresLayout = Instance.new("UIGridLayout")
+waresLayout.CellSize = UDim2.new(0.48, 0, 0, 135)
+waresLayout.CellPadding = UDim2.new(0.04, 0, 0, 12)
+waresLayout.SortOrder = Enum.SortOrder.LayoutOrder
+waresLayout.Parent = waresContainer
+
+local merchantLeaveBtn = UIFactory.createButton(merchantView, "Leave Shop ➔", Color3.fromRGB(60, 65, 80), function()
+	if ExitMerchantEvent then
+		ExitMerchantEvent:FireServer()
+	end
+end)
+merchantLeaveBtn.Size = UDim2.new(0, 220, 0, 40)
+merchantLeaveBtn.Position = UDim2.new(0.5, -110, 1, -50)
+merchantLeaveBtn.ZIndex = 17
+
+local function renderMerchantWares(wares: { StateTypes.MerchantItemView }?, playerGold: number)
+	merchantGoldLabel.Text = string.format("Gold: %d 🪙", playerGold)
+	for _, child in waresContainer:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	if not wares then return end
+
+	for _, item in wares do
+		local cardFrame = Instance.new("Frame")
+		cardFrame.BackgroundColor3 = if item.IsPurchased then Color3.fromRGB(25, 28, 32) else Color3.fromRGB(30, 36, 46)
+		cardFrame.BorderSizePixel = 0
+		cardFrame.ZIndex = 17
+		cardFrame.Parent = waresContainer
+		UIFactory.createCorner(cardFrame, 10)
+		UIFactory.createStroke(cardFrame, if item.IsPurchased then Color3.fromRGB(60, 60, 60) else Color3.fromRGB(90, 110, 140), 1.5)
+
+		local nameLabel = Instance.new("TextLabel")
+		nameLabel.Size = UDim2.new(1, -16, 0, 22)
+		nameLabel.Position = UDim2.new(0, 8, 0, 6)
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.Text = item.Name
+		nameLabel.TextColor3 = if item.IsPurchased then Color3.fromRGB(130, 130, 130) else Color3.fromRGB(240, 240, 240)
+		nameLabel.Font = Enum.Font.GothamBold
+		nameLabel.TextSize = 13
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+		nameLabel.ZIndex = 18
+		nameLabel.Parent = cardFrame
+
+		local descLabel = Instance.new("TextLabel")
+		descLabel.Size = UDim2.new(1, -16, 0, 48)
+		descLabel.Position = UDim2.new(0, 8, 0, 28)
+		descLabel.BackgroundTransparency = 1
+		descLabel.Text = item.Description
+		descLabel.TextColor3 = if item.IsPurchased then Color3.fromRGB(110, 110, 110) else Color3.fromRGB(180, 190, 200)
+		descLabel.Font = Enum.Font.Gotham
+		descLabel.TextSize = 11
+		descLabel.TextWrapped = true
+		descLabel.TextXAlignment = Enum.TextXAlignment.Left
+		descLabel.ZIndex = 18
+		descLabel.Parent = cardFrame
+
+		local btnText = if item.IsPurchased then "PURCHASED" else string.format("Buy (%d Gold)", item.Cost)
+		local canAfford = playerGold >= item.Cost and not item.IsPurchased
+		local btnColor = if item.IsPurchased then Color3.fromRGB(50, 50, 50) elseif canAfford then Color3.fromRGB(45, 135, 75) else Color3.fromRGB(80, 60, 60)
+		local buyBtn = UIFactory.createButton(cardFrame, btnText, btnColor, function()
+			if not item.IsPurchased and canAfford and BuyMerchantItemEvent then
+				BuyMerchantItemEvent:FireServer(item.ItemId)
+			end
+		end)
+		buyBtn.Size = UDim2.new(1, -16, 0, 28)
+		buyBtn.Position = UDim2.new(0, 8, 1, -34)
+		buyBtn.Active = canAfford
+		buyBtn.ZIndex = 18
+	end
+end
+
+--------------------------------------------------------------------------------
 -- Central View Switcher
 --------------------------------------------------------------------------------
 
-local function switchView(phase: StateTypes.RunPhase)
+local function switchView(phase: StateTypes.RunPhase, roomType: StateTypes.ActiveRoomType?)
 	lobbyView.Visible = (phase == "Lobby")
 	mapView.Visible = (phase == "MapSelect")
-	combatHudView.Visible = (phase == "ActiveRoom")
 	rewardsView.Visible = (phase == "Rewards")
 	victoryView.Visible = (phase == "RunVictory")
 	defeatView.Visible = (phase == "RunDefeat")
 
-	if phase ~= "ActiveRoom" then
+	local isCombat = (roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss" or roomType == nil)
+	local isCampfire = (roomType == "Campfire Rest")
+	local isMerchant = (roomType == "Merchant Shop")
+	local isEvent = (roomType == "Event")
+
+	if phase == "ActiveRoom" then
+		combatHudView.Visible = isCombat and not isCampfire and not isMerchant and not isEvent
+		eventChamberView.Visible = isEvent
+		campfireView.Visible = isCampfire
+		merchantView.Visible = isMerchant
+	else
+		combatHudView.Visible = false
 		eventChamberView.Visible = false
+		campfireView.Visible = false
+		merchantView.Visible = false
 		isEventInteractPending = false
 		if reactionWidget then
 			reactionWidget.Visible = false
@@ -1536,8 +1748,9 @@ if RunStateUpdateEvent then
 		print(string.format("[MAPFLOW][CLIENT] 16. Phase processed: Phase=%s", tostring(snapshot.Phase)))
 		print(string.format("[MAPFLOW][CLIENT] 17. CurrentNodeId processed: CurrentNode=%s", tostring(snapshot.CurrentNodeId)))
 
-		print(string.format("[MAPFLOW][CLIENT] 18. switchView called: TargetPhase=%s", tostring(snapshot.Phase)))
-		switchView(snapshot.Phase)
+		local activeRoomType = snapshot.ActiveRoom and snapshot.ActiveRoom.Type or nil
+		print(string.format("[MAPFLOW][CLIENT] 18. switchView called: TargetPhase=%s, RoomType=%s", tostring(snapshot.Phase), tostring(activeRoomType)))
+		switchView(snapshot.Phase, activeRoomType)
 		print(string.format("[MAPFLOW][CLIENT] 19. MapVisible updated: MapVisible=%s", tostring(mapView.Visible)))
 		print(string.format("[MAPFLOW][CLIENT] 20. CombatVisible updated: CombatVisible=%s", tostring(combatHudView.Visible)))
 
@@ -1547,16 +1760,40 @@ if RunStateUpdateEvent then
 			bannerLabel.Text = "Map Selection: Select reachable room to proceed."
 			buildDungeonMapTree(snapshot)
 		elseif snapshot.Phase == "ActiveRoom" then
-			bannerLabel.Text = "Entered Room: Combat"
-			bannerLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
-			if snapshot.Event ~= nil and not snapshot.Event.IsCompleted then
+			local roomType = snapshot.ActiveRoom and snapshot.ActiveRoom.Type or "Combat"
+			if roomType == "Campfire Rest" then
 				combatHudView.Visible = false
-				eventChamberView.Visible = true
-				renderEventChamber(snapshot.Event)
-				bannerLabel.Text = string.format("Event Chamber: %s", snapshot.Event.Name)
-			else
-				combatHudView.Visible = (snapshot.Event == nil)
 				eventChamberView.Visible = false
+				merchantView.Visible = false
+				campfireView.Visible = true
+				bannerLabel.Text = "Campfire Grove: Rest and recover."
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 170, 70)
+			elseif roomType == "Merchant Shop" then
+				combatHudView.Visible = false
+				eventChamberView.Visible = false
+				campfireView.Visible = false
+				merchantView.Visible = true
+				bannerLabel.Text = "Merchant Bazaar: Browse wares and gear."
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 215, 80)
+				local localPView = snapshot.Party[tostring(localPlayer.UserId)]
+				local playerGold = localPView and localPView.Gold or 0
+				renderMerchantWares(snapshot.ActiveRoom and snapshot.ActiveRoom.MerchantWares, playerGold)
+			elseif roomType == "Event" or (snapshot.Event ~= nil and not snapshot.Event.IsCompleted) then
+				combatHudView.Visible = false
+				campfireView.Visible = false
+				merchantView.Visible = false
+				eventChamberView.Visible = true
+				if snapshot.Event then
+					renderEventChamber(snapshot.Event)
+					bannerLabel.Text = string.format("Event Chamber: %s", snapshot.Event.Name)
+				end
+			else
+				combatHudView.Visible = true
+				eventChamberView.Visible = false
+				campfireView.Visible = false
+				merchantView.Visible = false
+				bannerLabel.Text = if roomType == "Combat" then "Entered Room: Combat" else string.format("Entered Room: %s", roomType)
+				bannerLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 			end
 		elseif snapshot.Phase == "Rewards" then
 			isRewardClaimPending = false

@@ -55,6 +55,8 @@ NetworkService.ContinueFromRewardsEvent = getOrCreateRemoteEvent("ContinueFromRe
 NetworkService.RequestStateSyncEvent = getOrCreateRemoteEvent("RequestStateSync")
 NetworkService.SubmitCombatReactionEvent = getOrCreateRemoteEvent("SubmitCombatReaction")
 NetworkService.InteractEventObjectEvent = getOrCreateRemoteEvent("InteractEventObject")
+NetworkService.BuyMerchantItemEvent = getOrCreateRemoteEvent("BuyMerchantItem")
+NetworkService.ExitMerchantEvent = getOrCreateRemoteEvent("ExitMerchant")
 
 -- Phase 3.1 RPG Foundation Action Events
 NetworkService.EquipEquipmentEvent = getOrCreateRemoteEvent("EquipEquipment")

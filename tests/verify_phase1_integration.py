@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "first_aid_transactions_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = first_aid_transactions_20260919")
-test('BUILD_NAME = "First Aid Transaction Semantics & Effect Fail-Closed"' in build_info_src, "BuildInfo declares BUILD_NAME = First Aid Transaction Semantics & Effect Fail-Closed")
+test('BUILD_ID = "campfire_merchant_lifecycle_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = campfire_merchant_lifecycle_20260919")
+test('BUILD_NAME = "Campfire & Merchant Room Lifecycle Hardening"' in build_info_src, "BuildInfo declares BUILD_NAME = Campfire & Merchant Room Lifecycle Hardening")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -1918,6 +1918,89 @@ test("[Suite 76.60]" in testrunner_src, "Suite 76 tests card with invalid status
 test("[Suite 76.61]" in testrunner_src, "Suite 76 tests energy rolled back on failed status card execution")
 test("[Suite 76.62]" in testrunner_src, "Suite 76 tests enemy HP undamaged and rolled back on transaction rollback")
 test("[Suite 76.63]" in testrunner_src, "Suite 76 tests bad card remains in hand after transaction rollback")
+
+# Check 71: Campfire, Merchant Room Lifecycle & Hardened Combat Failure Rollback
+print("\n--- [Check 71] Campfire, Merchant Room Lifecycle & Hardened Combat Failure Rollback ---")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+net_service_src = (ROOT / "src/server/services/NetworkService.luau").read_text(encoding="utf-8")
+combat_service_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+
+# StateTypes
+test("export type MerchantItemView =" in state_types_src, "StateTypes exports MerchantItemView")
+test("export type ActiveRoomView =" in state_types_src, "StateTypes exports ActiveRoomView")
+test("MerchantWares: { MerchantItemView }?" in state_types_src, "ActiveRoom includes MerchantWares")
+test("ActiveRoom: ActiveRoomView?" in state_types_src, "RunSnapshot includes ActiveRoom view")
+
+# NetworkService & Server Handlers
+test('NetworkService.BuyMerchantItemEvent = getOrCreateRemoteEvent("BuyMerchantItem")' in net_service_src, "NetworkService defines BuyMerchantItemEvent")
+test('NetworkService.ExitMerchantEvent = getOrCreateRemoteEvent("ExitMerchant")' in net_service_src, "NetworkService defines ExitMerchantEvent")
+test("NetworkService.CampfireChoiceEvent.OnServerEvent:Connect" in init_server_src, "init.server connects CampfireChoiceEvent")
+test("NetworkService.BuyMerchantItemEvent.OnServerEvent:Connect" in init_server_src, "init.server connects BuyMerchantItemEvent")
+test("NetworkService.ExitMerchantEvent.OnServerEvent:Connect" in init_server_src, "init.server connects ExitMerchantEvent")
+
+# CombatService Failure Injection
+test("function CombatService.setFailureInjectionForTesting" in combat_service_src, "CombatService exposes setFailureInjectionForTesting")
+test("function CombatService.isFailureInjectionEnabled" in combat_service_src, "CombatService exposes isFailureInjectionEnabled")
+test("if failureInjectionEnabled then" in combat_service_src, "CombatService triggers failure injection when enabled")
+
+# RunManager Lifecycles
+test("function RunManager.completeCampfire" in run_mgr_src, "RunManager implements completeCampfire")
+test("function RunManager.buyMerchantItem" in run_mgr_src, "RunManager implements buyMerchantItem")
+test("function RunManager.exitMerchantShop" in run_mgr_src, "RunManager implements exitMerchantShop")
+test("generateMerchantWares" in run_mgr_src, "RunManager generates merchant wares")
+
+# Client UIController Dedicated Views
+test('local campfireView = Instance.new("Frame")' in ui_ctrl_src, "UIController creates campfireView")
+test('local merchantView = Instance.new("Frame")' in ui_ctrl_src, "UIController creates merchantView")
+test("local function switchView(phase: StateTypes.RunPhase, roomType: StateTypes.ActiveRoomType?)" in ui_ctrl_src, "UIController switchView accepts roomType parameter")
+test("campfireView.Visible = isCampfire" in ui_ctrl_src, "UIController switchView shows campfireView in Campfire Rest")
+test("merchantView.Visible = isMerchant" in ui_ctrl_src, "UIController switchView shows merchantView in Merchant Shop")
+
+# Suite 76 Invariants
+test("[Suite 76.64]" in testrunner_src, "Suite 76 tests travelToNode succeeds for Campfire Rest")
+test("[Suite 76.65]" in testrunner_src, "Suite 76 tests Run phase is ActiveRoom after entering campfire")
+test("[Suite 76.68]" in testrunner_src, "Suite 76 tests Player HP is not auto-healed on room entry")
+test("[Suite 76.69]" in testrunner_src, "Suite 76 tests Campfire node is not cleared on entry")
+test("[Suite 76.70]" in testrunner_src, "Suite 76 tests RunSnapshot exposes ActiveRoom view for Campfire")
+test("[Suite 76.72]" in testrunner_src, "Suite 76 tests completeCampfire succeeds")
+test("[Suite 76.73]" in testrunner_src, "Suite 76 tests Player healed by 30% MaxHP on rest")
+test("[Suite 76.74]" in testrunner_src, "Suite 76 tests Run phase returned to MapSelect after campfire rest")
+test("[Suite 76.76]" in testrunner_src, "Suite 76 tests Campfire node marked cleared after rest")
+test("[Suite 76.77]" in testrunner_src, "Suite 76 tests AvailableNodeIds populated from cleared campfire node")
+test("[Suite 76.78]" in testrunner_src, "Suite 76 tests 3D room cleaned up after campfire completion")
+test("[Suite 76.79]" in testrunner_src, "Suite 76 tests Duplicate completeCampfire rejected when not in campfire room")
+test("[Suite 76.80]" in testrunner_src, "Suite 76 tests Player HP not double-healed on duplicate campfire call")
+test("[Suite 76.81]" in testrunner_src, "Suite 76 tests travelToNode succeeds for Merchant Shop")
+test("[Suite 76.84]" in testrunner_src, "Suite 76 tests Merchant has 4 wares generated")
+test("[Suite 76.85]" in testrunner_src, "Suite 76 tests Merchant node is not cleared on entry")
+test("[Suite 76.86]" in testrunner_src, "Suite 76 tests buyMerchantItem rejects when player has insufficient gold")
+test("[Suite 76.88]" in testrunner_src, "Suite 76 tests buyMerchantItem succeeds for card ware")
+test("[Suite 76.89]" in testrunner_src, "Suite 76 tests Gold deducted accurately for card purchase")
+test("[Suite 76.90]" in testrunner_src, "Suite 76 tests Purchased card added to player deck")
+test("[Suite 76.91]" in testrunner_src, "Suite 76 tests Ware marked IsPurchased after sale")
+test("[Suite 76.92]" in testrunner_src, "Suite 76 tests Cannot buy an already purchased ware")
+test("[Suite 76.93]" in testrunner_src, "Suite 76 tests buyMerchantItem succeeds for healing draught")
+test("[Suite 76.96]" in testrunner_src, "Suite 76 tests exitMerchantShop succeeds")
+test("[Suite 76.97]" in testrunner_src, "Suite 76 tests Phase returned to MapSelect after exiting shop")
+test("[Suite 76.99]" in testrunner_src, "Suite 76 tests Merchant node marked cleared after exit")
+test("[Suite 76.100]" in testrunner_src, "Suite 76 tests AvailableNodeIds populated from cleared merchant node")
+test("[Suite 76.101]" in testrunner_src, "Suite 76 tests 3D room cleaned up after shop exit")
+test("[Suite 76.102]" in testrunner_src, "Suite 76 tests CombatService failure injection enabled")
+test("[Suite 76.103]" in testrunner_src, "Suite 76 tests travelToNode fails when startCombat throws")
+test("[Suite 76.105]" in testrunner_src, "Suite 76 tests Phase remains MapSelect after startCombat failure")
+test("[Suite 76.106]" in testrunner_src, "Suite 76 tests CurrentNodeId unchanged after startCombat failure")
+test("[Suite 76.107]" in testrunner_src, "Suite 76 tests Node not marked cleared on failed combat start")
+test("[Suite 76.108]" in testrunner_src, "Suite 76 tests Player HP rolled back to pre-combat HP")
+test("[Suite 76.109]" in testrunner_src, "Suite 76 tests Player Shield rolled back to pre-combat Shield")
+test("[Suite 76.110]" in testrunner_src, "Suite 76 tests Player Energy rolled back to pre-combat Energy")
+test("[Suite 76.112]" in testrunner_src, "Suite 76 tests Player Deck size rolled back")
+test("[Suite 76.113]" in testrunner_src, "Suite 76 tests Player Hand size rolled back")
+test("[Suite 76.114]" in testrunner_src, "Suite 76 tests Active combat is nil after startCombat failure")
+test("[Suite 76.115]" in testrunner_src, "Suite 76 tests 3D room cleaned up after startCombat failure")
+test("[Suite 76.116]" in testrunner_src, "Suite 76 tests CombatService failure injection disabled")
+test("[Suite 76.117]" in testrunner_src, "Suite 76 tests travelToNode succeeds normally after disabling failure injection")
+test("[Suite 76.118]" in testrunner_src, "Suite 76 tests Phase is ActiveRoom after successful recovery")
+test("[Suite 76.119]" in testrunner_src, "Suite 76 tests Active combat initialized on successful recovery")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

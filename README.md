@@ -20,8 +20,8 @@ The project architecture has completed comprehensive hardening across all major 
 
 ### 🧪 Verification Baseline
 * **76 In-Game Integration Suites** in `TestRunner.luau` covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
-* **1,355 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
-* **Authoritative Build Fingerprint**: `BUILD_ID = "first_aid_transactions_20260919"` (`First Aid Transaction Semantics & Effect Fail-Closed`).
+* **1,420 Automated Verifier Checks** in `tests/verify_phase1_integration.py` (**100% PASS, 0 FAIL**).
+* **Authoritative Build Fingerprint**: `BUILD_ID = "campfire_merchant_lifecycle_20260919"` (`Campfire & Merchant Room Lifecycle Hardening`).
 * **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
 * **Clean Rojo compilation** (`rojo build -o build.rbxl` exits code 0).
@@ -200,7 +200,7 @@ spire-game/
 │   │       ├── EventService.luau          # 3D co-op puzzle & riddle encounter engine
 │   │       ├── ReactionService.luau       # Authoritative 3D attack reaction window engine
 │   │       ├── EnvironmentService.luau    # Elemental affinities & battlefield transformations
-│   │       └── TestRunner.luau            # 75 end-to-end integration test suites
+│   │       └── TestRunner.luau            # 76 end-to-end integration test suites
 │   │
 │   └── client/                   # StarterPlayerScripts.Client
 │       ├── init.client.luau            # Client bootstrap
@@ -210,7 +210,7 @@ spire-game/
 │       └── CombatVFXController.client.luau # Client 3D attack motions, projectiles, and AoE
 │
 └── tests/
-    └── verify_phase1_integration.py    # 1,283 offline architecture & logic verifiers
+    └── verify_phase1_integration.py    # 1,420 offline architecture & logic verifiers
 ```
 
 ---
@@ -226,7 +226,7 @@ spire-game/
 ```bash
 python tests/verify_phase1_integration.py
 ```
-*Executes all 1,283 verifier checks against file schemas, network contracts, typing, and logic rules.*
+*Executes all 1,420 verifier checks against file schemas, network contracts, typing, and logic rules.*
 
 ### 2. Build Roblox Place File
 ```bash

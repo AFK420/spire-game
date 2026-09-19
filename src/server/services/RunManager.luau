@@ -335,6 +335,18 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		end
 	end
 
+	local activeRoomView: StateTypes.ActiveRoomView? = nil
+	if runToRead.ActiveRoom then
+		activeRoomView = {
+			NodeId = runToRead.ActiveRoom.NodeId,
+			Type = runToRead.ActiveRoom.Type,
+			Tier = runToRead.ActiveRoom.Tier,
+			ActIndex = runToRead.ActiveRoom.ActIndex,
+			CampfireUsed = runToRead.ActiveRoom.CampfireUsed,
+			MerchantWares = runToRead.ActiveRoom.MerchantWares,
+		}
+	end
+
 	return {
 		RunId = runToRead.RunId,
 		Phase = runToRead.Phase,
@@ -346,6 +358,7 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 		AvailableNodeIds = runToRead.AvailableNodeIds,
 		MapNodes = mapNodesList,
 		Party = partyViews,
+		ActiveRoom = activeRoomView,
 		Event = eventView,
 		Rewards = rewardView,
 		Message = nil,
@@ -859,6 +872,45 @@ function RunManager.voteMapNode(player: any, targetNodeId: string): (boolean, st
 	end
 end
 
+local function generateMerchantWares(seed: number, tier: number): { StateTypes.MerchantItemView }
+	local rng = Random.new(seed + tier * 71)
+	local cardPool = { "HeavyBlow", "PoisonDart", "FirstAid", "Defend", "Strike" }
+	local chosenCards = {}
+	local poolCopy = table.clone(cardPool)
+	for _ = 1, 3 do
+		local idx = rng:NextInteger(1, #poolCopy)
+		table.insert(chosenCards, poolCopy[idx])
+		table.remove(poolCopy, idx)
+	end
+
+	local wares: { StateTypes.MerchantItemView } = {}
+	for i, cardId in ipairs(chosenCards) do
+		local cardDef = CardData.getCard(cardId)
+		local cost = 40 + rng:NextInteger(0, 20)
+		table.insert(wares, {
+			ItemId = "ware_card_" .. tostring(i),
+			Name = if cardDef then cardDef.Name else cardId,
+			ItemType = "Card",
+			Cost = cost,
+			CardDefId = cardId,
+			Description = if cardDef then cardDef.Description else "Add card to deck",
+			IsPurchased = false,
+		})
+	end
+
+	table.insert(wares, {
+		ItemId = "ware_heal_1",
+		Name = "Healing Draught",
+		ItemType = "Heal",
+		Cost = 35,
+		CardDefId = nil,
+		Description = "Restore 25 HP immediately.",
+		IsPurchased = false,
+	})
+
+	return wares
+end
+
 local function validateLoadedRoom(roomInstance: any, expectedTemplateId: string?): (boolean, string?)
 	if not roomInstance or typeof(roomInstance) ~= "Instance" or not roomInstance:IsA("Model") then
 		return false, "loadRoom result is not a Model"
@@ -962,6 +1014,25 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 
 		print(string.format("[MAPFLOW][SERVER] 5. combat START: Node=%s", node.Id))
 
+		-- Snapshot party members prior to combat initialization for rollback safety
+		local partySnapshots: { [number]: any } = {}
+		for userId, member in runToMutate.PartyMembers do
+			partySnapshots[userId] = {
+				Resources = {
+					HP = member.Resources.HP,
+					MaxHP = member.Resources.MaxHP,
+					Shield = member.Resources.Shield,
+					Energy = member.Resources.Energy,
+					MaxEnergy = member.Resources.MaxEnergy,
+				},
+				IsDowned = member.IsDowned,
+				Deck = table.clone(member.Deck),
+				Hand = table.clone(member.Hand),
+				DiscardPile = table.clone(member.DiscardPile),
+				ExhaustPile = table.clone(member.ExhaustPile),
+			}
+		end
+
 		local combatOk, combatResult = pcall(function()
 			return CombatService.startCombat(
 				encounterId,
@@ -978,6 +1049,27 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 			local combatErr = not combatOk and tostring(combatResult) or "startCombat returned nil"
 			warn(string.format("[MAPFLOW][SERVER] combat setup result: Success=false, Err=%s", combatErr))
 			print(string.format("[MAPFLOW][SERVER] rollback executed: Phase=MapSelect, Err=%s", combatErr))
+
+			-- Roll back party members to pre-combat state
+			for userId, snap in partySnapshots do
+				local member = runToMutate.PartyMembers[userId]
+				if member then
+					member.Resources.HP = snap.Resources.HP
+					member.Resources.MaxHP = snap.Resources.MaxHP
+					member.Resources.Shield = snap.Resources.Shield
+					member.Resources.Energy = snap.Resources.Energy
+					member.Resources.MaxEnergy = snap.Resources.MaxEnergy
+					member.IsDowned = snap.IsDowned
+					member.Deck = snap.Deck
+					member.Hand = snap.Hand
+					member.DiscardPile = snap.DiscardPile
+					member.ExhaustPile = snap.ExhaustPile
+				end
+			end
+
+			pcall(function()
+				CombatService.cleanupCombat()
+			end)
 			if wrs then
 				pcall(function()
 					wrs.cleanupRoom()
@@ -1044,6 +1136,11 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		envId = activeCombat.Environment.EnvironmentId
 	end
 
+	local wares: { StateTypes.MerchantItemView }? = nil
+	if node.Type == "Merchant Shop" then
+		wares = generateMerchantWares(dRun.Seed, node.Tier)
+	end
+
 	runToMutate.ActiveRoom = {
 		NodeId = node.Id,
 		Type = node.Type,
@@ -1054,7 +1151,8 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		EnvironmentId = envId,
 		EventId = if activeEvent then activeEvent.EventId else nil,
 		CampfireUsed = false,
-		ShopVisited = false,
+		ShopVisited = (node.Type == "Merchant Shop"),
+		MerchantWares = wares,
 	}
 
 	runToMutate.Phase = "ActiveRoom"
@@ -1065,20 +1163,12 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 	elseif activeEvent then
 		runToMutate.ActiveEvent = activeEvent
 	elseif node.Type == "Campfire Rest" then
-		for _, member in runToMutate.PartyMembers do
-			local heal = math.floor(member.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
-			member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + heal)
-		end
-		DungeonService.markNodeCleared(dRun, targetNodeId)
-		table.insert(runToMutate.ClearedNodeIds, targetNodeId)
 		if not isIsolatedTesting or isLiveAction then
-			RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered).", isLiveAction)
+			RunManager.broadcastRunSnapshots("🔥 Rest by the campfire to recover health.", isLiveAction)
 		end
 	elseif node.Type == "Merchant Shop" then
-		DungeonService.markNodeCleared(dRun, targetNodeId)
-		table.insert(runToMutate.ClearedNodeIds, targetNodeId)
 		if not isIsolatedTesting or isLiveAction then
-			RunManager.broadcastRunSnapshots("💰 Visited the Merchant Shop. Supplies replenished.", isLiveAction)
+			RunManager.broadcastRunSnapshots("💰 The merchant awaits your business.", isLiveAction)
 		end
 	end
 
@@ -1402,6 +1492,264 @@ function RunManager.continueFromRewards(player: any): (boolean, string?)
 	if not isIsolatedTesting or isReal then
 		RunManager.broadcastRunSnapshots("Select the next room on the Map.", isReal)
 	end
+	return true, nil
+end
+
+function RunManager.completeCampfire(player: any, choice: any, isLiveAction: boolean?): (boolean, string?)
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+
+	local dRun = if (isIsolatedTesting and isLiveAction) then liveDungeonRun else internalDungeonRun
+	local runToUse = if (isIsolatedTesting and isLiveAction) then liveRun else currentRun
+	if not runToUse or not dRun then
+		return false, "No active run."
+	end
+
+	local userId = if typeof(player) == "Instance" and player:IsA("Player") then player.UserId else (typeof(player) == "table" and player.UserId or nil)
+	if not userId then
+		return false, "Invalid player reference."
+	end
+
+	local member = runToUse.PartyMembers[userId]
+	if not member then
+		return false, "Caller is not an active party member."
+	end
+
+	if member.IsConnected == false then
+		return false, "Caller is disconnected."
+	end
+
+	if runToUse.Phase ~= "ActiveRoom" or not runToUse.ActiveRoom or runToUse.ActiveRoom.Type ~= "Campfire Rest" then
+		return false, "Not in a Campfire Rest room."
+	end
+
+	-- Heal 30% Max HP once per visit
+	if not runToUse.ActiveRoom.CampfireUsed then
+		for _, m in runToUse.PartyMembers do
+			local heal = math.floor(m.Resources.MaxHP * GameConfig.Dungeon.CampfireHealPercent)
+			m.Resources.HP = math.min(m.Resources.MaxHP, m.Resources.HP + heal)
+		end
+		runToUse.ActiveRoom.CampfireUsed = true
+	end
+
+	-- Idempotently mark node cleared
+	local currentNodeId = runToUse.CurrentNodeId
+	if currentNodeId then
+		DungeonService.markNodeCleared(dRun, currentNodeId)
+		local alreadyCleared = false
+		for _, id in runToUse.ClearedNodeIds do
+			if id == currentNodeId then
+				alreadyCleared = true
+				break
+			end
+		end
+		if not alreadyCleared then
+			table.insert(runToUse.ClearedNodeIds, currentNodeId)
+		end
+	end
+
+	-- Recompute available nodes
+	local available = DungeonService.getAvailableNodes(dRun)
+	table.clear(runToUse.AvailableNodeIds)
+	for _, node in available do
+		table.insert(runToUse.AvailableNodeIds, node.Id)
+	end
+
+	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+	runToUse.Phase = "MapSelect"
+	if (runToUse :: any).RoomPhase then
+		(runToUse :: any).RoomPhase = "MapSelect"
+	end
+	runToUse.ActiveRoom = nil
+	runToUse.ActiveCombat = nil
+	runToUse.ActiveEvent = nil
+	runToUse.PendingRewards = nil
+
+	local wrs = getWorldRoomService()
+	if wrs then
+		pcall(function()
+			wrs.cleanupRoom()
+		end)
+	end
+
+	print(string.format("[CAMPFIREFLOW][SERVER] Campfire completed by %s: Phase=MapSelect, Rev=%d",
+		member.DisplayName, runToUse.StateRevision))
+
+	if not isIsolatedTesting or isReal then
+		RunManager.broadcastRunSnapshots("🔥 Rested at the Campfire (+30% HP recovered). Select the next room on the Map.", isReal)
+	end
+
+	return true, nil
+end
+
+function RunManager.buyMerchantItem(player: any, itemId: string, isLiveAction: boolean?): (boolean, string?)
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+
+	local dRun = if (isIsolatedTesting and isLiveAction) then liveDungeonRun else internalDungeonRun
+	local runToUse = if (isIsolatedTesting and isLiveAction) then liveRun else currentRun
+	if not runToUse or not dRun then
+		return false, "No active run."
+	end
+
+	local userId = if typeof(player) == "Instance" and player:IsA("Player") then player.UserId else (typeof(player) == "table" and player.UserId or nil)
+	if not userId then
+		return false, "Invalid player reference."
+	end
+
+	local member = runToUse.PartyMembers[userId]
+	if not member then
+		return false, "Caller is not an active party member."
+	end
+
+	if member.IsConnected == false then
+		return false, "Caller is disconnected."
+	end
+
+	if runToUse.Phase ~= "ActiveRoom" or not runToUse.ActiveRoom or runToUse.ActiveRoom.Type ~= "Merchant Shop" then
+		return false, "Not in a Merchant Shop."
+	end
+
+	local wares = runToUse.ActiveRoom.MerchantWares
+	if not wares then
+		return false, "Merchant has no wares."
+	end
+
+	local targetItem: StateTypes.MerchantItemView? = nil
+	for _, item in wares do
+		if item.ItemId == itemId then
+			targetItem = item
+			break
+		end
+	end
+
+	if not targetItem then
+		return false, "Item not found in merchant wares."
+	end
+
+	if targetItem.IsPurchased then
+		return false, "Item has already been purchased."
+	end
+
+	if member.Gold < targetItem.Cost then
+		return false, string.format("Not enough gold (need %d, have %d).", targetItem.Cost, member.Gold)
+	end
+
+	-- Execute purchase
+	if targetItem.ItemType == "Card" then
+		local cardDefId = targetItem.CardDefId
+		if not cardDefId then
+			return false, "Invalid card item."
+		end
+		local newCardInst = CardService.createCardInstance(cardDefId, userId)
+		if not newCardInst then
+			return false, "Failed to create card instance."
+		end
+		member.Gold -= targetItem.Cost
+		table.insert(member.Deck, newCardInst)
+		local playerRef = member.PlayerInstance or player or { UserId = userId }
+		pcall(function()
+			CardCollectionService.grantCard(playerRef, cardDefId, 1)
+		end)
+	elseif targetItem.ItemType == "Heal" then
+		member.Gold -= targetItem.Cost
+		member.Resources.HP = math.min(member.Resources.MaxHP, member.Resources.HP + 25)
+	else
+		return false, "Unknown item type."
+	end
+
+	targetItem.IsPurchased = true
+	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+
+	print(string.format("[SHOPFLOW][SERVER] Item %s purchased by %s for %d gold (Rev=%d)",
+		targetItem.Name, member.DisplayName, targetItem.Cost, runToUse.StateRevision))
+
+	if not isIsolatedTesting or isReal then
+		RunManager.broadcastRunSnapshots(string.format("💰 %s purchased %s for %d gold.", member.DisplayName, targetItem.Name, targetItem.Cost), isReal)
+	end
+
+	return true, nil
+end
+
+function RunManager.exitMerchantShop(player: any, isLiveAction: boolean?): (boolean, string?)
+	local isReal = (typeof(player) == "Instance" and player:IsA("Player"))
+	if typeof(player) == "table" and player._isSimulatedRealPlayer == true then
+		isReal = true
+	end
+
+	local dRun = if (isIsolatedTesting and isLiveAction) then liveDungeonRun else internalDungeonRun
+	local runToUse = if (isIsolatedTesting and isLiveAction) then liveRun else currentRun
+	if not runToUse or not dRun then
+		return false, "No active run."
+	end
+
+	local userId = if typeof(player) == "Instance" and player:IsA("Player") then player.UserId else (typeof(player) == "table" and player.UserId or nil)
+	if not userId then
+		return false, "Invalid player reference."
+	end
+
+	local member = runToUse.PartyMembers[userId]
+	if not member then
+		return false, "Caller is not an active party member."
+	end
+
+	if member.IsConnected == false then
+		return false, "Caller is disconnected."
+	end
+
+	if runToUse.Phase ~= "ActiveRoom" or not runToUse.ActiveRoom or runToUse.ActiveRoom.Type ~= "Merchant Shop" then
+		return false, "Not in a Merchant Shop."
+	end
+
+	local currentNodeId = runToUse.CurrentNodeId
+	if currentNodeId then
+		DungeonService.markNodeCleared(dRun, currentNodeId)
+		local alreadyCleared = false
+		for _, id in runToUse.ClearedNodeIds do
+			if id == currentNodeId then
+				alreadyCleared = true
+				break
+			end
+		end
+		if not alreadyCleared then
+			table.insert(runToUse.ClearedNodeIds, currentNodeId)
+		end
+	end
+
+	local available = DungeonService.getAvailableNodes(dRun)
+	table.clear(runToUse.AvailableNodeIds)
+	for _, node in available do
+		table.insert(runToUse.AvailableNodeIds, node.Id)
+	end
+
+	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+	runToUse.Phase = "MapSelect"
+	if (runToUse :: any).RoomPhase then
+		(runToUse :: any).RoomPhase = "MapSelect"
+	end
+	runToUse.ActiveRoom = nil
+	runToUse.ActiveCombat = nil
+	runToUse.ActiveEvent = nil
+	runToUse.PendingRewards = nil
+
+	local wrs = getWorldRoomService()
+	if wrs then
+		pcall(function()
+			wrs.cleanupRoom()
+		end)
+	end
+
+	print(string.format("[SHOPFLOW][SERVER] Merchant Shop exited by %s: Phase=MapSelect, Rev=%d",
+		member.DisplayName, runToUse.StateRevision))
+
+	if not isIsolatedTesting or isReal then
+		RunManager.broadcastRunSnapshots("Left the Merchant Shop. Select the next room on the Map.", isReal)
+	end
+
 	return true, nil
 end
 

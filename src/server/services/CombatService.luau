@@ -98,6 +98,18 @@ local liveOnCombatEndCallbackBackup: ((outcome: "Victory" | "Defeat") -> ())? = 
 local liveTurnTimerConnectionBackup: RBXScriptConnection? = nil
 local isCombatIsolation = false
 
+local failureInjectionEnabled = false
+local failureInjectionMessage: string? = nil
+
+function CombatService.setFailureInjectionForTesting(enabled: boolean, message: string?)
+	failureInjectionEnabled = enabled
+	failureInjectionMessage = message
+end
+
+function CombatService.isFailureInjectionEnabled(): boolean
+	return failureInjectionEnabled
+end
+
 function CombatService.beginTestIsolation()
 	if not isCombatIsolation then
 		liveActiveCombatBackup = activeCombat
@@ -845,6 +857,14 @@ function CombatService.startCombat(
 ): StateTypes.CombatState
 	partyRef = party
 	onCombatEndCallback = onEndCallback
+
+	if failureInjectionEnabled then
+		for _, pState in partyRef do
+			pState.Resources.Energy = 0
+			pState.Resources.Shield = 999
+		end
+		error(failureInjectionMessage or "CombatService: Injected failure in startCombat for testing")
+	end
 
 	local playerCount = 0
 	for _ in party do playerCount += 1 end
