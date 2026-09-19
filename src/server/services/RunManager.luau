@@ -132,9 +132,14 @@ local currentRun: StateTypes.RunState = liveRun
 local internalDungeonRun: DungeonMap.DungeonRun? = nil
 local liveDungeonRun: DungeonMap.DungeonRun? = nil
 local merchantPurchaseLocks: { [string]: boolean } = {}
+local rewardClaimLocks: { [string]: boolean } = {}
 
 function RunManager.getMerchantPurchaseLocksForTesting(): { [string]: boolean }
 	return merchantPurchaseLocks
+end
+
+function RunManager.getRewardClaimLocksForTesting(): { [string]: boolean }
+	return rewardClaimLocks
 end
 
 function RunManager.beginTestIsolation()
@@ -143,6 +148,7 @@ function RunManager.beginTestIsolation()
 		isIsolatedTesting = true
 	end
 	table.clear(merchantPurchaseLocks)
+	table.clear(rewardClaimLocks)
 	isolatedTestRun = createInitialRun("run_test_isolated")
 	currentRun = isolatedTestRun
 	internalDungeonRun = nil
@@ -164,6 +170,7 @@ function RunManager.endTestIsolation()
 	internalDungeonRun = liveDungeonRun
 	liveDungeonRun = nil
 	table.clear(merchantPurchaseLocks)
+	table.clear(rewardClaimLocks)
 
 	local cs = getCombatService()
 	if cs and cs.endTestIsolation then
@@ -1396,27 +1403,60 @@ function RunManager.claimRewardCard(player: any, cardDefId: string): (boolean, s
 		return false, "Card not in draft choices."
 	end
 
-	print(string.format("[REWARDFLOW][SERVER][1] claimRewardCard starting: Player=%s, Card=%s", tostring(userId), tostring(cardDefId)))
-
-	-- 1. Pre-create runtime CardInstance; verify creation succeeds before permanent grant
-	local newCardInst = CardService.createCardInstance(cardDefId, userId)
-	if not newCardInst then
-		warn(string.format("[REWARDFLOW][SERVER][1] failed to create CardInstance for %s", tostring(cardDefId)))
-		return false, "Failed to create runtime card instance."
+	-- Concurrency lock keyed by runId:userId
+	local lockKey = string.format("%s:%s", tostring(runToUse.RunId), tostring(userId))
+	if rewardClaimLocks[lockKey] then
+		return false, "Reward claim is currently being processed."
 	end
+	rewardClaimLocks[lockKey] = true
 
-	-- 2. Verify permanent collection grant succeeds
-	local playerRef = member.PlayerInstance or player or { UserId = userId }
-	local grantOk, grantErr = CardCollectionService.grantCard(playerRef, cardDefId, 1)
-	if not grantOk then
-		warn(string.format("[REWARDFLOW][SERVER][1] failed to grant card to collection: %s", tostring(grantErr)))
-		return false, grantErr or "Failed to grant card to permanent collection."
+	local txSuccess = false
+	local txErrMsg: string? = nil
+
+	local execOk, execErr = pcall(function()
+		-- Re-verify claim status under lock
+		if runToUse.PendingRewards.ClaimedCards[userId] then
+			txSuccess = false
+			txErrMsg = "Reward already claimed."
+			return
+		end
+
+		print(string.format("[REWARDFLOW][SERVER][1] claimRewardCard starting: Player=%s, Card=%s", tostring(userId), tostring(cardDefId)))
+
+		-- 1. Pre-create runtime CardInstance; verify creation succeeds before permanent grant
+		local newCardInst = CardService.createCardInstance(cardDefId, userId)
+		if not newCardInst then
+			warn(string.format("[REWARDFLOW][SERVER][1] failed to create CardInstance for %s", tostring(cardDefId)))
+			txSuccess = false
+			txErrMsg = "Failed to create runtime card instance."
+			return
+		end
+
+		-- 2. Verify permanent collection grant succeeds
+		local playerRef = member.PlayerInstance or player or { UserId = userId }
+		local grantOk, grantErr = CardCollectionService.grantCard(playerRef, cardDefId, 1)
+		if not grantOk then
+			warn(string.format("[REWARDFLOW][SERVER][1] failed to grant card to collection: %s", tostring(grantErr)))
+			txSuccess = false
+			txErrMsg = grantErr or "Failed to grant card to permanent collection."
+			return
+		end
+
+		-- 3. Both operations succeeded: commit runtime deck insertion and mark claimed
+		table.insert(member.Deck, newCardInst)
+		runToUse.PendingRewards.ClaimedCards[userId] = true
+		runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+		txSuccess = true
+	end)
+
+	rewardClaimLocks[lockKey] = nil
+
+	if not execOk then
+		return false, "Reward claim transaction error: " .. tostring(execErr)
 	end
-
-	-- 3. Both operations succeeded: commit runtime deck insertion and mark claimed
-	table.insert(member.Deck, newCardInst)
-	runToUse.PendingRewards.ClaimedCards[userId] = true
-	runToUse.StateRevision = (runToUse.StateRevision or 0) + 1
+	if not txSuccess then
+		return false, txErrMsg or "Failed to claim reward."
+	end
 
 	print(string.format("[REWARDFLOW][SERVER][2] claimRewardCard committed: Player=%s, Card=%s, Rev=%d",
 		tostring(userId), tostring(cardDefId), runToUse.StateRevision))

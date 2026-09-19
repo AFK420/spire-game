@@ -620,6 +620,8 @@ local function sendDeckListUpdate(player: Player)
 	local summaries = {}
 	for _, d in decks do
 		table.insert(summaries, DeckService.toDeckSummaryView(player, d))
+		local detailView = DeckService.toDeckDetailView(player, d)
+		NetworkService.DeckDetailUpdateEvent:FireClient(player, detailView)
 	end
 	local active = DeckService.getActiveDeck(player)
 	local activeId = active and active.DeckId or ""

@@ -159,6 +159,21 @@ Every class features unique base stats, starting decks, passive skill trees, and
 
 ---
 
+### 9. Deck Builder UI & Card Collection Frontend (`UIController.client.luau`)
+* **3-Column Modal Interface**:
+  * **Column 1 (Decks Sidebar)**: Displays player saved decks with slot entitlement (`Slots: X/Y`), active deck marker (`★ ACTIVE`), card count badge, `+ New Deck`, `Set Active`, `Rename`, `Duplicate`, and `Delete` controls with protection against deleting the active or sole deck.
+  * **Column 2 (Draft Deck Editor)**: Dynamic card counter with color-coded bounds (`Cards: X / 30 (Min: 8, Max: 30)`), real-time deck legal status, draft cards list with `[-]`, `[+]`, `[✕]` controls, `Clear Deck`, `Revert Changes`, and `SAVE DECK 💾`.
+  * **Column 3 (Collection Browser)**: Live search filter, owned cards list with card cost, name, target, and description, owned copies vs draft copies count, and contextual `+ Add to Deck` button (disabled on max deck size, copy limit, or unowned).
+* **Client-Side Draft Editing**:
+  * Client edits are isolated to a local draft dictionary (`currentDraftCards`) until explicit save.
+  * Server rejection keeps the local draft intact without wiping unsaved changes.
+* **Fail-Closed ActiveRoom UI Routing**:
+  * If `Phase == "ActiveRoom"` but `roomType` is nil or unrecognized, all room frames remain hidden, status is set to `"Synchronizing room state..."`, and client issues `RequestStateSyncEvent:FireServer()` instead of defaulting to Combat.
+* **Server-Side Reward Claim Concurrency Locking**:
+  * `RunManager.claimRewardCard` serializes concurrent claim attempts using per-player lock keyed by `runId:userId`, rejecting rapid duplicate clicks while asynchronously executing runtime card creation and permanent collection grants.
+
+---
+
 ## 📁 Repository Structure
 
 ```text
@@ -226,7 +241,7 @@ spire-game/
 │       └── CombatVFXController.client.luau # Client 3D attack motions, projectiles, and AoE
 │
 └── tests/
-    └── verify_phase1_integration.py    # 1,473 offline architecture & logic verifiers
+    └── verify_phase1_integration.py    # 1,525 offline architecture & logic verifiers
 ```
 
 ---
@@ -242,7 +257,7 @@ spire-game/
 ```bash
 python tests/verify_phase1_integration.py
 ```
-*Executes all 1,473 verifier checks against file schemas, network contracts, typing, and logic rules.*
+*Executes all 1,525 verifier checks against file schemas, network contracts, typing, and logic rules.*
 
 ### 2. Build Roblox Place File
 ```bash

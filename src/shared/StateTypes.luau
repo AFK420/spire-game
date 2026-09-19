@@ -728,6 +728,7 @@ export type CardCollectionView = {
 export type DeckSummaryView = {
 	DeckId: string,
 	Name: string,
+	Cards: { [string]: number }?,
 	CardCount: number,
 	ClassId: string?,
 	CreatedAt: number,

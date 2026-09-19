@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "hardened_campfire_merchant_20260919",
-	BUILD_NAME = "Hardened Campfire Choices & Merchant Purchase Transactions",
+	BUILD_ID = "deck_builder_collection_ui_20260919",
+	BUILD_NAME = "Deck Builder UI & Collection Frontend",
 }
 
 return BuildInfo

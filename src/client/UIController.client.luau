@@ -24,6 +24,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
+local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local BuildInfo = require(Shared:WaitForChild("BuildInfo") :: ModuleScript)
 
 print(string.format("[BUILD] Client build=%s", BuildInfo.BUILD_ID))
@@ -59,12 +60,19 @@ local CampfireChoiceEvent = getEvent("CampfireChoice")
 local BuyMerchantItemEvent = getEvent("BuyMerchantItem")
 local ExitMerchantEvent = getEvent("ExitMerchant")
 
+-- Phase 4 Deck & Collection Requests
+local RequestDecksEvent = getEvent("RequestDecks")
+local RequestCardCollectionEvent = getEvent("RequestCardCollection")
+
 -- Server -> Client State
 local RunStateUpdateEvent = getEvent("RunStateUpdate")
 local CombatStateUpdateEvent = getEvent("CombatStateUpdate")
 local CombatEventLoggedEvent = getEvent("CombatEventLogged")
 local AnnouncementEvent = getEvent("Announcement")
 local ActionResultEvent = getEvent("ActionResult")
+local DeckListUpdateEvent = getEvent("DeckListUpdate")
+local DeckDetailUpdateEvent = getEvent("DeckDetailUpdate")
+local CardCollectionUpdateEvent = getEvent("CardCollectionUpdate")
 
 --------------------------------------------------------------------------------
 -- Modular UI Component Factory
@@ -185,8 +193,8 @@ UIFactory.createStroke(bannerLabel, Color3.fromRGB(70, 80, 100), 1)
 
 local lobbyView = Instance.new("Frame")
 lobbyView.Name = "LobbyView"
-lobbyView.Size = UDim2.new(0, 480, 0, 320)
-lobbyView.Position = UDim2.new(0.5, -240, 0.5, -160)
+lobbyView.Size = UDim2.new(0, 480, 0, 390)
+lobbyView.Position = UDim2.new(0.5, -240, 0.5, -195)
 lobbyView.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
 lobbyView.BackgroundTransparency = 0.1
 lobbyView.BorderSizePixel = 0
@@ -227,8 +235,8 @@ lobbyStatus.TextSize = 14
 lobbyStatus.Parent = lobbyView
 
 local startRunBtnContainer = Instance.new("Frame")
-startRunBtnContainer.Size = UDim2.new(0, 240, 0, 58)
-startRunBtnContainer.Position = UDim2.new(0.5, -120, 0, 220)
+startRunBtnContainer.Size = UDim2.new(0, 260, 0, 48)
+startRunBtnContainer.Position = UDim2.new(0.5, -130, 0, 210)
 startRunBtnContainer.BackgroundTransparency = 1
 startRunBtnContainer.Parent = lobbyView
 
@@ -236,6 +244,1144 @@ UIFactory.createButton(startRunBtnContainer, "START DUNGEON RUN ➔", Color3.fro
 	if StartRunEvent then
 		StartRunEvent:FireServer()
 	end
+end)
+
+local deckBuilderBtnContainer = Instance.new("Frame")
+deckBuilderBtnContainer.Size = UDim2.new(0, 260, 0, 44)
+deckBuilderBtnContainer.Position = UDim2.new(0.5, -130, 0, 272)
+deckBuilderBtnContainer.BackgroundTransparency = 1
+deckBuilderBtnContainer.Parent = lobbyView
+
+--------------------------------------------------------------------------------
+-- VIEW: Deck Builder & Card Collection Frontend
+--------------------------------------------------------------------------------
+
+type DeckBuilderController = {
+	View: Frame,
+	toggle: () -> (),
+	show: () -> (),
+	hide: () -> (),
+	onDeckListUpdate: (decks: { StateTypes.DeckSummaryView }, activeDeckId: string) -> (),
+	onDeckDetailUpdate: (detail: StateTypes.DeckDetailView) -> (),
+	onCardCollectionUpdate: (collectionView: StateTypes.CardCollectionView) -> (),
+	handleActionResult: (res: any) -> boolean,
+}
+
+local function createDeckBuilderController(): DeckBuilderController
+	local CreateDeckEvent = getEvent("CreateDeck")
+	local RenameDeckEvent = getEvent("RenameDeck")
+	local DeleteDeckEvent = getEvent("DeleteDeck")
+	local SaveDeckEvent = getEvent("SaveDeck")
+	local DuplicateDeckEvent = getEvent("DuplicateDeck")
+	local SelectActiveDeckEvent = getEvent("SelectActiveDeck")
+
+	local deckBuilderView = Instance.new("Frame")
+	deckBuilderView.Name = "DeckBuilderView"
+	deckBuilderView.Size = UDim2.new(0, 940, 0, 580)
+	deckBuilderView.Position = UDim2.new(0.5, -470, 0.5, -290)
+	deckBuilderView.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+	deckBuilderView.BackgroundTransparency = 0.05
+	deckBuilderView.BorderSizePixel = 0
+	deckBuilderView.Visible = false
+	deckBuilderView.ZIndex = 30
+	deckBuilderView.Parent = mainFrame
+	UIFactory.createCorner(deckBuilderView, 14)
+	UIFactory.createStroke(deckBuilderView, Color3.fromRGB(50, 110, 200), 2)
+
+	-- Header
+	local deckBuilderHeader = Instance.new("Frame")
+	deckBuilderHeader.Size = UDim2.new(1, 0, 0, 48)
+	deckBuilderHeader.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
+	deckBuilderHeader.BorderSizePixel = 0
+	deckBuilderHeader.ZIndex = 31
+	deckBuilderHeader.Parent = deckBuilderView
+	UIFactory.createCorner(deckBuilderHeader, 14)
+
+	local deckBuilderHeaderTitle = Instance.new("TextLabel")
+	deckBuilderHeaderTitle.Size = UDim2.new(0, 320, 1, 0)
+	deckBuilderHeaderTitle.Position = UDim2.new(0, 18, 0, 0)
+	deckBuilderHeaderTitle.BackgroundTransparency = 1
+	deckBuilderHeaderTitle.Text = "🎴 DECK BUILDER & COLLECTION"
+	deckBuilderHeaderTitle.TextColor3 = Color3.fromRGB(120, 190, 255)
+	deckBuilderHeaderTitle.Font = Enum.Font.GothamBold
+	deckBuilderHeaderTitle.TextSize = 16
+	deckBuilderHeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+	deckBuilderHeaderTitle.ZIndex = 32
+	deckBuilderHeaderTitle.Parent = deckBuilderHeader
+
+	local deckBuilderStatusLabel = Instance.new("TextLabel")
+	deckBuilderStatusLabel.Name = "DeckBuilderStatus"
+	deckBuilderStatusLabel.Size = UDim2.new(1, -430, 1, 0)
+	deckBuilderStatusLabel.Position = UDim2.new(0, 350, 0, 0)
+	deckBuilderStatusLabel.BackgroundTransparency = 1
+	deckBuilderStatusLabel.Text = "Select or create a deck to begin editing."
+	deckBuilderStatusLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
+	deckBuilderStatusLabel.Font = Enum.Font.GothamMedium
+	deckBuilderStatusLabel.TextSize = 12
+	deckBuilderStatusLabel.TextXAlignment = Enum.TextXAlignment.Right
+	deckBuilderStatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	deckBuilderStatusLabel.ZIndex = 32
+	deckBuilderStatusLabel.Parent = deckBuilderHeader
+
+	local closeDeckBuilderBtn = Instance.new("TextButton")
+	closeDeckBuilderBtn.Size = UDim2.new(0, 34, 0, 34)
+	closeDeckBuilderBtn.Position = UDim2.new(1, -42, 0, 7)
+	closeDeckBuilderBtn.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
+	closeDeckBuilderBtn.BorderSizePixel = 0
+	closeDeckBuilderBtn.Text = "✕"
+	closeDeckBuilderBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+	closeDeckBuilderBtn.Font = Enum.Font.GothamBold
+	closeDeckBuilderBtn.TextSize = 16
+	closeDeckBuilderBtn.ZIndex = 33
+	closeDeckBuilderBtn.Parent = deckBuilderHeader
+	UIFactory.createCorner(closeDeckBuilderBtn, 8)
+	closeDeckBuilderBtn.MouseButton1Click:Connect(function()
+		deckBuilderView.Visible = false
+	end)
+
+	-- Main 3-column body
+	local deckBuilderBody = Instance.new("Frame")
+	deckBuilderBody.Size = UDim2.new(1, -24, 1, -62)
+	deckBuilderBody.Position = UDim2.new(0, 12, 0, 54)
+	deckBuilderBody.BackgroundTransparency = 1
+	deckBuilderBody.ZIndex = 31
+	deckBuilderBody.Parent = deckBuilderView
+
+	--------------------------------------------------------------------------------
+	-- Column 1: Decks Sidebar (Left)
+	--------------------------------------------------------------------------------
+
+	local decksSidebarFrame = Instance.new("Frame")
+	decksSidebarFrame.Size = UDim2.new(0, 250, 1, 0)
+	decksSidebarFrame.Position = UDim2.new(0, 0, 0, 0)
+	decksSidebarFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+	decksSidebarFrame.BorderSizePixel = 0
+	decksSidebarFrame.ZIndex = 32
+	decksSidebarFrame.Parent = deckBuilderBody
+	UIFactory.createCorner(decksSidebarFrame, 10)
+	UIFactory.createStroke(decksSidebarFrame, Color3.fromRGB(45, 55, 75), 1)
+
+	local decksSidebarHeader = Instance.new("Frame")
+	decksSidebarHeader.Size = UDim2.new(1, -16, 0, 36)
+	decksSidebarHeader.Position = UDim2.new(0, 8, 0, 8)
+	decksSidebarHeader.BackgroundTransparency = 1
+	decksSidebarHeader.ZIndex = 33
+	decksSidebarHeader.Parent = decksSidebarFrame
+
+	local decksSidebarTitle = Instance.new("TextLabel")
+	decksSidebarTitle.Size = UDim2.new(0, 110, 1, 0)
+	decksSidebarTitle.BackgroundTransparency = 1
+	decksSidebarTitle.Text = "MY DECKS"
+	decksSidebarTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	decksSidebarTitle.Font = Enum.Font.GothamBold
+	decksSidebarTitle.TextSize = 14
+	decksSidebarTitle.TextXAlignment = Enum.TextXAlignment.Left
+	decksSidebarTitle.ZIndex = 34
+	decksSidebarTitle.Parent = decksSidebarHeader
+
+	local createDeckBtnContainer = Instance.new("Frame")
+	createDeckBtnContainer.Size = UDim2.new(0, 115, 0, 30)
+	createDeckBtnContainer.Position = UDim2.new(1, -115, 0, 3)
+	createDeckBtnContainer.BackgroundTransparency = 1
+	createDeckBtnContainer.ZIndex = 34
+	createDeckBtnContainer.Parent = decksSidebarHeader
+
+	local decksListScroll = Instance.new("ScrollingFrame")
+	decksListScroll.Size = UDim2.new(1, -16, 1, -56)
+	decksListScroll.Position = UDim2.new(0, 8, 0, 48)
+	decksListScroll.BackgroundTransparency = 1
+	decksListScroll.BorderSizePixel = 0
+	decksListScroll.ScrollBarThickness = 5
+	decksListScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 95, 125)
+	decksListScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	decksListScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	decksListScroll.ZIndex = 33
+	decksListScroll.Parent = decksSidebarFrame
+
+	local decksListLayout = Instance.new("UIListLayout")
+	decksListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	decksListLayout.Padding = UDim.new(0, 8)
+	decksListLayout.Parent = decksListScroll
+
+	--------------------------------------------------------------------------------
+	-- Column 2: Draft Editor (Center)
+	--------------------------------------------------------------------------------
+
+	local draftEditorFrame = Instance.new("Frame")
+	draftEditorFrame.Size = UDim2.new(0, 365, 1, 0)
+	draftEditorFrame.Position = UDim2.new(0, 260, 0, 0)
+	draftEditorFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+	draftEditorFrame.BorderSizePixel = 0
+	draftEditorFrame.ZIndex = 32
+	draftEditorFrame.Parent = deckBuilderBody
+	UIFactory.createCorner(draftEditorFrame, 10)
+	UIFactory.createStroke(draftEditorFrame, Color3.fromRGB(45, 55, 75), 1)
+
+	local draftHeaderFrame = Instance.new("Frame")
+	draftHeaderFrame.Size = UDim2.new(1, -16, 0, 78)
+	draftHeaderFrame.Position = UDim2.new(0, 8, 0, 8)
+	draftHeaderFrame.BackgroundTransparency = 1
+	draftHeaderFrame.ZIndex = 33
+	draftHeaderFrame.Parent = draftEditorFrame
+
+	local draftDeckTitleLabel = Instance.new("TextLabel")
+	draftDeckTitleLabel.Size = UDim2.new(1, 0, 0, 22)
+	draftDeckTitleLabel.Position = UDim2.new(0, 0, 0, 0)
+	draftDeckTitleLabel.BackgroundTransparency = 1
+	draftDeckTitleLabel.Text = "Editing: (Select a Deck)"
+	draftDeckTitleLabel.TextColor3 = Color3.fromRGB(120, 190, 255)
+	draftDeckTitleLabel.Font = Enum.Font.GothamBold
+	draftDeckTitleLabel.TextSize = 14
+	draftDeckTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	draftDeckTitleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	draftDeckTitleLabel.ZIndex = 34
+	draftDeckTitleLabel.Parent = draftHeaderFrame
+
+	local draftCountLabel = Instance.new("TextLabel")
+	draftCountLabel.Size = UDim2.new(1, 0, 0, 18)
+	draftCountLabel.Position = UDim2.new(0, 0, 0, 24)
+	draftCountLabel.BackgroundTransparency = 1
+	draftCountLabel.Text = "Cards: 0 / 30 (Min: 8, Max: 30, Max Copies: 3)"
+	draftCountLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
+	draftCountLabel.Font = Enum.Font.GothamMedium
+	draftCountLabel.TextSize = 12
+	draftCountLabel.TextXAlignment = Enum.TextXAlignment.Left
+	draftCountLabel.ZIndex = 34
+	draftCountLabel.Parent = draftHeaderFrame
+
+	local draftActionButtons = Instance.new("Frame")
+	draftActionButtons.Size = UDim2.new(1, 0, 0, 30)
+	draftActionButtons.Position = UDim2.new(0, 0, 0, 46)
+	draftActionButtons.BackgroundTransparency = 1
+	draftActionButtons.ZIndex = 34
+	draftActionButtons.Parent = draftHeaderFrame
+
+	local saveDraftBtnContainer = Instance.new("Frame")
+	saveDraftBtnContainer.Size = UDim2.new(0, 125, 1, 0)
+	saveDraftBtnContainer.Position = UDim2.new(0, 0, 0, 0)
+	saveDraftBtnContainer.BackgroundTransparency = 1
+	saveDraftBtnContainer.ZIndex = 35
+	saveDraftBtnContainer.Parent = draftActionButtons
+
+	local revertDraftBtnContainer = Instance.new("Frame")
+	revertDraftBtnContainer.Size = UDim2.new(0, 105, 1, 0)
+	revertDraftBtnContainer.Position = UDim2.new(0, 133, 0, 0)
+	revertDraftBtnContainer.BackgroundTransparency = 1
+	revertDraftBtnContainer.ZIndex = 35
+	revertDraftBtnContainer.Parent = draftActionButtons
+
+	local clearDraftBtnContainer = Instance.new("Frame")
+	clearDraftBtnContainer.Size = UDim2.new(0, 95, 1, 0)
+	clearDraftBtnContainer.Position = UDim2.new(1, -95, 0, 0)
+	clearDraftBtnContainer.BackgroundTransparency = 1
+	clearDraftBtnContainer.ZIndex = 35
+	clearDraftBtnContainer.Parent = draftActionButtons
+
+	local draftCardsScroll = Instance.new("ScrollingFrame")
+	draftCardsScroll.Size = UDim2.new(1, -16, 1, -100)
+	draftCardsScroll.Position = UDim2.new(0, 8, 0, 92)
+	draftCardsScroll.BackgroundTransparency = 1
+	draftCardsScroll.BorderSizePixel = 0
+	draftCardsScroll.ScrollBarThickness = 5
+	draftCardsScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 95, 125)
+	draftCardsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	draftCardsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	draftCardsScroll.ZIndex = 33
+	draftCardsScroll.Parent = draftEditorFrame
+
+	local draftCardsLayout = Instance.new("UIListLayout")
+	draftCardsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	draftCardsLayout.Padding = UDim.new(0, 6)
+	draftCardsLayout.Parent = draftCardsScroll
+
+	--------------------------------------------------------------------------------
+	-- Column 3: Card Collection Browser (Right)
+	--------------------------------------------------------------------------------
+
+	local collectionBrowserFrame = Instance.new("Frame")
+	collectionBrowserFrame.Size = UDim2.new(1, -635, 1, 0)
+	collectionBrowserFrame.Position = UDim2.new(0, 635, 0, 0)
+	collectionBrowserFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+	collectionBrowserFrame.BorderSizePixel = 0
+	collectionBrowserFrame.ZIndex = 32
+	collectionBrowserFrame.Parent = deckBuilderBody
+	UIFactory.createCorner(collectionBrowserFrame, 10)
+	UIFactory.createStroke(collectionBrowserFrame, Color3.fromRGB(45, 55, 75), 1)
+
+	local collectionHeaderFrame = Instance.new("Frame")
+	collectionHeaderFrame.Size = UDim2.new(1, -16, 0, 78)
+	collectionHeaderFrame.Position = UDim2.new(0, 8, 0, 8)
+	collectionHeaderFrame.BackgroundTransparency = 1
+	collectionHeaderFrame.ZIndex = 33
+	collectionHeaderFrame.Parent = collectionBrowserFrame
+
+	local collectionTitleLabel = Instance.new("TextLabel")
+	collectionTitleLabel.Size = UDim2.new(1, 0, 0, 22)
+	collectionTitleLabel.Position = UDim2.new(0, 0, 0, 0)
+	collectionTitleLabel.BackgroundTransparency = 1
+	collectionTitleLabel.Text = "CARD COLLECTION"
+	collectionTitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	collectionTitleLabel.Font = Enum.Font.GothamBold
+	collectionTitleLabel.TextSize = 14
+	collectionTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	collectionTitleLabel.ZIndex = 34
+	collectionTitleLabel.Parent = collectionHeaderFrame
+
+	local collectionSearchBox = Instance.new("TextBox")
+	collectionSearchBox.Size = UDim2.new(1, 0, 0, 32)
+	collectionSearchBox.Position = UDim2.new(0, 0, 0, 36)
+	collectionSearchBox.BackgroundColor3 = Color3.fromRGB(30, 34, 46)
+	collectionSearchBox.BorderSizePixel = 0
+	collectionSearchBox.PlaceholderText = "🔍 Search cards..."
+	collectionSearchBox.PlaceholderColor3 = Color3.fromRGB(120, 130, 150)
+	collectionSearchBox.Text = ""
+	collectionSearchBox.TextColor3 = Color3.fromRGB(240, 240, 240)
+	collectionSearchBox.Font = Enum.Font.GothamMedium
+	collectionSearchBox.TextSize = 13
+	collectionSearchBox.TextXAlignment = Enum.TextXAlignment.Left
+	collectionSearchBox.ClearTextOnFocus = false
+	collectionSearchBox.ZIndex = 34
+	collectionSearchBox.Parent = collectionHeaderFrame
+	UIFactory.createCorner(collectionSearchBox, 6)
+	UIFactory.createStroke(collectionSearchBox, Color3.fromRGB(60, 70, 95), 1)
+
+	local collectionScroll = Instance.new("ScrollingFrame")
+	collectionScroll.Size = UDim2.new(1, -16, 1, -100)
+	collectionScroll.Position = UDim2.new(0, 8, 0, 92)
+	collectionScroll.BackgroundTransparency = 1
+	collectionScroll.BorderSizePixel = 0
+	collectionScroll.ScrollBarThickness = 5
+	collectionScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 95, 125)
+	collectionScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	collectionScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	collectionScroll.ZIndex = 33
+	collectionScroll.Parent = collectionBrowserFrame
+
+	local collectionLayout = Instance.new("UIListLayout")
+	collectionLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	collectionLayout.Padding = UDim.new(0, 6)
+	collectionLayout.Parent = collectionScroll
+
+	--------------------------------------------------------------------------------
+	-- Inline Rename Modal
+	--------------------------------------------------------------------------------
+
+	local renameModalFrame = Instance.new("Frame")
+	renameModalFrame.Size = UDim2.new(0, 360, 0, 160)
+	renameModalFrame.Position = UDim2.new(0.5, -180, 0.5, -80)
+	renameModalFrame.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
+	renameModalFrame.BorderSizePixel = 0
+	renameModalFrame.Visible = false
+	renameModalFrame.ZIndex = 50
+	renameModalFrame.Parent = deckBuilderView
+	UIFactory.createCorner(renameModalFrame, 12)
+	UIFactory.createStroke(renameModalFrame, Color3.fromRGB(60, 130, 240), 2)
+
+	local renameModalTitle = Instance.new("TextLabel")
+	renameModalTitle.Size = UDim2.new(1, -24, 0, 30)
+	renameModalTitle.Position = UDim2.new(0, 12, 0, 14)
+	renameModalTitle.BackgroundTransparency = 1
+	renameModalTitle.Text = "Rename Deck"
+	renameModalTitle.TextColor3 = Color3.fromRGB(240, 240, 240)
+	renameModalTitle.Font = Enum.Font.GothamBold
+	renameModalTitle.TextSize = 16
+	renameModalTitle.TextXAlignment = Enum.TextXAlignment.Left
+	renameModalTitle.ZIndex = 51
+	renameModalTitle.Parent = renameModalFrame
+
+	local renameInputBox = Instance.new("TextBox")
+	renameInputBox.Size = UDim2.new(1, -24, 0, 38)
+	renameInputBox.Position = UDim2.new(0, 12, 0, 52)
+	renameInputBox.BackgroundColor3 = Color3.fromRGB(32, 36, 50)
+	renameInputBox.BorderSizePixel = 0
+	renameInputBox.PlaceholderText = "Enter new deck name..."
+	renameInputBox.PlaceholderColor3 = Color3.fromRGB(120, 130, 150)
+	renameInputBox.Text = ""
+	renameInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	renameInputBox.Font = Enum.Font.GothamMedium
+	renameInputBox.TextSize = 14
+	renameInputBox.ClearTextOnFocus = false
+	renameInputBox.ZIndex = 51
+	renameInputBox.Parent = renameModalFrame
+	UIFactory.createCorner(renameInputBox, 8)
+	UIFactory.createStroke(renameInputBox, Color3.fromRGB(70, 85, 115), 1)
+
+	local renameConfirmBtnContainer = Instance.new("Frame")
+	renameConfirmBtnContainer.Size = UDim2.new(0, 150, 0, 36)
+	renameConfirmBtnContainer.Position = UDim2.new(0, 12, 1, -48)
+	renameConfirmBtnContainer.BackgroundTransparency = 1
+	renameConfirmBtnContainer.ZIndex = 51
+	renameConfirmBtnContainer.Parent = renameModalFrame
+
+	local renameCancelBtnContainer = Instance.new("Frame")
+	renameCancelBtnContainer.Size = UDim2.new(0, 150, 0, 36)
+	renameCancelBtnContainer.Position = UDim2.new(1, -162, 1, -48)
+	renameCancelBtnContainer.BackgroundTransparency = 1
+	renameCancelBtnContainer.ZIndex = 51
+	renameCancelBtnContainer.Parent = renameModalFrame
+
+	--------------------------------------------------------------------------------
+	-- Deck Builder Client State & Functions
+	--------------------------------------------------------------------------------
+
+	local cachedDecks: { [string]: StateTypes.DeckSummaryView } = {}
+	local deckDetailCache: { [string]: { [string]: number } } = {}
+	local cachedActiveDeckId: string = ""
+	local cachedCollection: { [string]: number } = {}
+	local currentEditedDeckId: string? = nil
+	local currentDraftCards: { [string]: number } = {}
+	local originalDeckCards: { [string]: number } = {}
+	local isDeckActionPending: boolean = false
+	local collectionFilterText: string = ""
+	local pendingRenameDeckId: string? = nil
+
+	local function countCards(cards: { [string]: number }?): number
+		if not cards then return 0 end
+		local total = 0
+		for _, count in cards do
+			total += (count or 0)
+		end
+		return total
+	end
+
+	local function deepCopyCards(cards: { [string]: number }?): { [string]: number }
+		local copy: { [string]: number } = {}
+		if cards then
+			for k, v in cards do
+				copy[k] = v
+			end
+		end
+		return copy
+	end
+
+	local function setDeckStatus(msg: string, color: Color3)
+		deckBuilderStatusLabel.Text = msg
+		deckBuilderStatusLabel.TextColor3 = color
+	end
+
+	local renderDecksList: () -> ()
+	local renderDraftEditor: () -> ()
+	local renderCollectionBrowser: () -> ()
+
+	renderDecksList = function()
+		for _, child in decksListScroll:GetChildren() do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+
+		local sortedDecks: { StateTypes.DeckSummaryView } = {}
+		for _, d in cachedDecks do
+			table.insert(sortedDecks, d)
+		end
+		table.sort(sortedDecks, function(a, b)
+			if a.DeckId == cachedActiveDeckId then return true end
+			if b.DeckId == cachedActiveDeckId then return false end
+			return (a.Name or "") < (b.Name or "")
+		end)
+
+		for _, deck in sortedDecks do
+			local isSelected = (deck.DeckId == currentEditedDeckId)
+			local isActive = (deck.DeckId == cachedActiveDeckId)
+			local deckItem = Instance.new("Frame")
+			deckItem.Size = UDim2.new(1, -4, 0, 74)
+			deckItem.BackgroundColor3 = if isSelected then Color3.fromRGB(32, 42, 60) else Color3.fromRGB(26, 30, 42)
+			deckItem.BorderSizePixel = 0
+			deckItem.ZIndex = 34
+			deckItem.Parent = decksListScroll
+			UIFactory.createCorner(deckItem, 8)
+			local strokeColor = if isSelected
+				then Color3.fromRGB(80, 180, 255)
+				elseif isActive then Color3.fromRGB(50, 180, 100)
+				else Color3.fromRGB(50, 60, 80)
+			UIFactory.createStroke(deckItem, strokeColor, if isSelected or isActive then 1.5 else 1)
+
+			local nameBtn = Instance.new("TextButton")
+			nameBtn.Size = UDim2.new(1, -10, 0, 22)
+			nameBtn.Position = UDim2.new(0, 8, 0, 6)
+			nameBtn.BackgroundTransparency = 1
+			nameBtn.Text = deck.Name
+			nameBtn.TextColor3 = if isSelected then Color3.fromRGB(120, 210, 255) else Color3.fromRGB(240, 240, 240)
+			nameBtn.Font = Enum.Font.GothamBold
+			nameBtn.TextSize = 13
+			nameBtn.TextXAlignment = Enum.TextXAlignment.Left
+			nameBtn.TextTruncate = Enum.TextTruncate.AtEnd
+			nameBtn.ZIndex = 35
+			nameBtn.Parent = deckItem
+
+			local countText = string.format("%d cards", deck.CardCount or countCards(deck.Cards))
+			local infoLabel = Instance.new("TextLabel")
+			infoLabel.Size = UDim2.new(0, 80, 0, 18)
+			infoLabel.Position = UDim2.new(0, 8, 0, 28)
+			infoLabel.BackgroundTransparency = 1
+			infoLabel.Text = countText
+			infoLabel.TextColor3 = Color3.fromRGB(160, 175, 195)
+			infoLabel.Font = Enum.Font.GothamMedium
+			infoLabel.TextSize = 11
+			infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+			infoLabel.ZIndex = 35
+			infoLabel.Parent = deckItem
+
+			if isActive then
+				local activeBadge = Instance.new("TextLabel")
+				activeBadge.Size = UDim2.new(0, 72, 0, 18)
+				activeBadge.Position = UDim2.new(0, 92, 0, 28)
+				activeBadge.BackgroundColor3 = Color3.fromRGB(25, 90, 45)
+				activeBadge.BorderSizePixel = 0
+				activeBadge.Text = "★ ACTIVE"
+				activeBadge.TextColor3 = Color3.fromRGB(120, 255, 160)
+				activeBadge.Font = Enum.Font.GothamBold
+				activeBadge.TextSize = 10
+				activeBadge.ZIndex = 35
+				activeBadge.Parent = deckItem
+				UIFactory.createCorner(activeBadge, 4)
+			else
+				local setActiveBtn = Instance.new("TextButton")
+				setActiveBtn.Size = UDim2.new(0, 76, 0, 18)
+				setActiveBtn.Position = UDim2.new(0, 92, 0, 28)
+				setActiveBtn.BackgroundColor3 = Color3.fromRGB(40, 50, 70)
+				setActiveBtn.BorderSizePixel = 0
+				setActiveBtn.Text = "Set Active"
+				setActiveBtn.TextColor3 = Color3.fromRGB(180, 210, 255)
+				setActiveBtn.Font = Enum.Font.GothamMedium
+				setActiveBtn.TextSize = 10
+				setActiveBtn.ZIndex = 35
+				setActiveBtn.Parent = deckItem
+				UIFactory.createCorner(setActiveBtn, 4)
+				setActiveBtn.MouseButton1Click:Connect(function()
+					if isDeckActionPending then return end
+					isDeckActionPending = true
+					setDeckStatus("Selecting active deck...", Color3.fromRGB(200, 200, 200))
+					SelectActiveDeckEvent:FireServer(deck.DeckId)
+				end)
+			end
+
+			local btnRow = Instance.new("Frame")
+			btnRow.Size = UDim2.new(1, -16, 0, 20)
+			btnRow.Position = UDim2.new(0, 8, 0, 48)
+			btnRow.BackgroundTransparency = 1
+			btnRow.ZIndex = 35
+			btnRow.Parent = deckItem
+
+			local renameBtn = Instance.new("TextButton")
+			renameBtn.Size = UDim2.new(0, 62, 1, 0)
+			renameBtn.Position = UDim2.new(0, 0, 0, 0)
+			renameBtn.BackgroundColor3 = Color3.fromRGB(40, 48, 64)
+			renameBtn.BorderSizePixel = 0
+			renameBtn.Text = "✏️ Rename"
+			renameBtn.TextColor3 = Color3.fromRGB(200, 210, 230)
+			renameBtn.Font = Enum.Font.Gotham
+			renameBtn.TextSize = 10
+			renameBtn.ZIndex = 36
+			renameBtn.Parent = btnRow
+			UIFactory.createCorner(renameBtn, 4)
+			renameBtn.MouseButton1Click:Connect(function()
+				pendingRenameDeckId = deck.DeckId
+				renameInputBox.Text = deck.Name
+				renameModalFrame.Visible = true
+				renameInputBox:CaptureFocus()
+			end)
+
+			local cloneBtn = Instance.new("TextButton")
+			cloneBtn.Size = UDim2.new(0, 56, 1, 0)
+			cloneBtn.Position = UDim2.new(0, 68, 0, 0)
+			cloneBtn.BackgroundColor3 = Color3.fromRGB(40, 48, 64)
+			cloneBtn.BorderSizePixel = 0
+			cloneBtn.Text = "📋 Copy"
+			cloneBtn.TextColor3 = Color3.fromRGB(200, 210, 230)
+			cloneBtn.Font = Enum.Font.Gotham
+			cloneBtn.TextSize = 10
+			cloneBtn.ZIndex = 36
+			cloneBtn.Parent = btnRow
+			UIFactory.createCorner(cloneBtn, 4)
+			cloneBtn.MouseButton1Click:Connect(function()
+				if isDeckActionPending then return end
+				local totalDecks = 0
+				for _ in cachedDecks do totalDecks += 1 end
+				if totalDecks >= GameConfig.Deck.MaxDeckSlots then
+					setDeckStatus("⚠️ Maximum deck slots reached.", Color3.fromRGB(255, 90, 90))
+					return
+				end
+				isDeckActionPending = true
+				setDeckStatus("Duplicating deck...", Color3.fromRGB(200, 200, 200))
+				DuplicateDeckEvent:FireServer(deck.DeckId, nil)
+			end)
+
+			local deleteBtn = Instance.new("TextButton")
+			deleteBtn.Size = UDim2.new(0, 52, 1, 0)
+			deleteBtn.Position = UDim2.new(0, 130, 0, 0)
+			deleteBtn.BackgroundColor3 = if isActive then Color3.fromRGB(45, 45, 50) else Color3.fromRGB(65, 35, 40)
+			deleteBtn.BorderSizePixel = 0
+			deleteBtn.Text = "🗑️ Del"
+			deleteBtn.TextColor3 = if isActive then Color3.fromRGB(100, 100, 110) else Color3.fromRGB(255, 120, 120)
+			deleteBtn.Font = Enum.Font.Gotham
+			deleteBtn.TextSize = 10
+			deleteBtn.ZIndex = 36
+			deleteBtn.Parent = btnRow
+			UIFactory.createCorner(deleteBtn, 4)
+			deleteBtn.MouseButton1Click:Connect(function()
+				if isDeckActionPending then return end
+				if isActive then
+					setDeckStatus("⚠️ Cannot delete active deck. Switch active deck first.", Color3.fromRGB(255, 90, 90))
+					return
+				end
+				local totalDecks = 0
+				for _ in cachedDecks do totalDecks += 1 end
+				if totalDecks <= 1 then
+					setDeckStatus("⚠️ Cannot delete your only deck.", Color3.fromRGB(255, 90, 90))
+					return
+				end
+				isDeckActionPending = true
+				setDeckStatus("Deleting deck...", Color3.fromRGB(200, 200, 200))
+				DeleteDeckEvent:FireServer(deck.DeckId)
+			end)
+
+			local function selectThisDeck()
+				if currentEditedDeckId ~= deck.DeckId then
+					currentEditedDeckId = deck.DeckId
+					local cards = deckDetailCache[deck.DeckId] or deck.Cards or {}
+					originalDeckCards = deepCopyCards(cards)
+					currentDraftCards = deepCopyCards(originalDeckCards)
+					setDeckStatus(string.format("Loaded deck '%s'.", deck.Name), Color3.fromRGB(180, 220, 255))
+					renderDecksList()
+					renderDraftEditor()
+					renderCollectionBrowser()
+				end
+			end
+			nameBtn.MouseButton1Click:Connect(selectThisDeck)
+		end
+	end
+
+	renderDraftEditor = function()
+		for _, child in draftCardsScroll:GetChildren() do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+
+		local editedDeck = if currentEditedDeckId then cachedDecks[currentEditedDeckId] else nil
+		draftDeckTitleLabel.Text = if editedDeck then string.format("Editing: %s", editedDeck.Name) else "Editing: (No Deck Selected)"
+
+		local totalCount = countCards(currentDraftCards)
+		local minSize = GameConfig.Deck.MinDeckSize
+		local maxSize = GameConfig.Deck.MaxDeckSize
+		local maxCopies = GameConfig.Deck.MaxCopiesPerCard
+
+		if totalCount < minSize then
+			draftCountLabel.Text = string.format("Cards: %d / %d  (⚠️ Need %d+ cards)", totalCount, maxSize, minSize)
+			draftCountLabel.TextColor3 = Color3.fromRGB(255, 170, 70)
+		elseif totalCount > maxSize then
+			draftCountLabel.Text = string.format("Cards: %d / %d  (⚠️ Exceeds %d cards)", totalCount, maxSize, maxSize)
+			draftCountLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+		else
+			draftCountLabel.Text = string.format("Cards: %d / %d  (Valid Deck)", totalCount, maxSize)
+			draftCountLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+		end
+
+		local sortedCards: { { Id: string, Count: number } } = {}
+		for cardId, count in currentDraftCards do
+			if count > 0 then
+				table.insert(sortedCards, { Id = cardId, Count = count })
+			end
+		end
+		table.sort(sortedCards, function(a, b)
+			return a.Id < b.Id
+		end)
+
+		for _, item in sortedCards do
+			local cardDef = CardData.getCard(item.Id)
+			local cardName = cardDef and cardDef.Name or item.Id
+			local cost = cardDef and cardDef.Cost or 0
+			local owned = cachedCollection[item.Id] or 0
+
+			local row = Instance.new("Frame")
+			row.Size = UDim2.new(1, -4, 0, 42)
+			row.BackgroundColor3 = Color3.fromRGB(28, 32, 44)
+			row.BorderSizePixel = 0
+			row.ZIndex = 34
+			row.Parent = draftCardsScroll
+			UIFactory.createCorner(row, 6)
+			UIFactory.createStroke(row, Color3.fromRGB(48, 56, 76), 1)
+
+			local costBadge = Instance.new("TextLabel")
+			costBadge.Size = UDim2.new(0, 24, 0, 24)
+			costBadge.Position = UDim2.new(0, 8, 0.5, -12)
+			costBadge.BackgroundColor3 = Color3.fromRGB(45, 105, 190)
+			costBadge.BorderSizePixel = 0
+			costBadge.Text = tostring(cost)
+			costBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+			costBadge.Font = Enum.Font.GothamBold
+			costBadge.TextSize = 12
+			costBadge.ZIndex = 35
+			costBadge.Parent = row
+			UIFactory.createCorner(costBadge, 12)
+
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Size = UDim2.new(1, -160, 1, 0)
+			nameLabel.Position = UDim2.new(0, 38, 0, 0)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Text = cardName
+			nameLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.TextSize = 13
+			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			nameLabel.ZIndex = 35
+			nameLabel.Parent = row
+
+			local qtyLabel = Instance.new("TextLabel")
+			qtyLabel.Size = UDim2.new(0, 30, 1, 0)
+			qtyLabel.Position = UDim2.new(1, -116, 0, 0)
+			qtyLabel.BackgroundTransparency = 1
+			qtyLabel.Text = string.format("x%d", item.Count)
+			qtyLabel.TextColor3 = Color3.fromRGB(255, 215, 80)
+			qtyLabel.Font = Enum.Font.GothamBold
+			qtyLabel.TextSize = 13
+			qtyLabel.ZIndex = 35
+			qtyLabel.Parent = row
+
+			local plusBtn = Instance.new("TextButton")
+			plusBtn.Size = UDim2.new(0, 24, 0, 24)
+			plusBtn.Position = UDim2.new(1, -84, 0.5, -12)
+			local canAdd = (totalCount < maxSize) and (item.Count < maxCopies) and (item.Count < owned)
+			plusBtn.BackgroundColor3 = if canAdd then Color3.fromRGB(45, 125, 65) else Color3.fromRGB(45, 50, 60)
+			plusBtn.BorderSizePixel = 0
+			plusBtn.Text = "+"
+			plusBtn.TextColor3 = if canAdd then Color3.fromRGB(255, 255, 255) else Color3.fromRGB(120, 125, 135)
+			plusBtn.Font = Enum.Font.GothamBold
+			plusBtn.TextSize = 14
+			plusBtn.ZIndex = 35
+			plusBtn.Parent = row
+			UIFactory.createCorner(plusBtn, 4)
+			if canAdd then
+				plusBtn.MouseButton1Click:Connect(function()
+					currentDraftCards[item.Id] = item.Count + 1
+					renderDraftEditor()
+					renderCollectionBrowser()
+				end)
+			end
+
+			local minusBtn = Instance.new("TextButton")
+			minusBtn.Size = UDim2.new(0, 24, 0, 24)
+			minusBtn.Position = UDim2.new(1, -56, 0.5, -12)
+			minusBtn.BackgroundColor3 = Color3.fromRGB(125, 75, 45)
+			minusBtn.BorderSizePixel = 0
+			minusBtn.Text = "-"
+			minusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			minusBtn.Font = Enum.Font.GothamBold
+			minusBtn.TextSize = 14
+			minusBtn.ZIndex = 35
+			minusBtn.Parent = row
+			UIFactory.createCorner(minusBtn, 4)
+			minusBtn.MouseButton1Click:Connect(function()
+				if item.Count > 1 then
+					currentDraftCards[item.Id] = item.Count - 1
+				else
+					currentDraftCards[item.Id] = nil
+				end
+				renderDraftEditor()
+				renderCollectionBrowser()
+			end)
+
+			local delBtn = Instance.new("TextButton")
+			delBtn.Size = UDim2.new(0, 24, 0, 24)
+			delBtn.Position = UDim2.new(1, -28, 0.5, -12)
+			delBtn.BackgroundColor3 = Color3.fromRGB(60, 35, 40)
+			delBtn.BorderSizePixel = 0
+			delBtn.Text = "✕"
+			delBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+			delBtn.Font = Enum.Font.GothamBold
+			delBtn.TextSize = 12
+			delBtn.ZIndex = 35
+			delBtn.Parent = row
+			UIFactory.createCorner(delBtn, 4)
+			delBtn.MouseButton1Click:Connect(function()
+				currentDraftCards[item.Id] = nil
+				renderDraftEditor()
+				renderCollectionBrowser()
+			end)
+		end
+	end
+
+	renderCollectionBrowser = function()
+		for _, child in collectionScroll:GetChildren() do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+
+		local filter = string.lower(string.gsub(collectionFilterText, "^%s*(.-)%s*$", "%1"))
+		local sortedIds: { string } = {}
+		for cardId, count in cachedCollection do
+			if count > 0 then
+				local cardDef = CardData.getCard(cardId)
+				local name = cardDef and cardDef.Name or cardId
+				if filter == "" or string.find(string.lower(name), filter, 1, true) or string.find(string.lower(cardId), filter, 1, true) then
+					table.insert(sortedIds, cardId)
+				end
+			end
+		end
+		table.sort(sortedIds, function(a, b)
+			local defA = CardData.getCard(a)
+			local defB = CardData.getCard(b)
+			local costA = defA and defA.Cost or 0
+			local costB = defB and defB.Cost or 0
+			if costA ~= costB then return costA < costB end
+			local nameA = defA and defA.Name or a
+			local nameB = defB and defB.Name or b
+			return nameA < nameB
+		end)
+
+		local totalDraft = countCards(currentDraftCards)
+		local maxSize = GameConfig.Deck.MaxDeckSize
+		local maxCopies = GameConfig.Deck.MaxCopiesPerCard
+
+		for _, cardId in sortedIds do
+			local owned = cachedCollection[cardId] or 0
+			local inDraft = currentDraftCards[cardId] or 0
+			local cardDef = CardData.getCard(cardId)
+			local cardName = cardDef and cardDef.Name or cardId
+			local cost = cardDef and cardDef.Cost or 0
+
+			local item = Instance.new("Frame")
+			item.Size = UDim2.new(1, -4, 0, 52)
+			item.BackgroundColor3 = Color3.fromRGB(28, 32, 44)
+			item.BorderSizePixel = 0
+			item.ZIndex = 34
+			item.Parent = collectionScroll
+			UIFactory.createCorner(item, 6)
+			UIFactory.createStroke(item, Color3.fromRGB(48, 56, 76), 1)
+
+			local costBadge = Instance.new("TextLabel")
+			costBadge.Size = UDim2.new(0, 22, 0, 22)
+			costBadge.Position = UDim2.new(0, 6, 0, 6)
+			costBadge.BackgroundColor3 = Color3.fromRGB(45, 105, 190)
+			costBadge.BorderSizePixel = 0
+			costBadge.Text = tostring(cost)
+			costBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+			costBadge.Font = Enum.Font.GothamBold
+			costBadge.TextSize = 11
+			costBadge.ZIndex = 35
+			costBadge.Parent = item
+			UIFactory.createCorner(costBadge, 11)
+
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Size = UDim2.new(1, -110, 0, 20)
+			nameLabel.Position = UDim2.new(0, 34, 0, 6)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Text = cardName
+			nameLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.TextSize = 12
+			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			nameLabel.ZIndex = 35
+			nameLabel.Parent = item
+
+			local descLabel = Instance.new("TextLabel")
+			descLabel.Size = UDim2.new(1, -110, 0, 16)
+			descLabel.Position = UDim2.new(0, 34, 0, 28)
+			descLabel.BackgroundTransparency = 1
+			descLabel.Text = string.format("Owned: %d | In Deck: %d", owned, inDraft)
+			descLabel.TextColor3 = Color3.fromRGB(160, 175, 195)
+			descLabel.Font = Enum.Font.Gotham
+			descLabel.TextSize = 10
+			descLabel.TextXAlignment = Enum.TextXAlignment.Left
+			descLabel.ZIndex = 35
+			descLabel.Parent = item
+
+			local canAdd = (currentEditedDeckId ~= nil)
+				and (totalDraft < maxSize)
+				and (inDraft < maxCopies)
+				and (inDraft < owned)
+
+			local addBtn = Instance.new("TextButton")
+			addBtn.Size = UDim2.new(0, 64, 0, 32)
+			addBtn.Position = UDim2.new(1, -70, 0.5, -16)
+			addBtn.BackgroundColor3 = if canAdd then Color3.fromRGB(45, 140, 80) else Color3.fromRGB(40, 45, 55)
+			addBtn.BorderSizePixel = 0
+			addBtn.Text = if not currentEditedDeckId then "No Deck"
+				elseif totalDraft >= maxSize then "Full"
+				elseif inDraft >= maxCopies then "Max 3"
+				elseif inDraft >= owned then "Limit"
+				else "+ Add"
+			addBtn.TextColor3 = if canAdd then Color3.fromRGB(255, 255, 255) else Color3.fromRGB(110, 120, 135)
+			addBtn.Font = Enum.Font.GothamBold
+			addBtn.TextSize = 11
+			addBtn.ZIndex = 35
+			addBtn.Parent = item
+			UIFactory.createCorner(addBtn, 6)
+
+			if canAdd then
+				addBtn.MouseButton1Click:Connect(function()
+					currentDraftCards[cardId] = inDraft + 1
+					renderDraftEditor()
+					renderCollectionBrowser()
+				end)
+			end
+		end
+	end
+
+	-- Wire UI Actions
+	UIFactory.createButton(createDeckBtnContainer, "+ NEW DECK", Color3.fromRGB(45, 140, 80), function()
+		if isDeckActionPending then return end
+		local totalDecks = 0
+		for _ in cachedDecks do totalDecks += 1 end
+		if totalDecks >= GameConfig.Deck.MaxDeckSlots then
+			setDeckStatus("⚠️ Maximum deck slots reached.", Color3.fromRGB(255, 90, 90))
+			return
+		end
+		isDeckActionPending = true
+		setDeckStatus("Creating new deck...", Color3.fromRGB(200, 200, 200))
+		if CreateDeckEvent then
+			CreateDeckEvent:FireServer(string.format("Deck %d", totalDecks + 1), {}, "Warlord")
+		end
+	end)
+
+	UIFactory.createButton(saveDraftBtnContainer, "💾 SAVE DECK", Color3.fromRGB(45, 140, 80), function()
+		if isDeckActionPending then return end
+		if not currentEditedDeckId then
+			setDeckStatus("⚠️ No deck selected to save.", Color3.fromRGB(255, 90, 90))
+			return
+		end
+		local total = countCards(currentDraftCards)
+		if total < GameConfig.Deck.MinDeckSize then
+			setDeckStatus(string.format("⚠️ Deck too small: %d/%d cards minimum.", total, GameConfig.Deck.MinDeckSize), Color3.fromRGB(255, 90, 90))
+			return
+		end
+		if total > GameConfig.Deck.MaxDeckSize then
+			setDeckStatus(string.format("⚠️ Deck too large: %d/%d cards maximum.", total, GameConfig.Deck.MaxDeckSize), Color3.fromRGB(255, 90, 90))
+			return
+		end
+		for cardId, count in currentDraftCards do
+			if count > GameConfig.Deck.MaxCopiesPerCard then
+				setDeckStatus(string.format("⚠️ Max %d copies of %s.", GameConfig.Deck.MaxCopiesPerCard, cardId), Color3.fromRGB(255, 90, 90))
+				return
+			end
+			local owned = cachedCollection[cardId] or 0
+			if count > owned then
+				setDeckStatus(string.format("⚠️ You only own %d of %s.", owned, cardId), Color3.fromRGB(255, 90, 90))
+				return
+			end
+		end
+		isDeckActionPending = true
+		setDeckStatus("Saving deck to server...", Color3.fromRGB(200, 200, 200))
+		if SaveDeckEvent then
+			SaveDeckEvent:FireServer(currentEditedDeckId, currentDraftCards)
+		end
+	end)
+
+	UIFactory.createButton(revertDraftBtnContainer, "↺ REVERT", Color3.fromRGB(50, 70, 100), function()
+		currentDraftCards = deepCopyCards(originalDeckCards)
+		setDeckStatus("Draft reverted to saved version.", Color3.fromRGB(180, 220, 255))
+		renderDraftEditor()
+		renderCollectionBrowser()
+	end)
+
+	UIFactory.createButton(clearDraftBtnContainer, "🗑 CLEAR", Color3.fromRGB(80, 45, 50), function()
+		table.clear(currentDraftCards)
+		setDeckStatus("Draft cleared.", Color3.fromRGB(255, 200, 100))
+		renderDraftEditor()
+		renderCollectionBrowser()
+	end)
+
+	collectionSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		collectionFilterText = collectionSearchBox.Text
+		renderCollectionBrowser()
+	end)
+
+	UIFactory.createButton(renameConfirmBtnContainer, "CONFIRM", Color3.fromRGB(45, 140, 80), function()
+		if isDeckActionPending or not pendingRenameDeckId then return end
+		local name = string.gsub(renameInputBox.Text, "^%s*(.-)%s*$", "%1")
+		if #name == 0 then
+			setDeckStatus("⚠️ Deck name cannot be empty.", Color3.fromRGB(255, 90, 90))
+			return
+		end
+		if #name > GameConfig.Deck.MaxDeckNameLength then
+			setDeckStatus(string.format("⚠️ Name too long (max %d).", GameConfig.Deck.MaxDeckNameLength), Color3.fromRGB(255, 90, 90))
+			return
+		end
+		isDeckActionPending = true
+		setDeckStatus("Renaming deck...", Color3.fromRGB(200, 200, 200))
+		if RenameDeckEvent then
+			RenameDeckEvent:FireServer(pendingRenameDeckId, name)
+		end
+		renameModalFrame.Visible = false
+		pendingRenameDeckId = nil
+	end)
+
+	UIFactory.createButton(renameCancelBtnContainer, "CANCEL", Color3.fromRGB(60, 65, 80), function()
+		renameModalFrame.Visible = false
+		pendingRenameDeckId = nil
+	end)
+
+	local function toggleDeckBuilder()
+		deckBuilderView.Visible = not deckBuilderView.Visible
+		if deckBuilderView.Visible then
+			if RequestDecksEvent then
+				RequestDecksEvent:FireServer()
+			end
+			if RequestCardCollectionEvent then
+				RequestCardCollectionEvent:FireServer()
+			end
+			renderDecksList()
+			renderDraftEditor()
+			renderCollectionBrowser()
+		end
+	end
+
+	return {
+		View = deckBuilderView,
+		toggle = toggleDeckBuilder,
+		show = function()
+			deckBuilderView.Visible = true
+			if RequestDecksEvent then
+				RequestDecksEvent:FireServer()
+			end
+			if RequestCardCollectionEvent then
+				RequestCardCollectionEvent:FireServer()
+			end
+			renderDecksList()
+			renderDraftEditor()
+			renderCollectionBrowser()
+		end,
+		hide = function()
+			deckBuilderView.Visible = false
+		end,
+		onDeckListUpdate = function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string)
+			cachedActiveDeckId = activeDeckId or ""
+			table.clear(cachedDecks)
+			for _, d in decks do
+				cachedDecks[d.DeckId] = d
+				if d.Cards and not deckDetailCache[d.DeckId] then
+					deckDetailCache[d.DeckId] = d.Cards
+				end
+			end
+
+			if not currentEditedDeckId or not cachedDecks[currentEditedDeckId] then
+				local targetId = if (activeDeckId and cachedDecks[activeDeckId])
+					then activeDeckId
+					else (decks[1] and decks[1].DeckId or nil)
+				if targetId then
+					currentEditedDeckId = targetId
+					local cards = deckDetailCache[targetId] or (cachedDecks[targetId] and cachedDecks[targetId].Cards) or {}
+					originalDeckCards = deepCopyCards(cards)
+					currentDraftCards = deepCopyCards(originalDeckCards)
+				end
+			end
+
+			renderDecksList()
+			renderDraftEditor()
+			renderCollectionBrowser()
+		end,
+		onDeckDetailUpdate = function(detail: StateTypes.DeckDetailView)
+			if not detail or not detail.DeckId then return end
+			deckDetailCache[detail.DeckId] = detail.Cards
+			if cachedDecks[detail.DeckId] then
+				cachedDecks[detail.DeckId].Cards = detail.Cards
+				cachedDecks[detail.DeckId].CardCount = detail.CardCount
+			end
+
+			if detail.DeckId == currentEditedDeckId then
+				local hasEdits = false
+				for k, v in currentDraftCards do
+					if originalDeckCards[k] ~= v then hasEdits = true break end
+				end
+				for k in originalDeckCards do
+					if not currentDraftCards[k] then hasEdits = true break end
+				end
+
+				originalDeckCards = deepCopyCards(detail.Cards)
+				if not hasEdits then
+					currentDraftCards = deepCopyCards(detail.Cards)
+				end
+				renderDraftEditor()
+				renderCollectionBrowser()
+			end
+			renderDecksList()
+		end,
+		onCardCollectionUpdate = function(collectionView: StateTypes.CardCollectionView)
+			if not collectionView or not collectionView.Cards then return end
+			table.clear(cachedCollection)
+			for k, v in collectionView.Cards do
+				cachedCollection[k] = v
+			end
+			renderCollectionBrowser()
+			renderDraftEditor()
+		end,
+		handleActionResult = function(res: any): boolean
+			if res.Action == "CreateDeck" then
+				isDeckActionPending = false
+				if res.Success then
+					setDeckStatus("✅ Deck created successfully!", Color3.fromRGB(80, 220, 120))
+				else
+					setDeckStatus(string.format("⚠️ Create failed: %s", tostring(res.Message or "Unknown error")), Color3.fromRGB(255, 90, 90))
+				end
+				return true
+			elseif res.Action == "RenameDeck" then
+				isDeckActionPending = false
+				if res.Success then
+					setDeckStatus("✅ Deck renamed successfully!", Color3.fromRGB(80, 220, 120))
+				else
+					setDeckStatus(string.format("⚠️ Rename failed: %s", tostring(res.Message or "Unknown error")), Color3.fromRGB(255, 90, 90))
+				end
+				return true
+			elseif res.Action == "DeleteDeck" then
+				isDeckActionPending = false
+				if res.Success then
+					setDeckStatus("✅ Deck deleted successfully.", Color3.fromRGB(80, 220, 120))
+					if currentEditedDeckId and not cachedDecks[currentEditedDeckId] then
+						currentEditedDeckId = cachedActiveDeckId
+						if currentEditedDeckId and cachedDecks[currentEditedDeckId] then
+							local cards = deckDetailCache[currentEditedDeckId] or cachedDecks[currentEditedDeckId].Cards or {}
+							originalDeckCards = deepCopyCards(cards)
+							currentDraftCards = deepCopyCards(originalDeckCards)
+						end
+					end
+					renderDecksList()
+					renderDraftEditor()
+					renderCollectionBrowser()
+				else
+					setDeckStatus(string.format("⚠️ Delete failed: %s", tostring(res.Message or "Unknown error")), Color3.fromRGB(255, 90, 90))
+				end
+				return true
+			elseif res.Action == "SaveDeck" then
+				isDeckActionPending = false
+				if res.Success then
+					originalDeckCards = deepCopyCards(currentDraftCards)
+					setDeckStatus("✅ Deck saved successfully!", Color3.fromRGB(80, 220, 120))
+				else
+					setDeckStatus(string.format("⚠️ Save failed: %s", tostring(res.Message or "Unknown error")), Color3.fromRGB(255, 90, 90))
+				end
+				renderDraftEditor()
+				renderCollectionBrowser()
+				return true
+			elseif res.Action == "DuplicateDeck" then
+				isDeckActionPending = false
+				if res.Success then
+					setDeckStatus("✅ Deck duplicated successfully!", Color3.fromRGB(80, 220, 120))
+				else
+					setDeckStatus(string.format("⚠️ Duplicate failed: %s", tostring(res.Message or "Unknown error")), Color3.fromRGB(255, 90, 90))
+				end
+				return true
+			elseif res.Action == "SelectActiveDeck" then
+				isDeckActionPending = false
+				if res.Success then
+					setDeckStatus("✅ Active deck updated!", Color3.fromRGB(80, 220, 120))
+				else
+					setDeckStatus(string.format("⚠️ Select active failed: %s", tostring(res.Message or "Unknown error")), Color3.fromRGB(255, 90, 90))
+				end
+				return true
+			end
+			return false
+		end,
+	}
+end
+
+local DeckBuilder = createDeckBuilderController()
+
+UIFactory.createButton(deckBuilderBtnContainer, "🎴 DECK BUILDER", Color3.fromRGB(50, 110, 200), function()
+	DeckBuilder.toggle()
 end)
 
 --------------------------------------------------------------------------------
@@ -1699,7 +2845,11 @@ local function switchView(phase: StateTypes.RunPhase, roomType: StateTypes.Activ
 	victoryView.Visible = (phase == "RunVictory")
 	defeatView.Visible = (phase == "RunDefeat")
 
-	local isCombat = (roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss" or roomType == nil)
+	if phase ~= "Lobby" and DeckBuilder then
+		DeckBuilder.hide()
+	end
+
+	local isCombat = (roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss")
 	local isCampfire = (roomType == "Campfire Rest")
 	local isMerchant = (roomType == "Merchant Shop")
 	local isEvent = (roomType == "Event")
@@ -1709,6 +2859,14 @@ local function switchView(phase: StateTypes.RunPhase, roomType: StateTypes.Activ
 		eventChamberView.Visible = isEvent
 		campfireView.Visible = isCampfire
 		merchantView.Visible = isMerchant
+
+		if not isCombat and not isCampfire and not isMerchant and not isEvent then
+			bannerLabel.Text = "Synchronizing room state..."
+			bannerLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+			if RequestStateSyncEvent then
+				RequestStateSyncEvent:FireServer()
+			end
+		end
 	else
 		combatHudView.Visible = false
 		eventChamberView.Visible = false
@@ -1760,7 +2918,7 @@ if RunStateUpdateEvent then
 			bannerLabel.Text = "Map Selection: Select reachable room to proceed."
 			buildDungeonMapTree(snapshot)
 		elseif snapshot.Phase == "ActiveRoom" then
-			local roomType = snapshot.ActiveRoom and snapshot.ActiveRoom.Type or "Combat"
+			local roomType = snapshot.ActiveRoom and snapshot.ActiveRoom.Type or nil
 			if roomType == "Campfire Rest" then
 				combatHudView.Visible = false
 				eventChamberView.Visible = false
@@ -1787,13 +2945,23 @@ if RunStateUpdateEvent then
 					renderEventChamber(snapshot.Event)
 					bannerLabel.Text = string.format("Event Chamber: %s", snapshot.Event.Name)
 				end
-			else
+			elseif roomType == "Combat" or roomType == "Elite Monster" or roomType == "Act Boss" then
 				combatHudView.Visible = true
 				eventChamberView.Visible = false
 				campfireView.Visible = false
 				merchantView.Visible = false
 				bannerLabel.Text = if roomType == "Combat" then "Entered Room: Combat" else string.format("Entered Room: %s", roomType)
 				bannerLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+			else
+				combatHudView.Visible = false
+				eventChamberView.Visible = false
+				campfireView.Visible = false
+				merchantView.Visible = false
+				bannerLabel.Text = "Synchronizing room state..."
+				bannerLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+				if RequestStateSyncEvent then
+					RequestStateSyncEvent:FireServer()
+				end
 			end
 		elseif snapshot.Phase == "Rewards" then
 			isRewardClaimPending = false
@@ -2094,6 +3262,8 @@ if ActionResultEvent then
 				bannerLabel.Text = tostring(res.Message or "Interaction recorded.")
 				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 			end
+		elseif DeckBuilder and DeckBuilder.handleActionResult(res) then
+			-- Handled by DeckBuilder
 		elseif res.Success == false then
 			bannerLabel.Text = string.format("⚠️ %s: %s", res.Action or "Action", res.Message or "Action failed.")
 			bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
@@ -2103,10 +3273,41 @@ if ActionResultEvent then
 	end)
 end
 
--- Request initial state sync on mount
+-- 6. Deck & Collection Event Listeners (Phase 4)
+if DeckListUpdateEvent then
+	DeckListUpdateEvent.OnClientEvent:Connect(function(decks: { StateTypes.DeckSummaryView }, activeDeckId: string)
+		if DeckBuilder then
+			DeckBuilder.onDeckListUpdate(decks, activeDeckId)
+		end
+	end)
+end
+
+if DeckDetailUpdateEvent then
+	DeckDetailUpdateEvent.OnClientEvent:Connect(function(detail: StateTypes.DeckDetailView)
+		if DeckBuilder then
+			DeckBuilder.onDeckDetailUpdate(detail)
+		end
+	end)
+end
+
+if CardCollectionUpdateEvent then
+	CardCollectionUpdateEvent.OnClientEvent:Connect(function(collectionView: StateTypes.CardCollectionView)
+		if DeckBuilder then
+			DeckBuilder.onCardCollectionUpdate(collectionView)
+		end
+	end)
+end
+
+-- Request initial state sync, deck list, and card collection on mount
 task.delay(0.5, function()
 	if RequestStateSyncEvent then
 		RequestStateSyncEvent:FireServer()
+	end
+	if RequestDecksEvent then
+		RequestDecksEvent:FireServer()
+	end
+	if RequestCardCollectionEvent then
+		RequestCardCollectionEvent:FireServer()
 	end
 end)
 

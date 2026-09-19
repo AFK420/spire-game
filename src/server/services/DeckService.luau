@@ -438,6 +438,7 @@ function DeckService.toDeckSummaryView(player: any, deck: StateTypes.SavedDeck):
 	return {
 		DeckId = deck.DeckId,
 		Name = deck.Name,
+		Cards = deepCopy(deck.Cards),
 		CardCount = countTotalCards(deck.Cards),
 		ClassId = deck.ClassId,
 		CreatedAt = deck.CreatedAt,

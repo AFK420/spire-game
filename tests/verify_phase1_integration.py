@@ -1538,8 +1538,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "hardened_campfire_merchant_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = hardened_campfire_merchant_20260919")
-test('BUILD_NAME = "Hardened Campfire Choices & Merchant Purchase Transactions"' in build_info_src, "BuildInfo declares BUILD_NAME = Hardened Campfire Choices & Merchant Purchase Transactions")
+test('BUILD_ID = "deck_builder_collection_ui_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = deck_builder_collection_ui_20260919")
+test('BUILD_NAME = "Deck Builder UI & Collection Frontend"' in build_info_src, "BuildInfo declares BUILD_NAME = Deck Builder UI & Collection Frontend")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -2067,6 +2067,80 @@ test("[Suite 76.164]" in testrunner_src, "Suite 76 tests Player Deck size rolled
 test("[Suite 76.167]" in testrunner_src, "Suite 76 tests Active combat is nil after stage 2 failure")
 test("[Suite 76.168]" in testrunner_src, "Suite 76 tests 3D room cleaned up after stage 2 failure")
 test("[Suite 76.170]" in testrunner_src, "Suite 76 tests travelToNode succeeds normally after disabling stage 2 failure")
+
+# Check 73: Real Deck Builder UI & Card Collection Frontend
+print("\n--- [Check 73] Real Deck Builder UI & Card Collection Frontend ---")
+deck_svc_src = (ROOT / "src/server/services/DeckService.luau").read_text(encoding="utf-8")
+card_col_svc_src = (ROOT / "src/server/services/CardCollectionService.luau").read_text(encoding="utf-8")
+run_mgr_src = (ROOT / "src/server/services/RunManager.luau").read_text(encoding="utf-8")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+init_server_src = (ROOT / "src/server/init.server.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+testrunner_src = (ROOT / "src/server/services/TestRunner.luau").read_text(encoding="utf-8")
+
+# StateTypes & DTO Invariants
+test("Cards: { [string]: number }?" in state_types_src, "StateTypes DeckSummaryView includes Cards dictionary")
+test("Cards = deepCopy(deck.Cards)" in deck_svc_src, "DeckService.toDeckSummaryView includes deep-copied Cards")
+test("DeckDetailUpdateEvent:FireClient(player, detailView)" in init_server_src, "init.server populates client deck detail cache during sendDeckListUpdate")
+
+# RunManager Reward Claim Concurrency Lock
+test("local rewardClaimLocks: { [string]: boolean } = {}" in run_mgr_src, "RunManager declares rewardClaimLocks concurrency table")
+test("function RunManager.getRewardClaimLocksForTesting(): { [string]: boolean }" in run_mgr_src, "RunManager exposes getRewardClaimLocksForTesting")
+test("rewardClaimLocks[lockKey] = true" in run_mgr_src, "RunManager acquires reward claim concurrency lock")
+test("rewardClaimLocks[lockKey] = nil" in run_mgr_src, "RunManager releases reward claim concurrency lock")
+test("Reward claim is currently being processed." in run_mgr_src, "RunManager rejects concurrent claim with in-progress message")
+test("Reward already claimed." in run_mgr_src, "RunManager re-checks claim status under lock to reject duplicates")
+
+# Client UIController Deck Builder Architecture & Controls
+test("createDeckBuilderController" in ui_ctrl_src, "UIController implements isolated createDeckBuilderController register scope")
+test("deckBuilderBtn" in ui_ctrl_src, "UIController adds Deck Builder button to Lobby view")
+test("deckBuilderView" in ui_ctrl_src, "UIController constructs deckBuilderView modal")
+test("decksListScroll" in ui_ctrl_src, "UIController includes decksListScroll for player decks")
+test("draftCardsScroll" in ui_ctrl_src, "UIController includes draftCardsScroll for active draft")
+test("collectionScroll" in ui_ctrl_src, "UIController includes collectionScroll for owned card browser")
+test("renameModalFrame" in ui_ctrl_src, "UIController provides inline renameModalFrame dialog")
+test("isDeckActionPending" in ui_ctrl_src, "UIController guards deck actions against rapid double-clicks")
+test("currentDraftCards" in ui_ctrl_src, "UIController manages local client draft without premature server mutations")
+test("SaveDeckEvent:FireServer(currentEditedDeckId, currentDraftCards)" in ui_ctrl_src, "UIController sends candidate draft to SaveDeckEvent")
+test("SelectActiveDeckEvent:FireServer(deck.DeckId)" in ui_ctrl_src, "UIController binds Set Active button to SelectActiveDeckEvent")
+test("DeleteDeckEvent:FireServer(deck.DeckId)" in ui_ctrl_src, "UIController binds Delete button to DeleteDeckEvent")
+test("DuplicateDeckEvent:FireServer(deck.DeckId" in ui_ctrl_src, "UIController binds Copy button to DuplicateDeckEvent")
+
+# Client UIController Remote Wiring
+test("DeckListUpdateEvent.OnClientEvent:Connect" in ui_ctrl_src, "UIController listens to DeckListUpdateEvent")
+test("DeckDetailUpdateEvent.OnClientEvent:Connect" in ui_ctrl_src, "UIController listens to DeckDetailUpdateEvent")
+test("CardCollectionUpdateEvent.OnClientEvent:Connect" in ui_ctrl_src, "UIController listens to CardCollectionUpdateEvent")
+
+# Client UIController ActiveRoom Fail-Closed Routing
+test("Synchronizing room state..." in ui_ctrl_src, "UIController sets banner to synchronizing on invalid room type")
+test("RequestStateSyncEvent:FireServer()" in ui_ctrl_src, "UIController fires RequestStateSyncEvent on invalid room type")
+
+# Suite 76 Extended Assertions (Suite 76.20 & 76.21)
+test("[Suite 76.173]" in testrunner_src, "Suite 76 tests getRewardClaimLocksForTesting returns table")
+test("[Suite 76.174]" in testrunner_src, "Suite 76 tests concurrent claim rejected when lock held")
+test("[Suite 76.175]" in testrunner_src, "Suite 76 tests concurrency rejection message indicates claim in progress")
+test("[Suite 76.176]" in testrunner_src, "Suite 76 tests party member deck untouched during concurrent rejection")
+test("[Suite 76.178]" in testrunner_src, "Suite 76 tests successful claim succeeds after lock released")
+test("[Suite 76.179]" in testrunner_src, "Suite 76 tests lock is cleared after successful claim")
+test("[Suite 76.180]" in testrunner_src, "Suite 76 tests reward marked claimed for party member")
+test("[Suite 76.182]" in testrunner_src, "Suite 76 tests permanent collection received claimed card")
+test("[Suite 76.183]" in testrunner_src, "Suite 76 tests duplicate claim rejected after already claimed")
+test("[Suite 76.184]" in testrunner_src, "Suite 76 tests duplicate claim error message indicates already claimed")
+test("[Suite 76.185]" in testrunner_src, "Suite 76 tests toCollectionView returns valid CardCollectionView")
+test("[Suite 76.186]" in testrunner_src, "Suite 76 tests grantCard updates permanent collection copy counts")
+test("[Suite 76.187]" in testrunner_src, "Suite 76 tests toCollectionView reflects newly granted cards")
+test("[Suite 76.188]" in testrunner_src, "Suite 76 tests DeckService.createDeck succeeds with server GUID")
+test("[Suite 76.190]" in testrunner_src, "Suite 76 tests DeckService.renameDeck updates deck name authoritatively")
+test("[Suite 76.191]" in testrunner_src, "Suite 76 tests renameDeck rejects empty deck name")
+test("[Suite 76.192]" in testrunner_src, "Suite 76 tests DeckService.duplicateDeck creates new deck with distinct GUID")
+test("[Suite 76.194]" in testrunner_src, "Suite 76 tests DeckService.deleteDeck successfully removes deck")
+test("[Suite 76.195]" in testrunner_src, "Suite 76 tests getDeck returns nil for deleted deck")
+test("[Suite 76.196]" in testrunner_src, "Suite 76 tests saveDeck rejects deck with fewer than MinDeckSize cards")
+test("[Suite 76.197]" in testrunner_src, "Suite 76 tests saveDeck rejects card count exceeding owned copies")
+test("[Suite 76.198]" in testrunner_src, "Suite 76 tests saveDeck succeeds for valid 8-card legal deck")
+test("[Suite 76.200]" in testrunner_src, "Suite 76 tests DeckSummaryView contains Cards table for client caching")
+test("[Suite 76.201]" in testrunner_src, "Suite 76 tests setActiveDeck succeeds for valid legal deck")
+test("[Suite 76.202]" in testrunner_src, "Suite 76 tests setActiveDeck rejects invalid empty deck")
 
 # Static Compilation of all Luau files with luau-compile
 import subprocess

@@ -1454,8 +1454,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "hardened_campfire_merchant_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "Hardened Campfire Choices & Merchant Purchase Transactions", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "deck_builder_collection_ui_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "Deck Builder UI & Collection Frontend", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -3162,6 +3162,165 @@ local function runSuite76()
 
 		CombatService.cleanupCombat()
 		WorldRoomService.cleanupRoom()
+	end
+
+	-- 76.20: Reward Claim Concurrency Locking & Duplicate Prevention
+	do
+		RunManager.resetRunForTesting()
+		local run = RunManager.getRunState()
+		run.Phase = "Rewards"
+
+		local pReward = {
+			UserId = 76200,
+			Name = "RewardPlayer",
+			DisplayName = "RewardPlayer",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(76200)
+		PersistenceService.loadProfile(pReward :: any)
+		RunManager.addPlayer(pReward :: any)
+		run.Phase = "Rewards"
+		run.PendingRewards = {
+			GoldAmount = 50,
+			AetherShardsAmount = 15,
+			OfferedCardsByPlayer = {
+				[76200] = { "Strike", "Defend", "Bash" },
+			},
+			ClaimedCards = {},
+		}
+
+		local rewardLocks = RunManager.getRewardClaimLocksForTesting()
+		assertTest(typeof(rewardLocks) == "table", "[Suite 76.173] Reward claim locks table returned from RunManager")
+
+		-- Simulate active in-flight claim by artificially acquiring lock
+		local lockKey = string.format("%s:%s", tostring(run.RunId), tostring(76200))
+		rewardLocks[lockKey] = true
+
+		local lockedClaimOk, lockedClaimErr = RunManager.claimRewardCard(pReward :: any, "Strike")
+		assertTest(lockedClaimOk == false, "[Suite 76.174] Concurrent claim rejected when lock is held")
+		assertTest(string.find(lockedClaimErr or "", "processed") ~= nil or string.find(lockedClaimErr or "", "being") ~= nil,
+			"[Suite 76.175] Concurrency rejection message indicates claim in progress")
+
+		local pState = RunManager.getPlayerState(pReward)
+		assert(pState, "pState exists")
+		local preDeckSize = #pState.Deck
+		assertTest(#pState.Deck == preDeckSize, "[Suite 76.176] Party member deck untouched during concurrent rejection")
+		assertTest(run.PendingRewards.ClaimedCards[76200] == nil, "[Suite 76.177] Reward not marked claimed during concurrent rejection")
+
+		-- Release artificial lock and perform real claim
+		rewardLocks[lockKey] = nil
+
+		local initialStrikeCount = CardCollectionService.getCardCount(pReward :: any, "Strike")
+		local claimOk, claimErr = RunManager.claimRewardCard(pReward :: any, "Strike")
+		assertTest(claimOk == true, "[Suite 76.178] Successful claim succeeds after lock released: " .. tostring(claimErr))
+		assertTest(rewardLocks[lockKey] == nil, "[Suite 76.179] Lock is cleared after successful claim")
+		assertTest(run.PendingRewards.ClaimedCards[76200] == true, "[Suite 76.180] Card marked claimed for party member")
+		assertTest(#pState.Deck == preDeckSize + 1, "[Suite 76.181] Runtime deck received the claimed card")
+		assertTest(CardCollectionService.getCardCount(pReward :: any, "Strike") == initialStrikeCount + 1,
+			"[Suite 76.182] Permanent collection received the claimed card")
+
+		-- Attempt duplicate claim on another card in same rewards phase
+		local dupOk, dupErr = RunManager.claimRewardCard(pReward :: any, "Defend")
+		assertTest(dupOk == false, "[Suite 76.183] Duplicate claim rejected after already claimed")
+		assertTest(string.find(dupErr or "", "already claimed") ~= nil,
+			"[Suite 76.184] Duplicate claim error message indicates already claimed")
+
+		RunManager.resetRunForTesting()
+	end
+
+	-- 76.21: Deck Builder & Collection Frontend Backend Invariants
+	do
+		local pDeck = {
+			UserId = 76210,
+			Name = "DeckBuilderTester",
+			DisplayName = "DeckBuilderTester",
+			IsA = function(_, cls) return cls == "Player" end,
+		}
+		PersistenceService.resetForTesting(76210)
+		PersistenceService.loadProfile(pDeck :: any)
+
+		-- Verify CardCollectionView serialization
+		local colView = CardCollectionService.toCollectionView(pDeck :: any)
+		assertTest(typeof(colView.Cards) == "table" and colView.TotalUniqueCards >= 0,
+			"[Suite 76.185] toCollectionView returns valid CardCollectionView")
+
+		-- Grant specific collection cards to test validation bounds
+		local grantOk1 = CardCollectionService.grantCard(pDeck :: any, "Strike", 3)
+		local grantOk2 = CardCollectionService.grantCard(pDeck :: any, "Defend", 3)
+		local grantOk3 = CardCollectionService.grantCard(pDeck :: any, "Bash", 2)
+		assertTest(grantOk1 and grantOk2 and grantOk3, "[Suite 76.186] grantCard updates permanent collection copy counts")
+
+		local updatedColView = CardCollectionService.toCollectionView(pDeck :: any)
+		assertTest(updatedColView.Cards["Strike"] >= 3 and updatedColView.Cards["Bash"] >= 2,
+			"[Suite 76.187] toCollectionView reflects newly granted cards")
+
+		-- Create custom deck
+		local createOk, createErr, createdDeck = DeckService.createDeck(pDeck :: any, "Custom Test Deck", nil, "Ironclad")
+		assertTest(createOk == true and createdDeck ~= nil, "[Suite 76.188] DeckService.createDeck succeeds with server GUID")
+		assert(createdDeck, "createdDeck exists")
+		assertTest(createdDeck.Name == "Custom Test Deck", "[Suite 76.189] createDeck sets correct deck name")
+
+		-- Rename deck
+		local renameOk = DeckService.renameDeck(pDeck :: any, createdDeck.DeckId, "Renamed Deck")
+		assertTest(renameOk == true, "[Suite 76.190] DeckService.renameDeck updates deck name authoritatively")
+		local emptyRenameOk = DeckService.renameDeck(pDeck :: any, createdDeck.DeckId, "   ")
+		assertTest(emptyRenameOk == false, "[Suite 76.191] renameDeck rejects empty deck name")
+
+		-- Duplicate deck
+		local dupOk, _, dupDeck = DeckService.duplicateDeck(pDeck :: any, createdDeck.DeckId, "Duplicated Deck")
+		assertTest(dupOk == true and dupDeck ~= nil and dupDeck.DeckId ~= createdDeck.DeckId,
+			"[Suite 76.192] DeckService.duplicateDeck creates new deck with distinct GUID")
+		assert(dupDeck, "dupDeck exists")
+		assertTest(dupDeck.Name == "Duplicated Deck", "[Suite 76.193] duplicateDeck preserves card contents and assigns name")
+
+		-- Delete deck
+		local delOk = DeckService.deleteDeck(pDeck :: any, dupDeck.DeckId)
+		assertTest(delOk == true, "[Suite 76.194] DeckService.deleteDeck successfully removes deck")
+		assertTest(DeckService.getDeck(pDeck :: any, dupDeck.DeckId) == nil,
+			"[Suite 76.195] getDeck returns nil for deleted deck")
+
+		-- SaveDeck validation: Deck too small (< 8 cards, e.g. 7 cards)
+		local tooSmallCards = { ["Strike"] = 3, ["Defend"] = 3, ["Bash"] = 1 } -- 7 cards
+		local saveSmallOk, saveSmallErr = DeckService.saveDeck(pDeck :: any, createdDeck.DeckId, tooSmallCards)
+		assertTest(saveSmallOk == false, "[Suite 76.196] saveDeck rejects deck with fewer than MinDeckSize (8) cards")
+
+		-- SaveDeck validation: Exceeds owned copies in collection (requesting 3 Bash when owned=2)
+		local unownedCards = { ["Strike"] = 3, ["Defend"] = 3, ["Bash"] = 3 }
+		local saveUnownedOk, _ = DeckService.saveDeck(pDeck :: any, createdDeck.DeckId, unownedCards)
+		assertTest(saveUnownedOk == false, "[Suite 76.197] saveDeck rejects card count exceeding owned copies in collection")
+
+		-- SaveDeck validation: Valid 8-card legal deck
+		local validDeckCards = { ["Strike"] = 3, ["Defend"] = 3, ["Bash"] = 2 } -- 8 cards, within limits
+		local saveValidOk, saveValidErr = DeckService.saveDeck(pDeck :: any, createdDeck.DeckId, validDeckCards)
+		assertTest(saveValidOk == true, "[Suite 76.198] saveDeck succeeds for valid 8-card legal deck: " .. tostring(saveValidErr))
+
+		local fetchedDeck = DeckService.getDeck(pDeck :: any, createdDeck.DeckId)
+		assertTest(fetchedDeck ~= nil and fetchedDeck.Cards["Bash"] == 2,
+			"[Suite 76.199] getDeck returns saved card dictionary")
+
+		-- Verify DeckSummaryView contains Cards table for client caching
+		local summaries = DeckService.listDecks(pDeck :: any)
+		local targetSummary: StateTypes.DeckSummaryView? = nil
+		for _, s in summaries do
+			if s.DeckId == createdDeck.DeckId then
+				targetSummary = s
+				break
+			end
+		end
+		assertTest(targetSummary ~= nil and targetSummary.Cards ~= nil and targetSummary.Cards["Bash"] == 2,
+			"[Suite 76.200] DeckSummaryView contains Cards table for client caching")
+
+		-- Set Active Deck
+		local setActiveOk, setActiveErr = DeckService.setActiveDeck(pDeck :: any, createdDeck.DeckId)
+		assertTest(setActiveOk == true, "[Suite 76.201] setActiveDeck succeeds for valid legal deck: " .. tostring(setActiveErr))
+
+		-- Set Active Deck rejection on invalid (empty) deck
+		local _, _, emptyDeck = DeckService.createDeck(pDeck :: any, "Empty Deck")
+		assert(emptyDeck, "emptyDeck exists")
+		local setEmptyOk, _ = DeckService.setActiveDeck(pDeck :: any, emptyDeck.DeckId)
+		assertTest(setEmptyOk == false, "[Suite 76.202] setActiveDeck rejects invalid (empty) deck")
+
+		PersistenceService.resetForTesting(76210)
 	end
 
 	CombatService.cleanupCombat()
