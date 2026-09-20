@@ -12,8 +12,8 @@ export type BuildInfoType = {
 }
 
 local BuildInfo = {
-	BUILD_ID = "hardened_server_deck_contracts_20260919",
-	BUILD_NAME = "Hardened Server Deck Invariants & Contracts",
+	BUILD_ID = "phase5_flexible_builds_20260920",
+	BUILD_NAME = "Phase 5 Flexible Builds",
 }
 
 return BuildInfo

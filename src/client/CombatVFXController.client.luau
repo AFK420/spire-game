@@ -22,9 +22,12 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
+local CombatFeedbackData = require(Shared:WaitForChild("CombatFeedbackData") :: ModuleScript)
 
 local GameNetwork = ReplicatedStorage:WaitForChild("GameNetwork")
 local CombatStateUpdateEvent = GameNetwork:WaitForChild("CombatStateUpdate") :: RemoteEvent
+local CombatEventLoggedEvent = GameNetwork:WaitForChild("CombatEventLogged") :: RemoteEvent
 
 local localPlayer = Players.LocalPlayer
 
@@ -40,6 +43,12 @@ local activeAnimations: { [string]: RBXScriptConnection } = {}
 local activeConnections: { [string]: { RBXScriptConnection } } = {}
 local activeVfxInstances: { Instance } = {}
 local enemyOriginalPivots: { [Model]: CFrame } = {}
+local latestEnemyViews: { [string]: StateTypes.EnemyView } = {}
+local activeFeedbackPopups: { BillboardGui } = {}
+local feedbackSerial = 0
+local activeShakeConnection: RBXScriptConnection? = nil
+local activeShakeHumanoid: Humanoid? = nil
+local activeShakeBaseOffset = Vector3.zero
 
 local function trackConnection(windowId: string, conn: RBXScriptConnection)
 	local list = activeConnections[windowId]
@@ -97,6 +106,322 @@ local function findEnemyModel(enemyInstanceId: string?): Model?
 	end
 
 	return nil
+end
+
+--------------------------------------------------------------------------------
+-- Authoritative Combat Event Feedback
+--------------------------------------------------------------------------------
+
+local function findPlayerByTargetId(targetId: string): Player?
+	local numericId = tonumber(targetId)
+	for _, player in Players:GetPlayers() do
+		if (numericId and player.UserId == numericId)
+			or player.Name == targetId
+			or player.DisplayName == targetId then
+			return player
+		end
+	end
+	return nil
+end
+
+local function resolveFeedbackTarget(targetId: string): (BasePart?, Model?, Player?)
+	local enemyModel = findEnemyModel(targetId)
+	if not enemyModel then
+		-- Compatibility fallback for combat events emitted before stable target IDs.
+		for enemyId, enemyView in latestEnemyViews do
+			if enemyView.Name == targetId then
+				enemyModel = findEnemyModel(enemyId)
+				break
+			end
+		end
+	end
+	if enemyModel then
+		local head = enemyModel:FindFirstChild("Head")
+		local adornee = if head and head:IsA("BasePart") then head else enemyModel.PrimaryPart
+		return adornee, enemyModel, nil
+	end
+
+	local player = findPlayerByTargetId(targetId)
+	local character = if player then player.Character else nil
+	if character then
+		local head = character:FindFirstChild("Head")
+		local root = character:FindFirstChild("HumanoidRootPart")
+		local adornee = if head and head:IsA("BasePart")
+			then head
+			elseif root and root:IsA("BasePart") then root else nil
+		return adornee, character, player
+	end
+	return nil, nil, player
+end
+
+local function removeFeedbackPopup(popup: BillboardGui)
+	for index, current in activeFeedbackPopups do
+		if current == popup then
+			table.remove(activeFeedbackPopups, index)
+			break
+		end
+	end
+	if popup.Parent then
+		popup:Destroy()
+	end
+end
+
+local function showWorldPopup(adornee: BasePart, event: StateTypes.CombatEvent)
+	local feedbackConfig = GameConfig.CombatFeedback
+	while #activeFeedbackPopups >= feedbackConfig.MaxConcurrentPopups do
+		removeFeedbackPopup(activeFeedbackPopups[1])
+	end
+
+	feedbackSerial += 1
+	local style = CombatFeedbackData.getStyle(event.Type)
+	local laneOffset = ((feedbackSerial - 1) % 3 - 1) * 0.65
+	local startOffset = Vector3.new(laneOffset, 2.6, 0)
+
+	local popup = Instance.new("BillboardGui")
+	popup.Name = "CombatFeedbackPopup"
+	popup.Adornee = adornee
+	popup.AlwaysOnTop = true
+	popup.LightInfluence = 0
+	popup.MaxDistance = 120
+	popup.Size = UDim2.fromOffset(math.round(190 * style.Scale), math.round(54 * style.Scale))
+	popup.StudsOffsetWorldSpace = startOffset
+	popup.Parent = adornee
+	table.insert(activeFeedbackPopups, popup)
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Value"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamBlack
+	label.Text = CombatFeedbackData.getDisplayText(event)
+	label.TextColor3 = style.Color
+	label.TextScaled = true
+	label.Parent = popup
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(20, 20, 28)
+	stroke.Thickness = 2.5
+	stroke.Transparency = 0.1
+	stroke.Parent = label
+
+	local tweenInfo = TweenInfo.new(feedbackConfig.PopupLifetime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(popup, tweenInfo, {
+		StudsOffsetWorldSpace = startOffset + Vector3.new(0, feedbackConfig.PopupRiseStuds, 0),
+	}):Play()
+	TweenService:Create(label, tweenInfo, { TextTransparency = 1 }):Play()
+	local strokeTween = TweenService:Create(stroke, tweenInfo, { Transparency = 1 })
+	strokeTween:Play()
+	strokeTween.Completed:Connect(function()
+		removeFeedbackPopup(popup)
+	end)
+end
+
+local function flashTarget(model: Model, color: Color3)
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "CombatImpactFlash"
+	highlight.Adornee = model
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillColor = color
+	highlight.FillTransparency = 0.25
+	highlight.OutlineColor = Color3.new(1, 1, 1)
+	highlight.OutlineTransparency = 0.15
+	highlight.Parent = model
+
+	local tween = TweenService:Create(highlight, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		FillTransparency = 1,
+		OutlineTransparency = 1,
+	})
+	tween:Play()
+	tween.Completed:Connect(function()
+		if highlight.Parent then
+			highlight:Destroy()
+		end
+	end)
+end
+
+local function stopCameraShake()
+	if activeShakeConnection then
+		activeShakeConnection:Disconnect()
+		activeShakeConnection = nil
+	end
+	if activeShakeHumanoid and activeShakeHumanoid.Parent then
+		activeShakeHumanoid.CameraOffset = activeShakeBaseOffset
+	end
+	activeShakeHumanoid = nil
+end
+
+local function playCameraShake(requestedStrength: number)
+	local feedbackConfig = GameConfig.CombatFeedback
+	if localPlayer:GetAttribute(feedbackConfig.ReducedMotionAttribute) == true then
+		return
+	end
+	local character = localPlayer.Character
+	local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
+	if not humanoid then
+		return
+	end
+
+	stopCameraShake()
+	local strength = math.clamp(requestedStrength, 0, feedbackConfig.MaximumShakeStrength)
+	local duration = feedbackConfig.ShakeDuration
+	local startTime = os.clock()
+	activeShakeHumanoid = humanoid
+	activeShakeBaseOffset = humanoid.CameraOffset
+	activeShakeConnection = RunService.RenderStepped:Connect(function()
+		local elapsed = os.clock() - startTime
+		local alpha = math.clamp(elapsed / duration, 0, 1)
+		if alpha >= 1 or not humanoid.Parent then
+			stopCameraShake()
+			return
+		end
+		local falloff = 1 - alpha
+		humanoid.CameraOffset = activeShakeBaseOffset + Vector3.new(
+			math.sin(elapsed * 78) * strength * falloff,
+			math.cos(elapsed * 91) * strength * 0.65 * falloff,
+			0
+		)
+	end)
+end
+
+local function sourceBelongsToLocalPlayer(sourceId: string): boolean
+	return sourceId == tostring(localPlayer.UserId)
+		or sourceId == localPlayer.Name
+		or sourceId == localPlayer.DisplayName
+end
+
+local function handleCombatFeedback(event: StateTypes.CombatEvent)
+	local style = CombatFeedbackData.getStyle(event.Type)
+	if not style.WorldPopup then
+		return
+	end
+	local adornee, targetModel, targetPlayer = resolveFeedbackTarget(event.TargetId)
+	if adornee then
+		showWorldPopup(adornee, event)
+	end
+	if style.FlashTarget and targetModel then
+		flashTarget(targetModel, style.Color)
+	end
+
+	if targetPlayer == localPlayer and style.LocalHitShake > 0 then
+		playCameraShake(style.LocalHitShake)
+	elseif sourceBelongsToLocalPlayer(event.SourceId) and style.LocalAttackShake > 0 then
+		playCameraShake(style.LocalAttackShake)
+	end
+end
+
+local function getRarityScale(rarity: string?): number
+	if rarity == "UltraRare" then return 1.55 end
+	if rarity == "SuperRare" then return 1.35 end
+	if rarity == "Rare" then return 1.18 end
+	if rarity == "Uncommon" then return 1.08 end
+	return 1
+end
+
+local function configureProjectileShape(part: Part, shapeId: string?)
+	if shapeId == "Coin" then
+		part.Shape = Enum.PartType.Cylinder
+		part.Size = Vector3.new(0.35, 1.6, 1.6)
+	elseif shapeId == "Dice" then
+		part.Shape = Enum.PartType.Block
+		part.Size = Vector3.new(1.5, 1.5, 1.5)
+	elseif shapeId == "Dart" or shapeId == "Wrench" then
+		part.Shape = Enum.PartType.Block
+		part.Size = Vector3.new(0.35, 0.35, 2.2)
+	elseif shapeId == "Flask" then
+		part.Shape = Enum.PartType.Ball
+		part.Size = Vector3.new(1.2, 1.6, 1.2)
+	else
+		part.Shape = Enum.PartType.Ball
+		part.Size = Vector3.new(1.35, 1.35, 1.35)
+	end
+end
+
+local function playCardPresentation(event: StateTypes.CombatEvent)
+	local sourcePlayer = findPlayerByTargetId(event.SourceId)
+	local sourceCharacter = if sourcePlayer then sourcePlayer.Character else nil
+	local sourceRoot = if sourceCharacter then sourceCharacter:FindFirstChild("HumanoidRootPart") else nil
+	local targetPart = select(1, resolveFeedbackTarget(event.TargetId))
+	if not sourceRoot or not sourceRoot:IsA("BasePart") then
+		return
+	end
+
+	local color = event.EffectColor or Color3.fromRGB(120, 190, 255)
+	local rarityScale = getRarityScale(event.CardRarity)
+	local animationType = event.AnimationType or "Aura"
+	local container = getVfxContainer()
+
+	if animationType == "Projectile" and targetPart then
+		local projectile = Instance.new("Part")
+		projectile.Name = "CardProjectile_" .. (event.AnimationId or event.CardDefinitionId or "Card")
+		configureProjectileShape(projectile, event.ProjectileShape)
+		projectile.Size *= rarityScale
+		projectile.Material = Enum.Material.Neon
+		projectile.Color = color
+		projectile.Anchored = true
+		projectile.CanCollide = false
+		projectile.CanQuery = false
+		projectile.CFrame = CFrame.lookAt(sourceRoot.Position + Vector3.new(0, 1.5, 0), targetPart.Position)
+		projectile.Parent = container
+
+		local destination = targetPart.Position + if event.DidHit == false then Vector3.new(3.5, 1.8, 0) else Vector3.zero
+		local travelTween = TweenService:Create(projectile, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			CFrame = CFrame.new(destination),
+			Transparency = if event.DidHit == false then 0.65 else 0.1,
+		})
+		travelTween:Play()
+		travelTween.Completed:Connect(function()
+			if not projectile.Parent then return end
+			local burst = TweenService:Create(projectile, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = projectile.Size * 1.8,
+				Transparency = 1,
+			})
+			burst:Play()
+			burst.Completed:Connect(function()
+				if projectile.Parent then projectile:Destroy() end
+			end)
+		end)
+	elseif animationType == "Melee" and targetPart then
+		local slash = Instance.new("Part")
+		slash.Name = "CardMeleeArc_" .. (event.AnimationId or event.CardDefinitionId or "Card")
+		slash.Size = Vector3.new(0.18, 4.2 * rarityScale, 0.65 * rarityScale)
+		slash.Material = Enum.Material.Neon
+		slash.Color = color
+		slash.Anchored = true
+		slash.CanCollide = false
+		slash.CanQuery = false
+		slash.CFrame = CFrame.new(targetPart.Position) * CFrame.Angles(0, 0, math.rad(-48))
+		slash.Parent = container
+		local slashTween = TweenService:Create(slash, TweenInfo.new(0.20, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+			CFrame = slash.CFrame * CFrame.Angles(0, math.rad(95), math.rad(100)),
+			Transparency = 1,
+			Size = Vector3.new(0.08, 6 * rarityScale, 0.25),
+		})
+		slashTween:Play()
+		slashTween.Completed:Connect(function()
+			if slash.Parent then slash:Destroy() end
+		end)
+	else
+		local pulse = Instance.new("Part")
+		pulse.Name = "CardAura_" .. (event.AnimationId or event.CardDefinitionId or "Card")
+		pulse.Shape = Enum.PartType.Ball
+		pulse.Size = Vector3.new(1.2, 1.2, 1.2) * rarityScale
+		pulse.Material = Enum.Material.Neon
+		pulse.Color = color
+		pulse.Transparency = 0.35
+		pulse.Anchored = true
+		pulse.CanCollide = false
+		pulse.CanQuery = false
+		pulse.CFrame = CFrame.new((targetPart or sourceRoot).Position)
+		pulse.Parent = container
+		local pulseTween = TweenService:Create(pulse, TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(7, 7, 7) * rarityScale,
+			Transparency = 1,
+		})
+		pulseTween:Play()
+		pulseTween.Completed:Connect(function()
+			if pulse.Parent then pulse:Destroy() end
+		end)
+	end
 end
 
 local function stopModelRetry()
@@ -433,17 +758,22 @@ local function playAoEAttack(win: StateTypes.ReactionWindowView, enemyModel: Mod
 
 	local container = getVfxContainer()
 
-	-- Ground telegraph expanding circle originating at attacker world position
-	local centerPos = win.AttackerWorldPos or originPivot.Position
+	local isMovementHazard = win.AvoidanceMode == "Movement"
+	-- Movement hazards are centered on the snapshotted target position; ordinary
+	-- AoE explosions continue to originate from the attacker.
+	local centerPos = if isMovementHazard
+		then (win.TargetWorldPosition or win.TargetWorldPos or originPivot.Position)
+		else (win.AttackerWorldPos or originPivot.Position)
 	local aoeCenter = Vector3.new(centerPos.X, 0.4, centerPos.Z)
+	local hazardDiameter = math.max(2, (win.HazardRadius or 7) * 2)
 
 	local aoeZone = Instance.new("Part")
 	aoeZone.Name = "CombatVFX_AoETelegraph"
 	aoeZone.Shape = Enum.PartType.Cylinder
-	aoeZone.Size = Vector3.new(0.2, 4, 4)
+	aoeZone.Size = if isMovementHazard then Vector3.new(0.2, hazardDiameter, hazardDiameter) else Vector3.new(0.2, 4, 4)
 	aoeZone.CFrame = CFrame.new(aoeCenter) * CFrame.Angles(0, 0, math.rad(90))
 	aoeZone.Material = Enum.Material.Neon
-	aoeZone.Color = Color3.fromRGB(240, 50, 50)
+	aoeZone.Color = if isMovementHazard then Color3.fromRGB(225, 45, 255) else Color3.fromRGB(240, 50, 50)
 	aoeZone.Transparency = 0.65
 	aoeZone.Anchored = true
 	aoeZone.CanCollide = false
@@ -463,9 +793,13 @@ local function playAoEAttack(win: StateTypes.ReactionWindowView, enemyModel: Mod
 		local now = Workspace:GetServerTimeNow()
 		local alpha = math.clamp((now - startTime) / totalChargeTime, 0, 1)
 		local quadAlpha = alpha * alpha
-		local diam = 4 + (41 * quadAlpha)
+		local diam = if isMovementHazard then hazardDiameter else 4 + (41 * quadAlpha)
 		aoeZone.Size = Vector3.new(0.2, diam, diam)
-		aoeZone.Transparency = 0.65 - (0.30 * quadAlpha)
+		if isMovementHazard then
+			aoeZone.Transparency = 0.45 + (math.sin(alpha * math.pi * 8) * 0.08)
+		else
+			aoeZone.Transparency = 0.65 - (0.30 * quadAlpha)
+		end
 
 		if now >= impactTime and not detonated then
 			detonated = true
@@ -476,7 +810,7 @@ local function playAoEAttack(win: StateTypes.ReactionWindowView, enemyModel: Mod
 
 			-- Flash explosion
 			local tDetonate = TweenService:Create(aoeZone, TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
-				Size = Vector3.new(0.8, 55, 55),
+				Size = if isMovementHazard then Vector3.new(0.8, hazardDiameter + 4, hazardDiameter + 4) else Vector3.new(0.8, 55, 55),
 				Color = Color3.fromRGB(255, 220, 100),
 				Transparency = 1,
 			})
@@ -609,8 +943,19 @@ end
 if CombatStateUpdateEvent then
 	CombatStateUpdateEvent.OnClientEvent:Connect(function(snapshot: StateTypes.CombatSnapshot)
 		if not snapshot then return end
+		latestEnemyViews = snapshot.Enemies or {}
 		onReactionWindowChanged(snapshot.ActiveReactionWindow)
 	end)
 end
 
-print("[CombatVFXController] Initialized client 3D combat attack presentation controller.")
+if CombatEventLoggedEvent then
+	CombatEventLoggedEvent.OnClientEvent:Connect(function(event: StateTypes.CombatEvent)
+		if not event then return end
+		if event.Type == "CardPresented" then
+			playCardPresentation(event)
+		end
+		handleCombatFeedback(event)
+	end)
+end
+
+print("[CombatVFXController] Initialized synchronized attacks, world combat numbers, hit flashes, and restrained camera feedback.")

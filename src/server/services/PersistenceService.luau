@@ -64,7 +64,7 @@ local function createDefaultStarterDeck(userId: number): StateTypes.SavedDeck
 		DeckId = deckId,
 		Name = GameConfig.StarterCollection.DefaultDeckName,
 		Cards = starterCards,
-		ClassId = GameConfig.StarterCollection.DefaultDeckClass,
+		ClassId = nil,
 		CreatedAt = now,
 		UpdatedAt = now,
 	}
@@ -208,13 +208,9 @@ local function reconcile(data: any, userId: number): StateTypes.PlayerProfile
 					trimmedName = trimmedName:sub(1, GameConfig.Deck.MaxDeckNameLength)
 				end
 
-				-- ClassId validation against ClassData
+				-- Legacy class bindings are intentionally discarded. A saved deck can
+				-- be selected with any hero class.
 				local validClassId: string? = nil
-				if typeof(rawDeck.ClassId) == "string" and #rawDeck.ClassId > 0 then
-					if ClassData.getClass(rawDeck.ClassId) then
-						validClassId = rawDeck.ClassId
-					end
-				end
 
 				-- Cards sanitization: positive integers and existing CardDefinitions only
 				local cards: { [string]: number } = {}

@@ -33,6 +33,8 @@ export type AttackTimingProfile = {
 	DamageType: StateTypes.DamageType,
 	RawDamage: number,
 	ProjectileSpeed: number?,
+	AvoidanceMode: StateTypes.AvoidanceMode?,
+	HazardRadius: number?,
 	Description: string?,
 }
 
@@ -181,7 +183,28 @@ local DEFAULT_PROFILES: { [string]: AttackTimingProfile } = {
 		DamageType = "Fire",
 		RawDamage = 20,
 		ProjectileSpeed = nil,
+		AvoidanceMode = "DefenseOnly",
 		Description = "An unavoidable room-wide blast; defense must come from shields.",
+	},
+	["LightningField"] = {
+		AttackId = "LightningField",
+		AttackName = "Static Lightning Field",
+		AttackType = "AoE",
+		TelegraphDuration = 1.80,
+		ImpactDelay = 2.0,
+		RecoveryDuration = 0.30,
+		CanDodge = false,
+		CanParry = false,
+		DodgePerfectTolerance = 0.0,
+		DodgeGoodTolerance = 0.0,
+		ParryPerfectTolerance = 0.0,
+		ParryGoodTolerance = 0.0,
+		DamageType = "Lightning",
+		RawDamage = 8,
+		ProjectileSpeed = nil,
+		AvoidanceMode = "Movement",
+		HazardRadius = 7,
+		Description = "A marked lightning zone. Physically move outside the circle before impact.",
 	},
 }
 
@@ -204,6 +227,8 @@ function ReactionData.getProfile(id: string): AttackTimingProfile?
 			DamageType = preset.DamageType,
 			RawDamage = preset.RawDamage,
 			ProjectileSpeed = preset.ProjectileSpeed,
+			AvoidanceMode = preset.AvoidanceMode,
+			HazardRadius = preset.HazardRadius,
 			Description = preset.Description,
 		}
 	end

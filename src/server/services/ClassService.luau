@@ -12,6 +12,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
@@ -188,10 +189,14 @@ function ClassService.initializeStartingDeck(playerState: StateTypes.PlayerState
 		end
 	end
 
-	-- Fallback to hero class starting deck if active deck was missing or invalid
+	-- Fallback is universal, never class-owned. Class choice affects stats and
+	-- mechanics, while the player remains free to choose any legal card deck.
 	if #cardList == 0 then
-		local heroClass = ClassData.getClass(playerState.ClassId) or ClassData.getClass("Warlord") :: ClassData.HeroClass
-		cardList = heroClass.StartingDeck
+		for cardDefId, count in GameConfig.StarterCollection.DefaultDeckCards do
+			for _ = 1, count do
+				table.insert(cardList, cardDefId)
+			end
+		end
 	end
 
 	for _, cardDefId in cardList do

@@ -16,6 +16,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local CardRulesService = require(script.Parent:WaitForChild("CardRulesService") :: ModuleScript)
 
 local CardService = {}
 
@@ -59,6 +60,14 @@ function CardService.toCardView(instance: StateTypes.CardInstance, playerState: 
 		Name = instance.CardData.Name,
 		Cost = cost,
 		Target = instance.CardData.Target,
+		Tags = if instance.CardData.Tags then table.clone(instance.CardData.Tags) else nil,
+		Rarity = instance.CardData.Rarity or "Common",
+		AccuracyPercent = math.round((instance.CardData.Accuracy or 1) * 100),
+		MaxCopiesPerDeck = instance.CardData.MaxCopiesPerDeck or 3,
+		UseLimitScope = if instance.CardData.UseLimit then instance.CardData.UseLimit.Scope else nil,
+		MaxUses = if instance.CardData.UseLimit then instance.CardData.UseLimit.MaxUses else nil,
+		RemainingUses = if playerState then CardRulesService.getRemainingUses(playerState, instance.CardData) else nil,
+		Presentation = instance.CardData.Presentation :: CardData.CardPresentation,
 		Description = instance.CardData.Description,
 		Icon = instance.CardData.Icon,
 		Color = instance.CardData.Color,
@@ -167,7 +176,9 @@ function CardService.drawCards(playerState: StateTypes.PlayerState, count: numbe
 	local drawn: { StateTypes.CardInstance } = {}
 	if playerState.IsDowned then return drawn end
 
-	for _ = 1, count do
+	local safetyBudget = #playerState.Deck + #playerState.DiscardPile + count
+	while #drawn < count and safetyBudget > 0 do
+		safetyBudget -= 1
 		-- Reshuffle discard pile into deck if empty
 		if #playerState.Deck == 0 and #playerState.DiscardPile > 0 then
 			for _, c in playerState.DiscardPile do
@@ -184,14 +195,49 @@ function CardService.drawCards(playerState: StateTypes.PlayerState, count: numbe
 
 		if #playerState.Deck > 0 then
 			local cardInst = table.remove(playerState.Deck, 1) :: StateTypes.CardInstance
-			playerState.Hand[cardInst.InstanceId] = cardInst
-			table.insert(drawn, cardInst)
+			local canUse = CardRulesService.canUseCard(playerState, cardInst.CardData)
+			if canUse then
+				playerState.Hand[cardInst.InstanceId] = cardInst
+				table.insert(drawn, cardInst)
+			else
+				table.insert(playerState.ExhaustPile, cardInst)
+			end
 		else
 			break
 		end
 	end
 
 	return drawn
+end
+
+-- Once a definition-level use limit is reached, remove every remaining copy
+-- from active piles so the player does not draw dead cards this encounter.
+function CardService.exhaustUnavailableDefinitionCopies(playerState: StateTypes.PlayerState, definitionId: string)
+	local cardDef = CardData.getCard(definitionId)
+	if not cardDef then return end
+	local canUse = CardRulesService.canUseCard(playerState, cardDef)
+	if canUse then return end
+
+	for instanceId, card in playerState.Hand do
+		if card.DefinitionId == definitionId then
+			playerState.Hand[instanceId] = nil
+			table.insert(playerState.ExhaustPile, card)
+		end
+	end
+	for index = #playerState.Deck, 1, -1 do
+		local card = playerState.Deck[index]
+		if card.DefinitionId == definitionId then
+			table.remove(playerState.Deck, index)
+			table.insert(playerState.ExhaustPile, card)
+		end
+	end
+	for index = #playerState.DiscardPile, 1, -1 do
+		local card = playerState.DiscardPile[index]
+		if card.DefinitionId == definitionId then
+			table.remove(playerState.DiscardPile, index)
+			table.insert(playerState.ExhaustPile, card)
+		end
+	end
 end
 
 -- Locates a card in a player's hand by its stable instance ID

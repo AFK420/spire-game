@@ -84,6 +84,8 @@ export type PlayerState = {
     IsDowned: boolean,
     IsConnected: boolean?,
     VotedNodeId: string?,
+    CardUsesThisBattle: { [string]: number }?, -- Reset at the start of each encounter
+    CardUsesThisRun: { [string]: number }?,    -- Reset only when a new run starts
     -- Phase 3 Run-Scoped RPG Progression State
     EquippedItems: { [EquipmentSlot]: EquipmentInstance }?,
     EquipmentInventory: { EquipmentInstance }?,
@@ -109,6 +111,9 @@ export type EnemyIntent = {
     Value: number,
     TargetUserId: number?,
     Description: string?,
+    ArmorAfterAction: number?,
+    EvasionAfterAction: number?,
+    DefenseText: string?,
 }
 
 export type EnemyState = {
@@ -119,6 +124,8 @@ export type EnemyState = {
     MaxHP: number,
     Shield: number,
     Poison: number,
+    Armor: number?,            -- Mitigates direct physical damage
+    Evasion: number?,          -- Reduces targeted card/skill hit chance
     AttackPower: number,
     Intent: EnemyIntent,
     ModelRef: Model?,           -- Optional Workspace representation
@@ -133,6 +140,14 @@ export type CombatEvent = {
     Value: number?,
     ExtraText: string?,
     Timestamp: number,          -- os.clock() monotonic timestamp
+    CardDefinitionId: string?,
+    CardRarity: string?,
+    AnimationId: string?,
+    AnimationType: string?,
+    ProjectileShape: string?,
+    EffectColor: Color3?,
+    ImpactEffectId: string?,
+    DidHit: boolean?,
 }
 
 export type CombatState = {
@@ -276,6 +291,8 @@ export type EnemyView = {
     MaxHP: number,
     Shield: number,
     Poison: number,
+    Armor: number,
+    EvasionPercent: number,
     AttackPower: number,
     IntentText: string,
     IntentIcon: string,
@@ -286,6 +303,21 @@ export type CardView = {
     DefinitionId: string,
     Name: string,
     Cost: number,
+    Target: string,
+    Tags: { string }?,
+    Rarity: string,
+    AccuracyPercent: number,
+    MaxCopiesPerDeck: number,
+    UseLimitScope: "Battle" | "Run" | nil,
+    MaxUses: number?,
+    RemainingUses: number?,
+    Presentation: {
+        AnimationId: string,
+        AnimationType: string,
+        ProjectileShape: string?,
+        EffectColor: Color3,
+        ImpactEffectId: string,
+    },
     Description: string,
     Icon: string,
     Color: Color3,
@@ -434,8 +466,8 @@ export type PlayerProfile = {
 export type SavedDeck = {
     DeckId: string,               -- Server-generated GUID (e.g. "deck_10001_172648_a8f9c2")
     Name: string,                 -- Player deck name (trimmed, 1 to 24 chars)
-    Cards: { [string]: number },  -- CardDefinition ID -> Quantity (max 3 per card, 8-30 total)
-    ClassId: string?,             -- Optional target class binding
+    Cards: { [string]: number },  -- CardDefinition ID -> Quantity (rarity/card caps, 8-30 total)
+    ClassId: string?,             -- Legacy compatibility only; normalized to nil
     CreatedAt: number,            -- Timestamp created
     UpdatedAt: number,            -- Timestamp last edited
 }
@@ -445,4 +477,3 @@ export type DeckSlotEntitlement = {
     AdditionalDeckSlots: number,  -- Earned/purchased extra slots
 }
 ```
-

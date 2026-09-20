@@ -38,6 +38,8 @@ local RelicData = require(Shared:WaitForChild("RelicData") :: ModuleScript)
 local ClassData = require(Shared:WaitForChild("ClassData") :: ModuleScript)
 local DungeonMap = require(Shared:WaitForChild("DungeonMap") :: ModuleScript)
 local BuildInfo = require(Shared:WaitForChild("BuildInfo") :: ModuleScript)
+local EnemyData = require(Shared:WaitForChild("EnemyData") :: ModuleScript)
+local CombatFeedbackData = require(Shared:WaitForChild("CombatFeedbackData") :: ModuleScript)
 
 local services = script.Parent
 local RunManager = require(services:WaitForChild("RunManager") :: ModuleScript)
@@ -49,6 +51,10 @@ local PersistenceService = require(services:WaitForChild("PersistenceService") :
 local TargetResolver = require(services:WaitForChild("TargetResolver") :: ModuleScript)
 local ModifierResolver = require(services:WaitForChild("ModifierResolver") :: ModuleScript)
 local DamagePipeline = require(services:WaitForChild("DamagePipeline") :: ModuleScript)
+local BreakService = require(services:WaitForChild("BreakService") :: ModuleScript)
+local EnemyMechanicsService = require(services:WaitForChild("EnemyMechanicsService") :: ModuleScript)
+local BossMechanicsService = require(services:WaitForChild("BossMechanicsService") :: ModuleScript)
+local SpatialHazardService = require(services:WaitForChild("SpatialHazardService") :: ModuleScript)
 local StatusService = require(services:WaitForChild("StatusService") :: ModuleScript)
 local EffectResolver = require(services:WaitForChild("EffectResolver") :: ModuleScript)
 local EquipmentData = require(Shared:WaitForChild("EquipmentData") :: ModuleScript)
@@ -68,6 +74,7 @@ local EventData = require(Shared:WaitForChild("EventData") :: ModuleScript)
 local ReactionData = require(Shared:WaitForChild("ReactionData") :: ModuleScript)
 local EnvironmentData = require(Shared:WaitForChild("EnvironmentData") :: ModuleScript)
 local NetworkService = require(services:WaitForChild("NetworkService") :: ModuleScript)
+local CardRulesService = require(services:WaitForChild("CardRulesService") :: ModuleScript)
 
 local TestRunner = {}
 
@@ -1452,8 +1459,8 @@ local function runSuite71()
 	print("\n--- [Suite 71] MapFlow Handshake, StateSync Recovery, Build Fingerprint & Failure Injection ---")
 
 	-- 71.1: Build fingerprinting invariants
-	assertTest(BuildInfo.BUILD_ID == "hardened_server_deck_contracts_20260919", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
-	assertTest(BuildInfo.BUILD_NAME == "Hardened Server Deck Invariants & Contracts", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
+	assertTest(BuildInfo.BUILD_ID == "phase5_flexible_builds_20260920", "[Suite 71.1] BuildInfo.BUILD_ID matches fingerprint")
+	assertTest(BuildInfo.BUILD_NAME == "Phase 5 Flexible Builds", "[Suite 71.2] BuildInfo.BUILD_NAME matches fingerprint")
 
 	do
 		-- 71.2: Real network handshake flow: Vote -> ActionResult (Won=true, ActiveRoom) -> RequestStateSync -> switchView
@@ -2585,11 +2592,11 @@ local function runSuite76()
 	assertTest(#unkStatusRes == 1 and unkStatusRes[1].Success == false, "[Suite 76.57] Unknown status ApplyStatus fails closed")
 	assertTest(string.find(unkStatusRes[1].Message or "", "unknown") ~= nil or string.find(unkStatusRes[1].Message or "", "Failed") ~= nil, "[Suite 76.58] Unknown status returns appropriate error message")
 
-	-- Test 3: Unimplemented status (Shock has Implemented = false) fails closed
+	-- Test 3: Unimplemented status fails closed
 	local unimpStatusRes = EffectResolver.resolveEffects({
-		{ Type = "ApplyStatus", StatusId = "Shock", Stacks = 2, Target = "Ally" }
+		{ Type = "ApplyStatus", StatusId = "Chill", Stacks = 2, Target = "Ally" }
 	}, poisonCtx)
-	assertTest(#unimpStatusRes == 1 and unimpStatusRes[1].Success == false, "[Suite 76.59] Unimplemented status (Shock) ApplyStatus fails closed")
+	assertTest(#unimpStatusRes == 1 and unimpStatusRes[1].Success == false, "[Suite 76.59] Unimplemented status (Chill) ApplyStatus fails closed")
 
 	-- Test 4: Card with invalid ApplyStatus causes transactional rollback
 	local badStatusCardDef: CardData.Card = {
@@ -2996,9 +3003,18 @@ local function runSuite76()
 			end
 		end
 		assertTest(isTierDiff == true, "[Suite 76.138] generateMerchantWares changes inventory when act or tier changes")
+
+		local personalSeedA = RunManager.computeMerchantSeed(seed1, 1, 1, "node_act1_t1_shop", 85001)
+		local personalSeedB = RunManager.computeMerchantSeed(seed1, 1, 1, "node_act1_t1_shop", 85002)
+		assertTest(personalSeedA ~= personalSeedB,
+			"[Suite 76.138a] Merchant seed is namespaced by player identity")
+		local personalA1 = RunManager.generateMerchantWares(seed1, 1, 1, "node_act1_t1_shop", 85001)
+		local personalA2 = RunManager.generateMerchantWares(seed1, 1, 1, "node_act1_t1_shop", 85001)
+		assertTest(personalA1[1].CardDefId == personalA2[1].CardDefId and personalA1[1].Cost == personalA2[1].Cost,
+			"[Suite 76.138b] Personal merchant offers remain deterministic for the same player")
 	end
 
-	-- 76.18: Merchant Shared Party Stock, Concurrency Lock & Fail-Closed Transaction
+	-- 76.18: Merchant Personal Stock, Concurrency Lock & Fail-Closed Transaction
 	do
 		RunManager.resetRunForTesting()
 		CombatService.cleanupCombat()
@@ -3032,30 +3048,41 @@ local function runSuite76()
 		local preDeckB = #sB.Deck
 
 		local travOk, travErr = RunManager.travelToNode("node_act1_t1_shared_shop")
-		assertTest(travOk == true, "[Suite 76.139] travelToNode succeeds for shared shop test: " .. tostring(travErr))
-		assertTest(run.ActiveRoom ~= nil and run.ActiveRoom.MerchantWares ~= nil, "[Suite 76.140] Merchant wares loaded")
+		assertTest(travOk == true, "[Suite 76.139] travelToNode succeeds for personal shop test: " .. tostring(travErr))
+		assertTest(run.ActiveRoom ~= nil and run.ActiveRoom.MerchantWaresByPlayer ~= nil,
+			"[Suite 76.140] Personal merchant wares loaded")
 
-		local targetWare = run.ActiveRoom.MerchantWares[1]
+		local waresByPlayer = run.ActiveRoom.MerchantWaresByPlayer
+		assert(waresByPlayer, "personal merchant wares exist")
+		local snapA = RunManager.getRunSnapshotForPlayer(buyerA)
+		local snapB = RunManager.getRunSnapshotForPlayer(buyerB)
+		assertTest(snapA.ActiveRoom ~= nil and snapB.ActiveRoom ~= nil
+			and snapA.ActiveRoom.MerchantWares == waresByPlayer[buyerA.UserId]
+			and snapB.ActiveRoom.MerchantWares == waresByPlayer[buyerB.UserId],
+			"[Suite 76.140a] Run snapshots expose only the requesting player's merchant stock")
+		local targetWare = waresByPlayer[buyerA.UserId][1]
+		local targetWareB = waresByPlayer[buyerB.UserId][1]
 		local targetId = targetWare.ItemId
 
 		-- Buyer A purchases target ware
 		local buyAOk, buyAErr = RunManager.buyMerchantItem(buyerA, targetId)
 		assertTest(buyAOk == true, "[Suite 76.141] Player A purchase of ware succeeds: " .. tostring(buyAErr))
-		assertTest(targetWare.IsPurchased == true, "[Suite 76.142] Ware is marked IsPurchased across party")
+		assertTest(targetWare.IsPurchased == true and targetWareB.IsPurchased == false,
+			"[Suite 76.142] Player A purchase mutates only Player A personal stock")
 		assertTest(#sA.Deck == preDeckA + 1, "[Suite 76.143] Player A deck received purchased card")
 
-		-- Buyer B attempts to purchase the same ware (Shared Stock Rule)
+		-- Buyer B can purchase the same slot from independent personal stock.
 		local buyBOk, buyBErr = RunManager.buyMerchantItem(buyerB, targetId)
-		assertTest(buyBOk == false, "[Suite 76.144] Player B purchase of same ware rejected due to shared party stock")
-		assertTest(string.find(buyBErr or "", "already") ~= nil, "[Suite 76.145] Rejection message indicates item already purchased")
-		assertTest(sB.Gold == 100, "[Suite 76.146] Player B gold completely untouched (100)")
-		assertTest(#sB.Deck == preDeckB, "[Suite 76.147] Player B deck completely untouched")
+		assertTest(buyBOk == true, "[Suite 76.144] Player B independently purchases same personal slot: " .. tostring(buyBErr))
+		assertTest(targetWareB.IsPurchased == true, "[Suite 76.145] Player B personal ware is marked purchased")
+		assertTest(sB.Gold == 100 - targetWareB.Cost, "[Suite 76.146] Player B pays own personal ware cost")
+		assertTest(#sB.Deck == preDeckB + 1, "[Suite 76.147] Player B deck independently receives purchased card")
 
 		-- Concurrency Lock Test:
 		-- Acquire lock on ware 2 manually to simulate in-flight purchase
-		local ware2 = run.ActiveRoom.MerchantWares[2]
+		local ware2 = waresByPlayer[buyerA.UserId][2]
 		local lockTable = RunManager.getMerchantPurchaseLocksForTesting()
-		local lockKey = string.format("%s:%s", tostring(run.RunId), tostring(ware2.ItemId))
+		local lockKey = string.format("%s:%d:%s", tostring(run.RunId), buyerA.UserId, tostring(ware2.ItemId))
 		lockTable[lockKey] = true
 
 		local lockedBuyOk, lockedBuyErr = RunManager.buyMerchantItem(buyerA, ware2.ItemId)
@@ -3068,7 +3095,7 @@ local function runSuite76()
 
 		-- Fail-Closed Card Grant Transaction Test:
 		-- Inject invalid CardDefId into ware 3 to cause grantCard failure
-		local ware3 = run.ActiveRoom.MerchantWares[3]
+		local ware3 = waresByPlayer[buyerA.UserId][3]
 		local origCardDefId = ware3.CardDefId
 		ware3.CardDefId = "NonExistent_Invalid_Card_Def"
 		local preGoldA = sA.Gold
@@ -3573,9 +3600,904 @@ local function runSuite76()
 	RunManager.resetRunForTesting()
 end
 
+local function runSuite77()
+	print("\n--- [Suite 77] Phase 5 Break/Stagger & Card Tag Foundation ---")
+
+	local function makeEnemy(threshold: number): StateTypes.EnemyState
+		return {
+			InstanceId = "break_target",
+			DefinitionId = "SpireGuardian",
+			Name = "Break Target",
+			HP = 500,
+			MaxHP = 500,
+			Shield = 0,
+			Poison = 0,
+			AttackPower = 20,
+			Intent = { Type = "Attack", Value = 20 },
+			BreakMeter = 0,
+			BreakThreshold = threshold,
+			IsBroken = false,
+			BreakActionsToSkip = 0,
+			ModelRef = nil,
+		}
+	end
+
+	local heavy = CardData.getCard("HeavyBlow")
+	assertTest(heavy ~= nil and heavy.Tags ~= nil and table.find(heavy.Tags, "Heavy") ~= nil,
+		"[Suite 77.1] Heavy Blow exposes the Heavy gameplay tag")
+	assertTest(BreakService.getCardBreakDamage(heavy) == GameConfig.Break.HeavyCardDamage,
+		"[Suite 77.2] Heavy card resolves configured Break damage")
+	assertTest(BreakService.getCardBreakDamage(CardData.getCard("Strike")) == 0,
+		"[Suite 77.3] Non-Heavy card contributes zero Break damage")
+
+	local nonBreakable = makeEnemy(0)
+	local ignored, ignoredBreak = BreakService.applyBreakDamage(nonBreakable, 50, false)
+	assertTest(ignored == 0 and ignoredBreak == false and nonBreakable.BreakMeter == 0,
+		"[Suite 77.4] Non-breakable enemies reject Break damage without mutation")
+
+	local boss = makeEnemy(100)
+	local firstAdded, firstBreak = BreakService.applyBreakDamage(boss, 40, false)
+	assertTest(firstAdded == 40 and firstBreak == false and boss.BreakMeter == 40,
+		"[Suite 77.5] Break meter accumulates below threshold")
+	local secondAdded, didBreak = BreakService.applyBreakDamage(boss, 80, false)
+	assertTest(secondAdded == 60 and didBreak == true and boss.BreakMeter == 100 and boss.IsBroken == true,
+		"[Suite 77.6] Break meter clamps at threshold and enters Broken state")
+	assertTest(boss.BreakActionsToSkip == 1,
+		"[Suite 77.7] Card-caused Break schedules exactly one enemy action skip")
+	assertTest(BreakService.getDirectDamageMultiplier(boss, false) == GameConfig.Break.BrokenDamageMultiplier,
+		"[Suite 77.8] Broken target exposes configured direct-damage multiplier")
+	assertTest(BreakService.getDirectDamageMultiplier(boss, true) == 1,
+		"[Suite 77.9] Periodic damage is excluded from Break vulnerability")
+
+	local skipAction, recoveredEarly = BreakService.resolveBeforeEnemyAction(boss)
+	assertTest(skipAction == true and recoveredEarly == false and boss.IsBroken == true,
+		"[Suite 77.10] First Broken resolution skips action and preserves burst window")
+	local skipAfterWindow, recovered = BreakService.resolveBeforeEnemyAction(boss)
+	assertTest(skipAfterWindow == false and recovered == true and boss.IsBroken == false and boss.BreakMeter == 0,
+		"[Suite 77.11] Boss recovers before its action after one Break phase")
+
+	local parryBoss = makeEnemy(30)
+	local parryAdded, parryBreak = BreakService.applyBreakDamage(parryBoss, GameConfig.Break.PerfectParryDamage, true)
+	assertTest(parryAdded == 30 and parryBreak == true and parryBoss.BreakActionsToSkip == 0,
+		"[Suite 77.12] Parry-caused Break counts the parried action as consumed")
+
+	local directEnemy = makeEnemy(100)
+	directEnemy.IsBroken = true
+	local directResult = DamagePipeline.executeDamage({
+		RawDamage = 40,
+		DamageType = "Physical",
+		SourceId = "suite77",
+		SourceName = "Suite77",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = directEnemy,
+		TargetPlayer = nil,
+		Tags = { "Heavy" },
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(directResult.FinalDamage == 50 and directResult.HPLost == 50,
+		"[Suite 77.13] DamagePipeline applies +25% direct damage to Broken enemy")
+
+	local periodicEnemy = makeEnemy(100)
+	periodicEnemy.IsBroken = true
+	local periodicResult = DamagePipeline.executeDamage({
+		RawDamage = 40,
+		DamageType = "Venom",
+		SourceId = "suite77_dot",
+		SourceName = "Suite77 DoT",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = periodicEnemy,
+		TargetPlayer = nil,
+		Tags = { "Poison" },
+		Critical = false,
+		CanHitShield = false,
+		IsPeriodic = true,
+	})
+	assertTest(periodicResult.FinalDamage == 40 and periodicResult.HPLost == 40,
+		"[Suite 77.14] DamagePipeline leaves periodic damage unchanged during Break")
+end
+
+local function runSuite78()
+	print("\n--- [Suite 78] Data-Driven Act 1 Enemies & Intent Cycles ---")
+
+	local validDefinitions, validationError = EnemyData.validateDefinitions()
+	assertTest(validDefinitions and validationError == nil,
+		"[Suite 78.1] Every enemy definition and authored attack profile validates")
+
+	local enemyCount = 0
+	local roles: { [string]: boolean } = {}
+	for _, definition in EnemyData.getAllEnemies() do
+		enemyCount += 1
+		roles[definition.Role] = true
+	end
+	assertTest(enemyCount == 9, "[Suite 78.2] Act 1 registry contains nine distinct enemy definitions")
+	assertTest(roles.Protector == true and roles.Countdown == true and roles.Escalation == true and roles.ReactionControl == true,
+		"[Suite 78.3] Roster covers protector, countdown, escalation, and reaction-control roles")
+
+	local early = EnemyData.getEncounter("Combat", 1)
+	assertTest(#early == 1 and early[1] == "SpireSentinel",
+		"[Suite 78.4] Early normal encounter teaches the baseline Sentinel")
+	local protector = EnemyData.getEncounter("Combat", 3)
+	assertTest(#protector == 2 and protector[1] == "SpireSentinel" and protector[2] == "ShieldPriest",
+		"[Suite 78.5] Tier 3 composition introduces target-priority protection")
+	local countdown = EnemyData.getEncounter("Combat", 5)
+	assertTest(#countdown == 2 and countdown[1] == "BombCarrier",
+		"[Suite 78.6] Tier 5 composition introduces countdown pressure")
+	local escalation = EnemyData.getEncounter("Combat", 7)
+	assertTest(#escalation == 2 and escalation[1] == "SoulEater" and escalation[2] == "Cultist",
+		"[Suite 78.7] Tier 7 composition introduces escalation support")
+	local reactionControl = EnemyData.getEncounter("Combat", 8)
+	assertTest(#reactionControl == 2 and reactionControl[1] == "StormMage" and reactionControl[2] == "ShieldPriest",
+		"[Suite 78.8] Late normal composition combines reactions with protection")
+
+	assertTest(EnemyData.getEncounter("Elite Monster", 2)[1] == "GremlinNob",
+		"[Suite 78.9] Early elite selection resolves to Gremlin Nob")
+	assertTest(EnemyData.getEncounter("Elite Monster", 6)[1] == "IronBulwark",
+		"[Suite 78.10] Late elite selection resolves to Iron Bulwark")
+	assertTest(EnemyData.getEncounter("Act Boss", 8)[1] == "SpireGuardian",
+		"[Suite 78.11] Act boss selection resolves to the Spire Guardian")
+
+	local priestIntent = EnemyData.createIntent("ShieldPriest", 1, 10)
+	assertTest(priestIntent.Type == "Defend" and priestIntent.TargetMode == "LowestHPAlly",
+		"[Suite 78.12] Shield Priest telegraphs protection of the most wounded ally")
+	local detonateIntent = EnemyData.createIntent("BombCarrier", 3, 10)
+	assertTest(detonateIntent.Type == "Attack" and detonateIntent.Value == 20
+		and detonateIntent.AttackProfileId == "UnreactableExplosion" and detonateIntent.TargetMode == "AllPlayers",
+		"[Suite 78.13] Bomb Carrier detonation is authored as a doubled party-wide attack")
+	local stormLoop = EnemyData.createIntent("StormMage", 4, 10)
+	assertTest(stormLoop.MoveId == "ArcBolt" and stormLoop.AttackProfileId == "ProjectileBolt",
+		"[Suite 78.14] Authored move cycles wrap deterministically")
+	local guardianCore = EnemyData.createIntent("SpireGuardian", 3, 20)
+	assertTest(guardianCore.MoveId == "VolatileCore" and guardianCore.Value == 27
+		and guardianCore.TargetMode == "AllPlayers",
+		"[Suite 78.15] Boss cycle exposes its unavoidable party-pressure turn")
+end
+
+local function runSuite79()
+	print("\n--- [Suite 79] Soul Eater Devour the Fallen Mechanic ---")
+
+	local function makeEnemy(
+		instanceId: string,
+		definitionId: string,
+		hp: number,
+		attackPower: number,
+		moveIndex: number
+	): StateTypes.EnemyState
+		local definition = EnemyData.getEnemy(definitionId)
+		return {
+			InstanceId = instanceId,
+			DefinitionId = definitionId,
+			Name = if definition then definition.Name else definitionId,
+			HP = hp,
+			MaxHP = 100,
+			Shield = 0,
+			Poison = 0,
+			AttackPower = attackPower,
+			Intent = EnemyData.createIntent(definitionId, moveIndex, attackPower),
+			MoveIndex = moveIndex,
+			DefeatProcessed = false,
+			ModelRef = nil,
+		}
+	end
+
+	local soulDefinition = EnemyData.getEnemy("SoulEater")
+	assertTest(soulDefinition ~= nil and soulDefinition.OnAllyDefeatedAttackGain == 3,
+		"[Suite 79.1] Soul Eater definition authors +3 Attack per allied defeat")
+
+	local soul = makeEnemy("enemy_1", "SoulEater", 80, 9, 2)
+	local cultist = makeEnemy("enemy_2", "Cultist", 0, 5, 1)
+	local enemies = { enemy_1 = soul, enemy_2 = cultist }
+	local results, processed = EnemyMechanicsService.processEnemyDefeat(cultist, enemies)
+	assertTest(processed == true and cultist.DefeatProcessed == true,
+		"[Suite 79.2] First defeat processing marks the defeated enemy exactly once")
+	assertTest(#results == 1 and results[1].MechanicId == "DevourFallen" and results[1].TriggerEnemyId == "enemy_2",
+		"[Suite 79.3] Allied defeat emits one Devour the Fallen result")
+	assertTest(soul.AttackPower == 12 and results[1].AttackGain == 3 and results[1].NewAttackPower == 12,
+		"[Suite 79.4] Living Soul Eater gains the authored Attack amount")
+	assertTest(soul.Intent.MoveId == "SoulRend" and soul.Intent.Value == 14,
+		"[Suite 79.5] Current attack intent is recalculated so its telegraph remains truthful")
+
+	local duplicateResults, duplicateProcessed = EnemyMechanicsService.processEnemyDefeat(cultist, enemies)
+	assertTest(duplicateProcessed == false and #duplicateResults == 0 and soul.AttackPower == 12,
+		"[Suite 79.6] Duplicate defeat processing cannot grant Attack twice")
+
+	local livingCultist = makeEnemy("enemy_3", "Cultist", 1, 5, 1)
+	local livingResults, livingProcessed = EnemyMechanicsService.processEnemyDefeat(livingCultist, {
+		enemy_1 = soul,
+		enemy_3 = livingCultist,
+	})
+	assertTest(livingProcessed == false and #livingResults == 0 and livingCultist.DefeatProcessed == false,
+		"[Suite 79.7] Living enemies cannot trigger defeat mechanics")
+
+	local chantingSoul = makeEnemy("enemy_1", "SoulEater", 80, 9, 1)
+	local secondCultist = makeEnemy("enemy_2", "Cultist", 0, 5, 1)
+	EnemyMechanicsService.processEnemyDefeat(secondCultist, { enemy_1 = chantingSoul, enemy_2 = secondCultist })
+	assertTest(chantingSoul.AttackPower == 12 and chantingSoul.Intent.MoveId == "ConsumeEchoes" and chantingSoul.Intent.Value == 3,
+		"[Suite 79.8] Fixed-value non-attack intent remains unchanged while AttackPower increases")
+
+	local sentinel = makeEnemy("enemy_1", "SpireSentinel", 70, 8, 1)
+	local thirdCultist = makeEnemy("enemy_2", "Cultist", 0, 5, 1)
+	local ordinaryResults = EnemyMechanicsService.processEnemyDefeat(thirdCultist, {
+		enemy_1 = sentinel,
+		enemy_2 = thirdCultist,
+	})
+	assertTest(#ordinaryResults == 0 and sentinel.AttackPower == 8,
+		"[Suite 79.9] Enemies without the mechanic receive no accidental buff")
+
+	local soulA = makeEnemy("enemy_1", "SoulEater", 80, 9, 2)
+	local soulB = makeEnemy("enemy_2", "SoulEater", 80, 10, 2)
+	local fallen = makeEnemy("enemy_3", "Cultist", 0, 5, 1)
+	local multiResults = EnemyMechanicsService.processEnemyDefeat(fallen, {
+		enemy_2 = soulB,
+		enemy_3 = fallen,
+		enemy_1 = soulA,
+	})
+	assertTest(#multiResults == 2 and soulA.AttackPower == 12 and soulB.AttackPower == 13,
+		"[Suite 79.10] Multiple living Soul Eaters each consume the same allied defeat once")
+	assertTest(multiResults[1].SourceEnemyId == "enemy_1" and multiResults[2].SourceEnemyId == "enemy_2",
+		"[Suite 79.11] Multi-enemy mechanic results are emitted in stable instance-ID order")
+
+	local defeatedSoul = makeEnemy("enemy_1", "SoulEater", 0, 9, 2)
+	local selfResults, selfProcessed = EnemyMechanicsService.processEnemyDefeat(defeatedSoul, { enemy_1 = defeatedSoul })
+	assertTest(selfProcessed == true and #selfResults == 0 and defeatedSoul.AttackPower == 9,
+		"[Suite 79.12] A defeated Soul Eater cannot consume its own defeat")
+end
+
+local function runSuite80()
+	print("\n--- [Suite 80] Storm Mage Shock & Movement Hazard ---")
+
+	local lightningPreset = ReactionData.getProfile("LightningField")
+	assertTest(lightningPreset ~= nil and lightningPreset.AttackType == "AoE"
+		and lightningPreset.DamageType == "Lightning",
+		"[Suite 80.1] Lightning Field is an authored lightning AoE profile")
+	assertTest(lightningPreset ~= nil and lightningPreset.AvoidanceMode == "Movement"
+		and lightningPreset.CanDodge == false and lightningPreset.CanParry == false
+		and lightningPreset.HazardRadius == GameConfig.SpatialCombat.LightningFieldRadius,
+		"[Suite 80.2] Lightning Field requires movement instead of Dodge or Parry")
+
+	local movementProfile = ReactionService.createProfileFromPreset("LightningField", 8, "Lightning")
+	assertTest(movementProfile.AvoidanceMode == "Movement"
+		and movementProfile.HazardRadius == GameConfig.SpatialCombat.LightningFieldRadius,
+		"[Suite 80.3] Reaction profile factory preserves movement-hazard metadata")
+
+	movementProfile.TargetWorldPosition = Vector3.new(12, 1.2, -4)
+	local movementCombat = {
+		CombatId = "suite80_movement",
+		ActiveReactionWindow = nil,
+	}
+	local movementWindow = ReactionService.openReactionWindow(
+		movementCombat :: any,
+		movementProfile,
+		"storm_mage_suite80",
+		{ 80001, 80002 }
+	)
+	local movementView = ReactionService.getReactionWindowView(movementWindow, "Rift Storm Mage")
+	assertTest(movementView ~= nil and movementView.AvoidanceMode == "Movement"
+		and movementView.HazardRadius == GameConfig.SpatialCombat.LightningFieldRadius
+		and movementView.TargetWorldPosition == Vector3.new(12, 1.2, -4),
+		"[Suite 80.4] Replicated reaction view carries hazard center and radius")
+	ReactionService.resolveReactionWindow(movementCombat :: any, movementWindow.WindowId)
+
+	local stormIntent = EnemyData.createIntent("StormMage", 2, 10)
+	assertTest(stormIntent.Type == "Attack" and stormIntent.MoveId == "StaticField"
+		and stormIntent.AttackProfileId == "LightningField" and stormIntent.TargetMode == "AllPlayers"
+		and stormIntent.StatusId == "Shock" and stormIntent.StatusStacks == 2 and stormIntent.Value == 8,
+		"[Suite 80.5] Storm Mage Static Field targets the party and applies two Shock stacks")
+
+	local boundarySafe, boundaryDistance = SpatialHazardService.isPositionOutsideCircle(
+		Vector3.new(7, 100, 0),
+		Vector3.zero,
+		7
+	)
+	assertTest(boundarySafe == true and boundaryDistance == 7,
+		"[Suite 80.6] Exact circle boundary is safe and vertical height cannot evade floor geometry")
+	local insideSafe, insideDistance = SpatialHazardService.isPositionOutsideCircle(
+		Vector3.new(6.99, -100, 0),
+		Vector3.zero,
+		7
+	)
+	assertTest(insideSafe == false and insideDistance < 7,
+		"[Suite 80.7] Position just inside the circle remains unsafe regardless of height")
+	local nilPlayerSafe, nilPlayerDistance, nilPlayerReason = SpatialHazardService.isPlayerOutsideCircle(
+		nil,
+		Vector3.zero,
+		7
+	)
+	assertTest(nilPlayerSafe == false and nilPlayerDistance == 0 and nilPlayerReason ~= nil,
+		"[Suite 80.8] Missing character data fails closed at hazard impact")
+
+	local shockDefinition = StatusService.getDefinition("Shock")
+	assertTest(shockDefinition ~= nil and shockDefinition.Implemented == true
+		and shockDefinition.TickTiming == "TurnStart" and shockDefinition.TickBehaviorId == "ShockDecay",
+		"[Suite 80.9] Shock is a fully implemented duration-based vulnerability")
+
+	StatusService.resetCombat()
+	local shockPlayer: StateTypes.PlayerState = {
+		UserId = 80001,
+		PlayerInstance = nil,
+		DisplayName = "Shock Target",
+		ClassId = "Warlord",
+		SubclassId = "Berserker",
+		Resources = { HP = 200, MaxHP = 200, Shield = 0, Energy = 3, MaxEnergy = 3 },
+		Deck = {},
+		Hand = {},
+		DiscardPile = {},
+		ExhaustPile = {},
+		RelicIds = {},
+		Gold = 0,
+		IsReady = false,
+		IsDowned = false,
+		IsConnected = true,
+	}
+	local shockInstance = StatusService.applyStatus("80001", "Shock", 2, 3, "storm_mage_suite80", shockPlayer)
+	local shockMultiplier, shockStacks = StatusService.getIncomingDamageMultiplier("80001", false)
+	assertTest(shockInstance ~= nil and shockStacks == 2 and math.abs(shockMultiplier - 1.10) < 0.001,
+		"[Suite 80.10] Two Shock stacks produce +10% incoming direct damage")
+
+	local directShockResult = DamagePipeline.executeDamage({
+		RawDamage = 20,
+		DamageType = "Lightning",
+		SourceId = "storm_mage_suite80",
+		SourceName = "Static Field",
+		SourcePlayer = nil,
+		TargetEntityKind = "Player",
+		TargetEnemy = nil,
+		TargetPlayer = shockPlayer,
+		Tags = { "ShockTest" },
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(directShockResult.FinalDamage == 22 and directShockResult.HPLost == 22,
+		"[Suite 80.11] DamagePipeline applies Shock amplification to direct hits")
+
+	shockPlayer.Resources.HP = 200
+	local periodicShockResult = DamagePipeline.executeDamage({
+		RawDamage = 20,
+		DamageType = "Lightning",
+		SourceId = "storm_mage_suite80_dot",
+		SourceName = "Periodic Lightning",
+		SourcePlayer = nil,
+		TargetEntityKind = "Player",
+		TargetEnemy = nil,
+		TargetPlayer = shockPlayer,
+		Tags = { "Periodic", "ShockTest" },
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = true,
+	})
+	assertTest(periodicShockResult.FinalDamage == 20 and periodicShockResult.HPLost == 20,
+		"[Suite 80.12] Periodic damage is excluded from Shock amplification")
+
+	StatusService.applyStatus("80001", "Shock", 30, 3, "storm_mage_suite80", shockPlayer)
+	local cappedMultiplier, cappedStacks = StatusService.getIncomingDamageMultiplier("80001", false)
+	assertTest(cappedStacks == 20 and cappedMultiplier == 2,
+		"[Suite 80.13] Shock caps at 20 stacks and cannot exceed +100% damage")
+
+	StatusService.resetCombat()
+	StatusService.applyStatus("80001", "Shock", 2, 2, "storm_mage_suite80", shockPlayer)
+	local firstDecay = StatusService.tickStatuses("80001", "TurnStart", shockPlayer, false)
+	local afterFirstDecay = StatusService.getStatus("80001", "Shock")
+	assertTest(#firstDecay == 1 and firstDecay[1].DamageDealt == 0
+		and afterFirstDecay ~= nil and afterFirstDecay.Duration == 1,
+		"[Suite 80.14] Shock decays duration without dealing its own damage")
+	local secondDecay = StatusService.tickStatuses("80001", "TurnStart", shockPlayer, false)
+	assertTest(#secondDecay == 1 and secondDecay[1].Expired == true
+		and StatusService.getStatus("80001", "Shock") == nil,
+		"[Suite 80.15] Shock expires cleanly when its duration reaches zero")
+	StatusService.resetCombat()
+end
+
+local function runSuite81()
+	print("\n--- [Suite 81] Break-Driven Enemy Interrupts ---")
+
+	local priestDefinition = EnemyData.getEnemy("ShieldPriest")
+	local bombDefinition = EnemyData.getEnemy("BombCarrier")
+	assertTest(priestDefinition ~= nil and priestDefinition.UsesInterruptMeter == true
+		and bombDefinition ~= nil and bombDefinition.UsesInterruptMeter == true,
+		"[Suite 81.1] Shield Priest and Bomb Carrier opt into the normal interrupt meter")
+
+	local aegisIntent = EnemyData.createIntent("ShieldPriest", 1, 10)
+	local censureIntent = EnemyData.createIntent("ShieldPriest", 2, 10)
+	assertTest(aegisIntent.BreakInterruptible == true
+		and aegisIntent.InterruptText == "BREAK TO CANCEL THE SHIELD"
+		and censureIntent.BreakInterruptible == false,
+		"[Suite 81.2] Shield Priest exposes only Aegis Transfer as Break-interruptible")
+
+	local fuseOneIntent = EnemyData.createIntent("BombCarrier", 1, 10)
+	local detonateIntent = EnemyData.createIntent("BombCarrier", 3, 10)
+	assertTest(fuseOneIntent.BreakInterruptible == false
+		and detonateIntent.BreakInterruptible == true
+		and detonateIntent.InterruptText == "BREAK TO CANCEL DETONATION",
+		"[Suite 81.3] Bomb Carrier exposes Detonate, but not fuse setup, as Break-interruptible")
+
+	local stagedBomb: StateTypes.EnemyState = {
+		InstanceId = "suite81_bomb",
+		DefinitionId = "BombCarrier",
+		Name = "Suite81 Bomb Carrier",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = fuseOneIntent,
+		MoveIndex = 1,
+		Role = "Countdown",
+		BreakMeter = 0,
+		BreakThreshold = GameConfig.Break.NormalInterruptThreshold,
+		IsBroken = false,
+		BreakActionsToSkip = 0,
+		ModelRef = nil,
+	}
+	local stagedAdded, stagedBreak = BreakService.applyBreakDamage(
+		stagedBomb,
+		GameConfig.Break.HeavyCardDamage,
+		false
+	)
+	assertTest(stagedAdded == GameConfig.Break.NormalInterruptThreshold - 1
+		and stagedBreak == false and stagedBomb.IsBroken == false,
+		"[Suite 81.4] Break progress is preserved below threshold during non-interruptible fuse setup")
+
+	stagedBomb.Intent = detonateIntent
+	local finalAdded, didInterrupt = BreakService.applyBreakDamage(stagedBomb, 1, false)
+	assertTest(finalAdded == 1 and didInterrupt == true and stagedBomb.IsBroken == true
+		and stagedBomb.BreakActionsToSkip == 1,
+		"[Suite 81.5] Reaching the threshold during Detonate schedules its cancellation")
+
+	local skippedDetonation, recoveredEarly = BreakService.resolveBeforeEnemyAction(stagedBomb)
+	assertTest(skippedDetonation == true and recoveredEarly == false
+		and stagedBomb.BreakActionsToSkip == 0,
+		"[Suite 81.6] Break consumes exactly the prepared Detonate action")
+
+	local skippedAgain, recovered = BreakService.resolveBeforeEnemyAction(stagedBomb)
+	assertTest(skippedAgain == false and recovered == true and stagedBomb.IsBroken == false
+		and stagedBomb.BreakMeter == 0,
+		"[Suite 81.7] Interrupted enemies recover normally after the burst window")
+
+	local freshPriest: StateTypes.EnemyState = {
+		InstanceId = "suite81_priest",
+		DefinitionId = "ShieldPriest",
+		Name = "Suite81 Shield Priest",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 10,
+		Intent = aegisIntent,
+		MoveIndex = 1,
+		Role = "Protector",
+		BreakMeter = 0,
+		BreakThreshold = GameConfig.Break.NormalInterruptThreshold,
+		IsBroken = false,
+		BreakActionsToSkip = 0,
+		ModelRef = nil,
+	}
+	local priestAdded, priestInterrupted = BreakService.applyBreakDamage(
+		freshPriest,
+		GameConfig.Break.HeavyCardDamage,
+		false
+	)
+	assertTest(priestAdded == GameConfig.Break.NormalInterruptThreshold
+		and priestInterrupted == true and freshPriest.BreakActionsToSkip == 1,
+		"[Suite 81.8] One Heavy card can fully interrupt a telegraphed Aegis Transfer")
+end
+
+local function runSuite82()
+	print("\n--- [Suite 82] Exact Intent Targets & Reaction Guidance ---")
+
+	local function makeIntentPlayer(userId: number, displayName: string): StateTypes.PlayerState
+		return {
+			UserId = userId,
+			PlayerInstance = nil,
+			DisplayName = displayName,
+			ClassId = "Warlord",
+			SubclassId = "Titan",
+			Resources = { HP = 110, MaxHP = 110, Shield = 0, Energy = 3, MaxEnergy = 3 },
+			Deck = {},
+			Hand = {},
+			DiscardPile = {},
+			ExhaustPile = {},
+			RelicIds = {},
+			Gold = 0,
+			IsReady = false,
+			IsDowned = false,
+			IsConnected = true,
+		}
+	end
+
+	CombatService.cleanupCombat()
+	local alpha = { UserId = 82001, Name = "IntentAlpha", DisplayName = "Intent Alpha" }
+	local bravo = { UserId = 82002, Name = "IntentBravo", DisplayName = "Intent Bravo" }
+	local intentParty = {
+		[82001] = makeIntentPlayer(82001, "Intent Alpha"),
+		[82002] = makeIntentPlayer(82002, "Intent Bravo"),
+	}
+	local intentCombat = CombatService.startCombat(
+		"suite82_intents",
+		"Combat",
+		1,
+		intentParty,
+		function() end
+	)
+	local enemy = intentCombat.Enemies["enemy_1"]
+	local firstSnapshot = CombatService.getCombatSnapshotForPlayer(alpha :: any)
+	local firstView = if firstSnapshot then firstSnapshot.Enemies["enemy_1"] else nil
+	assertTest(enemy ~= nil and enemy.Intent.TargetUserId ~= nil
+		and firstView ~= nil and firstView.IntentTargetUserId == enemy.Intent.TargetUserId,
+		"[Suite 82.1] Random-player attacks lock and replicate their target during telegraphing")
+	assertTest(firstView ~= nil
+		and (firstView.IntentTargetText == "TARGET: Intent Alpha" or firstView.IntentTargetText == "TARGET: Intent Bravo"),
+		"[Suite 82.2] Intent view names the exact targeted player")
+
+	local secondSnapshot = CombatService.getCombatSnapshotForPlayer(bravo :: any)
+	local secondView = if secondSnapshot then secondSnapshot.Enemies["enemy_1"] else nil
+	assertTest(secondView ~= nil and firstView ~= nil
+		and secondView.IntentTargetUserId == firstView.IntentTargetUserId
+		and secondView.IntentTargetText == firstView.IntentTargetText,
+		"[Suite 82.3] Every client receives the same stable telegraphed target")
+	assertTest(firstView ~= nil and firstView.IntentReactionStyle == "DodgeParry"
+		and firstView.IntentReactionText == "C: DODGE  •  V: PARRY",
+		"[Suite 82.4] Standard attacks explicitly advertise both reaction options")
+
+	enemy.Intent = {
+		Type = "Attack", Value = 10, Description = "Dodge Test",
+		AttackProfileId = "UnparryableCleave", TargetMode = "RandomPlayer", TargetUserId = 82001,
+	}
+	local dodgeSnapshot = CombatService.getCombatSnapshotForPlayer(alpha :: any)
+	local dodgeView = if dodgeSnapshot then dodgeSnapshot.Enemies["enemy_1"] else nil
+	assertTest(dodgeView ~= nil and dodgeView.IntentReactionStyle == "DodgeOnly"
+		and dodgeView.IntentReactionText == "C: DODGE ONLY  •  V WILL FAIL",
+		"[Suite 82.5] Unparryable attacks explicitly reject Parry")
+
+	enemy.Intent = {
+		Type = "Attack", Value = 10, Description = "Parry Test",
+		AttackProfileId = "UndodgeableImpale", TargetMode = "RandomPlayer", TargetUserId = 82002,
+	}
+	local parrySnapshot = CombatService.getCombatSnapshotForPlayer(alpha :: any)
+	local parryView = if parrySnapshot then parrySnapshot.Enemies["enemy_1"] else nil
+	assertTest(parryView ~= nil and parryView.IntentReactionStyle == "ParryOnly"
+		and parryView.IntentReactionText == "V: PARRY ONLY  •  C WILL FAIL",
+		"[Suite 82.6] Undodgeable attacks explicitly reject Dodge")
+
+	enemy.Intent = {
+		Type = "Attack", Value = 20, Description = "Defense Test",
+		AttackProfileId = "UnreactableExplosion", TargetMode = "AllPlayers",
+	}
+	local defenseSnapshot = CombatService.getCombatSnapshotForPlayer(alpha :: any)
+	local defenseView = if defenseSnapshot then defenseSnapshot.Enemies["enemy_1"] else nil
+	assertTest(defenseView ~= nil and defenseView.IntentTargetText == "TARGET: ALL PLAYERS"
+		and defenseView.IntentReactionStyle == "DefenseOnly"
+		and defenseView.IntentReactionText == "CANNOT DODGE OR PARRY — SHIELD/PREPARE",
+		"[Suite 82.7] Unreactable party attacks unmistakably require preparation")
+
+	enemy.Intent = {
+		Type = "Attack", Value = 8, Description = "Movement Test",
+		AttackProfileId = "LightningField", TargetMode = "AllPlayers",
+	}
+	local movementSnapshot = CombatService.getCombatSnapshotForPlayer(alpha :: any)
+	local movementView = if movementSnapshot then movementSnapshot.Enemies["enemy_1"] else nil
+	assertTest(movementView ~= nil and movementView.IntentReactionStyle == "Movement"
+		and movementView.IntentReactionText == "MOVE OUT — C/V DO NOT WORK",
+		"[Suite 82.8] Movement hazards explicitly reject reaction keys")
+
+	CombatService.cleanupCombat()
+end
+
+local function runSuite83()
+	print("\n--- [Suite 83] Spire Guardian Multi-Phase Boss ---")
+
+	local guardianDefinition = EnemyData.getEnemy("SpireGuardian")
+	assertTest(guardianDefinition ~= nil and guardianDefinition.BossPhases ~= nil
+		and #guardianDefinition.BossPhases == 3,
+		"[Suite 83.1] Spire Guardian authors exactly three boss phases")
+
+	local phaseAtFull = EnemyData.resolveBossPhase("SpireGuardian", 100, 100)
+	local phaseAtSeventy = EnemyData.resolveBossPhase("SpireGuardian", 70, 100)
+	local phaseAtThirtyFive = EnemyData.resolveBossPhase("SpireGuardian", 35, 100)
+	assertTest(phaseAtFull ~= nil and phaseAtFull.Phase == 1
+		and phaseAtSeventy ~= nil and phaseAtSeventy.Phase == 2
+		and phaseAtThirtyFive ~= nil and phaseAtThirtyFive.Phase == 3,
+		"[Suite 83.2] Boss phase thresholds resolve at 100%, 70%, and 35% HP")
+
+	local phaseTwoOpening = EnemyData.createIntent("SpireGuardian", 1, 40, 2)
+	local phaseThreeOpening = EnemyData.createIntent("SpireGuardian", 1, 40, 3)
+	assertTest(phaseTwoOpening.MoveId == "RiftSweep"
+		and phaseTwoOpening.AttackProfileId == "UnparryableCleave",
+		"[Suite 83.3] Phase 2 opens with its authored Dodge-only Rift Sweep")
+	assertTest(phaseThreeOpening.MoveId == "CoreOverload"
+		and phaseThreeOpening.TargetMode == "AllPlayers"
+		and phaseThreeOpening.BreakInterruptible == true
+		and phaseThreeOpening.InterruptText == "PARTY: BREAK TO STOP CORE OVERLOAD",
+		"[Suite 83.4] Phase 3 opens with a party-wide Break coordination check")
+
+	local guardian: StateTypes.EnemyState = {
+		InstanceId = "suite83_guardian",
+		DefinitionId = "SpireGuardian",
+		Name = "The Spire Guardian",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 0,
+		Poison = 0,
+		AttackPower = 40,
+		Intent = EnemyData.createIntent("SpireGuardian", 1, 40),
+		MoveIndex = 1,
+		Role = "ActBoss",
+		BreakMeter = 0,
+		BreakThreshold = GameConfig.Break.BossThreshold,
+		IsBroken = false,
+		BreakActionsToSkip = 0,
+		ModelRef = nil,
+	}
+	assertTest(BossMechanicsService.initializeBoss(guardian) == true
+		and guardian.BossPhase == 1 and guardian.BossPhaseName == "The Warden"
+		and guardian.Intent.MoveId == "Cataclysm",
+		"[Suite 83.5] Boss initialization installs authoritative Phase 1 state")
+
+	guardian.HP = 70
+	local phaseTwoResult = BossMechanicsService.updatePhase(guardian)
+	assertTest(phaseTwoResult ~= nil and phaseTwoResult.FromPhase == 1 and phaseTwoResult.ToPhase == 2
+		and guardian.BossPhase == 2 and guardian.BossPhaseName == "Fractured Sentinel"
+		and guardian.Shield == 20 and guardian.Intent.MoveId == "RiftSweep",
+		"[Suite 83.6] Crossing 70% enters Phase 2, grants one barrier, and resets its move cycle")
+
+	local duplicateTransition = BossMechanicsService.updatePhase(guardian)
+	assertTest(duplicateTransition == nil and guardian.Shield == 20,
+		"[Suite 83.7] Phase transitions are one-time and cannot duplicate transition Shield")
+
+	guardian.HP = 35
+	local phaseThreeResult = BossMechanicsService.updatePhase(guardian)
+	assertTest(phaseThreeResult ~= nil and phaseThreeResult.FromPhase == 2 and phaseThreeResult.ToPhase == 3
+		and guardian.BossPhaseName == "Core Unbound" and guardian.Shield == 50
+		and guardian.Intent.MoveId == "CoreOverload",
+		"[Suite 83.8] Crossing 35% enters Phase 3 with the final barrier and Core Overload")
+
+	local breakAdded, coreBroken = BreakService.applyBreakDamage(
+		guardian,
+		GameConfig.Break.BossThreshold,
+		false
+	)
+	local overloadSkipped, _ = BreakService.resolveBeforeEnemyAction(guardian)
+	assertTest(breakAdded == GameConfig.Break.BossThreshold and coreBroken == true
+		and overloadSkipped == true,
+		"[Suite 83.9] Coordinated Break cancels the phase-opening Core Overload")
+
+	local gatedGuardian = table.clone(guardian) :: StateTypes.EnemyState
+	gatedGuardian.InstanceId = "suite83_gated_guardian"
+	gatedGuardian.HP = 100
+	gatedGuardian.MaxHP = 100
+	gatedGuardian.Shield = 0
+	gatedGuardian.BreakMeter = 0
+	gatedGuardian.IsBroken = false
+	gatedGuardian.BreakActionsToSkip = 0
+	BossMechanicsService.initializeBoss(gatedGuardian)
+	local phaseOneGate = DamagePipeline.executeDamage({
+		RawDamage = 999,
+		DamageType = "Physical",
+		SourceId = "suite83",
+		SourceName = "Phase Gate Test",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = gatedGuardian,
+		TargetPlayer = nil,
+		Tags = { "BossPhaseTest" },
+		Critical = false,
+		CanHitShield = false,
+		IsPeriodic = false,
+	})
+	assertTest(phaseOneGate.HPLost == 30 and gatedGuardian.HP == 70
+		and phaseOneGate.IsDefeatedOrDowned == false,
+		"[Suite 83.10] Phase 1 HP gate prevents a huge hit from skipping or defeating Phase 2")
+	BossMechanicsService.updatePhase(gatedGuardian)
+	local phaseTwoGate = DamagePipeline.executeDamage({
+		RawDamage = 999,
+		DamageType = "Physical",
+		SourceId = "suite83",
+		SourceName = "Phase Gate Test",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = gatedGuardian,
+		TargetPlayer = nil,
+		Tags = { "BossPhaseTest" },
+		Critical = false,
+		CanHitShield = false,
+		IsPeriodic = false,
+	})
+	assertTest(phaseTwoGate.HPLost == 35 and gatedGuardian.HP == 35
+		and phaseTwoGate.IsDefeatedOrDowned == false,
+		"[Suite 83.11] Phase 2 HP gate guarantees the Core Unbound phase")
+	BossMechanicsService.updatePhase(gatedGuardian)
+	local finalPhaseDamage = DamagePipeline.executeDamage({
+		RawDamage = 999,
+		DamageType = "Physical",
+		SourceId = "suite83",
+		SourceName = "Final Phase Test",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = gatedGuardian,
+		TargetPlayer = nil,
+		Tags = { "BossPhaseTest" },
+		Critical = false,
+		CanHitShield = false,
+		IsPeriodic = false,
+	})
+	assertTest(finalPhaseDamage.IsDefeatedOrDowned == true and gatedGuardian.HP == 0,
+		"[Suite 83.12] The boss becomes defeatable after reaching its final phase")
+
+	guardian.HP = 0
+	assertTest(BossMechanicsService.updatePhase(guardian) == nil,
+		"[Suite 83.13] Defeated bosses cannot transition")
+end
+
+local function runSuite84()
+	print("\n--- [Suite 84] Positional Combat Feedback Policy ---")
+
+	local damageStyle = CombatFeedbackData.getStyle("DamageDealt")
+	assertTest(damageStyle.WorldPopup == true and damageStyle.FlashTarget == true
+		and damageStyle.LocalHitShake > damageStyle.LocalAttackShake,
+		"[Suite 84.1] Damage feedback uses a target popup, hit flash, and stronger victim shake")
+
+	local healStyle = CombatFeedbackData.getStyle("Healed")
+	assertTest(healStyle.WorldPopup == true and healStyle.FlashTarget == false
+		and healStyle.LocalHitShake == 0,
+		"[Suite 84.2] Healing is readable without hostile hit flash or camera shake")
+
+	local reducedMotionKey = GameConfig.CombatFeedback.ReducedMotionAttribute
+	assertTest(reducedMotionKey == "ReduceMotion"
+		and GameConfig.CombatFeedback.MaximumShakeStrength <= 0.18
+		and GameConfig.CombatFeedback.MaxConcurrentPopups <= 12,
+		"[Suite 84.3] Feedback is motion-optional, strength-capped, and concurrency-bounded")
+
+	local damageEvent: StateTypes.CombatEvent = {
+		Type = "DamageDealt",
+		SourceId = "suite84_player",
+		TargetId = "suite84_enemy",
+		Value = 18,
+		ExtraText = "-14 HP",
+		Timestamp = 0,
+	}
+	assertTest(CombatFeedbackData.getDisplayText(damageEvent) == "-14 HP",
+		"[Suite 84.4] World numbers display authoritative applied-result text")
+
+	local breakEvent: StateTypes.CombatEvent = {
+		Type = "EnemyBroken",
+		SourceId = "suite84_player",
+		TargetId = "suite84_enemy",
+		Value = nil,
+		ExtraText = "Enemy was Broken",
+		Timestamp = 0,
+	}
+	assertTest(CombatFeedbackData.getDisplayText(breakEvent) == "BREAK!",
+		"[Suite 84.5] Break receives a concise high-priority world callout")
+
+	local unknownStyle = CombatFeedbackData.getStyle("UnstyledEvent")
+	assertTest(unknownStyle.WorldPopup == false and unknownStyle.LocalHitShake == 0,
+		"[Suite 84.6] Unknown events fail quietly without visual or camera spam")
+end
+
+local function runSuite85()
+	print("\n--- [Suite 85] Flexible Builds, Card Limits, Accuracy, and Enemy Defenses ---")
+
+	local definitionsOk, definitionsError = CardData.validateCardDefinitions()
+	assertTest(definitionsOk == true and definitionsError == nil,
+		"[Suite 85.1] Every shared-pool card defines valid rarity, accuracy, copy limit, and presentation metadata")
+
+	local firstAid = CardData.getCard("FirstAid") :: CardData.Card
+	local heavyBlow = CardData.getCard("HeavyBlow") :: CardData.Card
+	local unholyOffering = CardData.getCard("UnholyOffering") :: CardData.Card
+	assertTest(firstAid.UseLimit ~= nil and firstAid.UseLimit.Scope == "Run" and firstAid.UseLimit.MaxUses == 1,
+		"[Suite 85.2] First Aid is limited to one use per run")
+	assertTest(heavyBlow.UseLimit ~= nil and heavyBlow.UseLimit.Scope == "Battle" and heavyBlow.UseLimit.MaxUses == 2,
+		"[Suite 85.3] Heavy Blow is limited to two uses per battle")
+	assertTest(unholyOffering.Rarity == "UltraRare" and unholyOffering.MaxCopiesPerDeck == 1,
+		"[Suite 85.4] Ultra Rare power cards carry a one-copy deck limit")
+
+	local usagePlayer = {
+		CardUsesThisBattle = {},
+		CardUsesThisRun = {},
+	} :: any
+	CardRulesService.recordUse(usagePlayer, firstAid)
+	local canReuseFirstAid = CardRulesService.canUseCard(usagePlayer, firstAid)
+	CardRulesService.resetBattleUsage(usagePlayer)
+	local canReuseAfterBattleReset = CardRulesService.canUseCard(usagePlayer, firstAid)
+	CardRulesService.resetRunUsage(usagePlayer)
+	local canReuseAfterRunReset = CardRulesService.canUseCard(usagePlayer, firstAid)
+	assertTest(canReuseFirstAid == false and canReuseAfterBattleReset == false and canReuseAfterRunReset == true,
+		"[Suite 85.5] Run-limited cards stay spent between battles and reset only for a new run")
+
+	CardRulesService.recordUse(usagePlayer, heavyBlow)
+	CardRulesService.recordUse(usagePlayer, heavyBlow)
+	local canUseHeavyThirdTime = CardRulesService.canUseCard(usagePlayer, heavyBlow)
+	CardRulesService.resetBattleUsage(usagePlayer)
+	local canUseHeavyNextBattle = CardRulesService.canUseCard(usagePlayer, heavyBlow)
+	assertTest(canUseHeavyThirdTime == false and canUseHeavyNextBattle == true,
+		"[Suite 85.6] Battle-limited cards enforce their cap and reset next encounter")
+
+	local stormMageDef = EnemyData.getEnemy("StormMage")
+	local bulwarkDef = EnemyData.getEnemy("IronBulwark")
+	assertTest(stormMageDef ~= nil and stormMageDef.BaseEvasion == 0.16
+		and bulwarkDef ~= nil and bulwarkDef.BaseArmor == 22,
+		"[Suite 85.7] Enemy defenses create distinct evasive and armored targets")
+
+	local evasiveEnemy = {
+		InstanceId = "suite85_evasive",
+		DefinitionId = "StormMage",
+		Name = "Evasive Target",
+		HP = 100,
+		MaxHP = 100,
+		Shield = 0,
+		Poison = 0,
+		Armor = 0,
+		Evasion = 0.16,
+		AttackPower = 1,
+		Intent = { Type = "Attack", Value = 1 },
+		ModelRef = nil,
+	} :: StateTypes.EnemyState
+	CardRulesService.setRandomHookForTesting(function() return 0.95 end)
+	local missed = CardRulesService.resolveHit(heavyBlow, evasiveEnemy)
+	CardRulesService.setRandomHookForTesting(function() return 0.10 end)
+	local hit = CardRulesService.resolveHit(heavyBlow, evasiveEnemy)
+	CardRulesService.setRandomHookForTesting(nil)
+	assertTest(missed.DidHit == false and hit.DidHit == true and math.abs(missed.HitChance - 0.66) < 0.0001,
+		"[Suite 85.8] Server-authoritative card Accuracy subtracts enemy Evasion and can hit or miss")
+
+	local armoredEnemy = table.clone(evasiveEnemy) :: StateTypes.EnemyState
+	armoredEnemy.InstanceId = "suite85_armored"
+	armoredEnemy.Armor = 10
+	armoredEnemy.Evasion = 0
+	local armoredDamage = DamagePipeline.executeDamage({
+		RawDamage = 100,
+		DamageType = "Physical",
+		SourceId = "suite85",
+		SourceName = "Armor Test",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = armoredEnemy,
+		TargetPlayer = nil,
+		Tags = { "Attack" },
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(armoredDamage.HPLost == 83 and armoredDamage.ArmorMitigated == 17,
+		"[Suite 85.9] Armor mitigates direct physical damage through the shared pipeline")
+
+	armoredEnemy.HP = 100
+	local piercingDamage = DamagePipeline.executeDamage({
+		RawDamage = 100,
+		DamageType = "Physical",
+		SourceId = "suite85",
+		SourceName = "Piercing Test",
+		SourcePlayer = nil,
+		TargetEntityKind = "Enemy",
+		TargetEnemy = armoredEnemy,
+		TargetPlayer = nil,
+		Tags = { "Attack", "Piercing" },
+		Critical = false,
+		CanHitShield = true,
+		IsPeriodic = false,
+	})
+	assertTest(piercingDamage.HPLost == 100 and piercingDamage.ArmorMitigated == 0,
+		"[Suite 85.10] Piercing attacks bypass Armor without special card-name logic")
+
+	local warlordSkills = SkillData.getSkillsForClass("Warlord")
+	local mageSkills = SkillData.getSkillsForClass("AetherMage")
+	assertTest(#warlordSkills == #mageSkills and #warlordSkills == 5,
+		"[Suite 85.11] Every hero class sees the same flexible active-skill pool")
+
+	local guardStance = EnemyData.createIntent("SpireSentinel", 2, 10)
+	local evasiveStance = EnemyData.createIntent("SpireSentinel", 3, 10)
+	assertTest(guardStance.ArmorAfterAction == 20 and guardStance.EvasionAfterAction == 0.02
+		and evasiveStance.ArmorAfterAction == 4 and evasiveStance.EvasionAfterAction == 0.18,
+		"[Suite 85.12] Enemy move cycles visibly alternate armored and evasive defensive stances")
+end
+
 function TestRunner.runAllTests(): boolean
 	passedCount = 0
 	totalCount = 0
+	CardRulesService.setRandomHookForTesting(function() return 0 end)
 
 	print("============================================================")
 	print("       STARTING FULL END-TO-END REAL API INTEGRATION SUITE  ")
@@ -4549,7 +5471,8 @@ function TestRunner.runAllTests(): boolean
 	assertTest(defIgnite ~= nil and defIgnite.TickTiming == "TurnStart", "[StatusService] Ignite definition registered")
 	assertTest(defChill ~= nil and defChill.TickTiming == "TurnEnd", "[StatusService] Chill definition registered")
 	assertTest(defFreeze ~= nil and defFreeze.Stacking == "RefreshDuration", "[StatusService] Freeze definition registered")
-	assertTest(defShock ~= nil and defShock.TickTiming == "OnAction", "[StatusService] Shock definition registered")
+	assertTest(defShock ~= nil and defShock.TickTiming == "TurnStart" and defShock.Implemented == true
+		and defShock.TickBehaviorId == "ShockDecay", "[StatusService] Implemented Shock definition registered")
 	assertTest(defBleed ~= nil and defBleed.IsDebuff == true, "[StatusService] Bleed definition registered")
 
 	end
@@ -6725,13 +7648,13 @@ function TestRunner.runAllTests(): boolean
 	local badSkillInst = SkillService.createInstance("NonExistentSkillXYZ", skillUser, "Skill1")
 	assertTest(badSkillInst == nil, "[SkillService] Unknown skill definition returns nil")
 
-	-- 3. Class restriction enforcement
+	-- 3. Flexible skill pool across classes
 	skillPlayer.ClassId = "AetherMage"
 	local classSkillInst = SkillService.createInstance("Whirlwind", skillUser, "Skill2")
 	assert(classSkillInst, "classSkillInst must be non-nil")
 	table.insert(skillPlayer.SkillInventory, classSkillInst)
 	local okClassSkill, errClassSkill = SkillService.equipSkill(skillPlayer, classSkillInst)
-	assertTest(okClassSkill == false and string.find(errClassSkill or "", "requires class") ~= nil, "[SkillService] Warlord skill rejected for AetherMage")
+	assertTest(okClassSkill == true and errClassSkill == nil, "[SkillService] Any class can equip an owned shared-pool skill")
 	skillPlayer.ClassId = "Warlord"
 
 	-- 4. Equip skill
@@ -7048,7 +7971,7 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okBadSlot == false and string.find(errBadSlot or "", "Invalid skill slot") ~= nil, "[SkillHardening] equipSkill rejects invalid runtime slot")
 	whirlSkill.Slot = "Skill2"
 
-	-- 5. Class Restriction Rejection
+	-- 5. Shared skill pool is independent from class
 	local mageUser = 8003
 	local magePlayer: StateTypes.PlayerState = {
 		UserId = mageUser,
@@ -7069,7 +7992,7 @@ function TestRunner.runAllTests(): boolean
 		UnlockedSkills = {},
 	}
 	local okMageUnlock, errMageUnlock = SkillService.unlockSkill(magePlayer, "Whirlwind")
-	assertTest(okMageUnlock == false and string.find(errMageUnlock or "", "requires class") ~= nil, "[SkillHardening] unlockSkill rejects class-mismatched skill")
+	assertTest(okMageUnlock == true and errMageUnlock == nil, "[SkillHardening] unlockSkill allows shared-pool skill on any class")
 
 	-- 6. Duplicate Equipped Instance Rejection
 	whirlSkill.Slot = "Skill3"
@@ -8030,7 +8953,7 @@ function TestRunner.runAllTests(): boolean
 	CardCollectionService.grantCard(valPlayer, "Strike", 10)
 	local overMaxCopiesDeck = { ["Strike"] = 4, ["Defend"] = 4 }
 	local okMaxCopies, errMaxCopies = DeckService.validateDeck(valPlayer, overMaxCopiesDeck)
-	assertTest(okMaxCopies == false and string.find(errMaxCopies or "", "exceeds max copies") ~= nil, "[DeckValidation] Exceeding MaxCopiesPerCard (4 > 3) rejected")
+	assertTest(okMaxCopies == false and string.find(errMaxCopies or "", "copy limit") ~= nil, "[DeckValidation] Exceeding card copy limit rejected")
 
 	-- 6. Deck size rules: MinDeckSize (8) and MaxDeckSize (30)
 	local tooSmallDeck = { ["Strike"] = 3, ["Defend"] = 3 }
@@ -8038,20 +8961,15 @@ function TestRunner.runAllTests(): boolean
 	assertTest(okTooSmall == false and string.find(errTooSmall or "", "too few cards") ~= nil, "[DeckValidation] Deck with 6 cards (< 8 min) rejected")
 
 	local tooBigDeck: { [string]: number } = {
-		["Strike"] = 3, ["Defend"] = 3, ["HeavyBlow"] = 3, ["RageSlash"] = 3,
-		["ShieldSlam"] = 3, ["FirstAid"] = 3, ["PoisonDart"] = 3,
-		["Berserk"] = 3, ["Execute"] = 3, ["BloodThirst"] = 3, ["Pummel"] = 1,
+		["Strike"] = 3, ["Defend"] = 3, ["QuickSlash"] = 3,
+		["HeavyBlow"] = 2, ["PoisonDart"] = 2, ["RageSlash"] = 2,
+		["ShadowCloak"] = 2, ["ManaSurge"] = 2, ["BoneArmor"] = 2,
+		["WrenchThrow"] = 2, ["CoinFlip"] = 2, ["MiasmaFlask"] = 2,
+		["FeralBite"] = 2, ["ArcaneMissiles"] = 2,
 	}
-	CardCollectionService.grantCard(valPlayer, "Berserk", 5)
-	CardCollectionService.grantCard(valPlayer, "Execute", 5)
-	CardCollectionService.grantCard(valPlayer, "BloodThirst", 5)
-	CardCollectionService.grantCard(valPlayer, "Pummel", 5)
-	CardCollectionService.grantCard(valPlayer, "Defend", 10)
-	CardCollectionService.grantCard(valPlayer, "HeavyBlow", 10)
-	CardCollectionService.grantCard(valPlayer, "RageSlash", 10)
-	CardCollectionService.grantCard(valPlayer, "ShieldSlam", 10)
-	CardCollectionService.grantCard(valPlayer, "FirstAid", 10)
-	CardCollectionService.grantCard(valPlayer, "PoisonDart", 10)
+	for cardDefId in tooBigDeck do
+		CardCollectionService.grantCard(valPlayer, cardDefId, 10)
+	end
 	local okTooBig, errTooBig = DeckService.validateDeck(valPlayer, tooBigDeck)
 	assertTest(okTooBig == false and string.find(errTooBig or "", "too many cards") ~= nil, "[DeckValidation] Deck with 31 cards (> 30 max) rejected")
 
@@ -9621,7 +10539,12 @@ function TestRunner.runAllTests(): boolean
 		CombatState = dummyCombatState,
 		Party = { [64011] = testAttacker },
 	})
-	assertTest(unkEffectRes.Success == false and unkEffectRes.Error ~= nil, "[Suite 64.13] EffectResolver.resolveEffects returns failure on unsupported effect type")
+	local unknownEffectsSucceeded, unknownEffectsError = EffectResolver.summarizeResults(unkEffectRes)
+	assertTest(#unkEffectRes == 1 and unkEffectRes[1].Success == false
+		and unknownEffectsSucceeded == false and unknownEffectsError ~= nil,
+		"[Suite 64.13] EffectResolver returns a pure failure-result array for unsupported effects")
+	assertTest((unkEffectRes :: any).Success == nil and (unkEffectRes :: any).Error == nil,
+		"[Suite 64.13a] Effect result arrays contain no mixed summary fields")
 
 	-- 64.14: Dynamic card cost reduction in CardService.toCardView (Item 17)
 	local testCardInst = CardService.createCardInstance("Strike", 64011) :: StateTypes.CardInstance
@@ -9772,6 +10695,51 @@ function TestRunner.runAllTests(): boolean
 	----------------------------------------------------------------------------
 	runSuite76()
 
+	----------------------------------------------------------------------------
+	-- SUITE 77: PHASE 5 BREAK/STAGGER & CARD TAG FOUNDATION
+	----------------------------------------------------------------------------
+	runSuite77()
+
+	----------------------------------------------------------------------------
+	-- SUITE 78: DATA-DRIVEN ACT 1 ENEMIES & INTENT CYCLES
+	----------------------------------------------------------------------------
+	runSuite78()
+
+	----------------------------------------------------------------------------
+	-- SUITE 79: SOUL EATER DEVOUR THE FALLEN MECHANIC
+	----------------------------------------------------------------------------
+	runSuite79()
+
+	----------------------------------------------------------------------------
+	-- SUITE 80: STORM MAGE SHOCK & MOVEMENT HAZARD
+	----------------------------------------------------------------------------
+	runSuite80()
+
+	----------------------------------------------------------------------------
+	-- SUITE 81: BREAK-DRIVEN ENEMY INTERRUPTS
+	----------------------------------------------------------------------------
+	runSuite81()
+
+	----------------------------------------------------------------------------
+	-- SUITE 82: EXACT INTENT TARGETS & REACTION GUIDANCE
+	----------------------------------------------------------------------------
+	runSuite82()
+
+	----------------------------------------------------------------------------
+	-- SUITE 83: SPIRE GUARDIAN MULTI-PHASE BOSS
+	----------------------------------------------------------------------------
+	runSuite83()
+
+	----------------------------------------------------------------------------
+	-- SUITE 84: POSITIONAL COMBAT FEEDBACK POLICY
+	----------------------------------------------------------------------------
+	runSuite84()
+
+	----------------------------------------------------------------------------
+	-- SUITE 85: FLEXIBLE BUILDS, CARD LIMITS, ACCURACY, AND ENEMY DEFENSES
+	----------------------------------------------------------------------------
+	runSuite85()
+
 	-- Final Cleanup
 	CombatService.cleanupCombat()
 	RunManager.resetRunForTesting()
@@ -9783,6 +10751,7 @@ function TestRunner.runAllTests(): boolean
 	if RunManager.isTestIsolationActive() then
 		RunManager.endTestIsolation()
 	end
+	CardRulesService.setRandomHookForTesting(nil)
 
 	if not testOk then
 		error(testErr)

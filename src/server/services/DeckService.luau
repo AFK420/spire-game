@@ -109,17 +109,12 @@ end
 -- 2. Authoritative Deck Validation Layer
 --------------------------------------------------------------------------------
 
--- Validates a candidate deck against player collection, card limits, and size rules
-function DeckService.validateDeck(player: any, cards: { [string]: number }, classId: string?): (boolean, string?)
+-- Validates a candidate deck against player collection, rarity/card limits, and
+-- size rules. classId is retained only for backwards-compatible callers;
+-- gameplay decks are always class-agnostic.
+function DeckService.validateDeck(player: any, cards: { [string]: number }, _classId: string?): (boolean, string?)
 	if typeof(cards) ~= "table" then
 		return false, "Deck cards payload must be a table."
-	end
-
-	-- Class requirement check (if provided)
-	if classId and typeof(classId) == "string" and #classId > 0 then
-		if not ClassData.getClass(classId) then
-			return false, string.format("Unknown class ID '%s' bound to deck.", classId)
-		end
 	end
 
 	local totalCards = 0
@@ -138,9 +133,12 @@ function DeckService.validateDeck(player: any, cards: { [string]: number }, clas
 			return false, string.format("Invalid card quantity %s for '%s': must be a positive integer.", tostring(count), cardDefId)
 		end
 
-		-- Enforce maximum copies per deck rule
-		if count > GameConfig.Deck.MaxCopiesPerCard then
-			return false, string.format("Card '%s' exceeds max copies limit (%d > %d).", cardDefId, count, GameConfig.Deck.MaxCopiesPerCard)
+		-- Enforce the strictest of global, rarity, and card-specific copy limits.
+		local rarity = cardDef.Rarity or "Common"
+		local rarityLimit = GameConfig.Deck.RarityCopyLimits[rarity] or GameConfig.Deck.MaxCopiesPerCard
+		local maxCopies = math.min(GameConfig.Deck.MaxCopiesPerCard, rarityLimit, cardDef.MaxCopiesPerDeck or GameConfig.Deck.MaxCopiesPerCard)
+		if count > maxCopies then
+			return false, string.format("Card '%s' exceeds its %s copy limit (%d > %d).", cardDefId, rarity, count, maxCopies)
 		end
 
 		-- Enforce permanent collection ownership requirement
@@ -213,7 +211,7 @@ function DeckService.createDeck(
 		DeckId = deckId,
 		Name = trimmedName,
 		Cards = deckCards,
-		ClassId = classId,
+		ClassId = nil,
 		CreatedAt = now,
 		UpdatedAt = now,
 	}

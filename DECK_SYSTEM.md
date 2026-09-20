@@ -15,7 +15,7 @@ export type SavedDeck = {
 	DeckId: string,               -- Server-generated GUID (e.g. "deck_10001_172648_a8f9c2")
 	Name: string,                 -- Player deck name (trimmed, 1 to MaxDeckNameLength)
 	Cards: { [string]: number },  -- CardDefinition ID -> Quantity owned/slotted
-	ClassId: string?,             -- Optional target class binding (e.g. "Warlord")
+	ClassId: string?,             -- Legacy compatibility field; normalized to nil
 	CreatedAt: number,            -- Creation timestamp
 	UpdatedAt: number,            -- Last edited timestamp
 }
@@ -43,11 +43,11 @@ TotalAvailableSlots = math.min(GameConfig.Deck.MaxDeckSlots, BaseDeckSlots + Add
 
 1. **Card Definition Existence**: Every card ID in the deck must exist in `CardData`.
 2. **Permanent Collection Ownership**: The quantity of any card slotted must not exceed the permanent count owned in `CardCollectionService.getCardCount(player, cardDefId)`.
-3. **Card Copy Limits**: Maximum 3 copies of any card definition per deck (`GameConfig.Deck.MaxCopiesPerCard`).
+3. **Card Copy Limits**: The strictest global, rarity, and card-specific cap applies. Common/Uncommon may reach 3, Rare 2, and Super Rare/Ultra Rare 1 unless a card is stricter.
 4. **Deck Size Bounds**:
    - Minimum 8 cards (`GameConfig.Deck.MinDeckSize`).
    - Maximum 30 cards (`GameConfig.Deck.MaxDeckSize`).
-5. **Class Eligibility**: If a `ClassId` is specified, it must match a registered class in `ClassData`.
+5. **Class Independence**: Decks are never class-locked. Legacy `ClassId` values are discarded during sanitization, and new decks always store `ClassId = nil`.
 
 ---
 
@@ -67,7 +67,7 @@ At the start of an expedition or when preparing player state:
           ├── 2. If Invalid/Missing ──> Deterministically search sorted decks
           │      └── If Valid Deck Found ──> Use that fallback SavedDeck
           └── 3. If No Valid Decks ──> Return nil (Zero profile mutation)
-                 └── ClassService synthesizes default ClassData.StartingDeck
+                 └── ClassService synthesizes the universal fallback deck
           ▼
 [ CardService.createCardInstance(cardDefId, userId) ]
           │
@@ -99,7 +99,7 @@ All endpoints are rate-limited under `"General"`, enforce the Lobby phase bounda
 | `CreateDeck` | `(name: string, cards: { [string]: number }?, classId: string?)` | Generates server GUID, verifies slot capacity, creates deck (class-agnostic when `classId = nil`). Rejected mid-run. |
 | `RenameDeck` | `(deckId: string, newName: string)` | Validates name length (1–24 chars), updates deck name authoritatively. Rejected mid-run. |
 | `DeleteDeck` | `(deckId: string)` | Strictly server-authoritative: rejects deleting only deck or active deck; deletes inactive deck without mutating `ActiveDeckId`. Rejected mid-run. |
-| `SaveDeck` | `(deckId: string, cards: { [string]: number })` | Validates full deck against player's permanent collection (8–30 cards, max 3 copies), updates deck. Rejected mid-run. |
+| `SaveDeck` | `(deckId: string, cards: { [string]: number })` | Validates the full deck against collection ownership, 8–30 cards, and rarity/card-specific copy limits. Rejected mid-run. |
 | `DuplicateDeck` | `(sourceDeckId: string, newName: string?)` | Checks slot availability, clones card list with fresh server GUID. Rejected mid-run. |
 | `SelectActiveDeck`| `(deckId: string)` | Validates target deck is playable; updates `ActiveDeckId`. Rejected mid-run. |
 | `RequestDecks` | `()` | Sends `DeckListUpdate` with summaries, activeDeckId, and slot info. |

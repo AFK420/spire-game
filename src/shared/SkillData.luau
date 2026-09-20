@@ -31,6 +31,7 @@ export type SkillDefinition = {
 	Target: CardData.TargetType,
 	Cost: SkillCost,
 	CooldownTurns: number,
+	Accuracy: number,
 	Effects: { CardData.Effect },
 	Tags: { string },
 	RequiredClassId: string?,
@@ -50,6 +51,7 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 			Energy = 1,
 		},
 		CooldownTurns = 1,
+		Accuracy = 0.90,
 		Effects = {
 			{
 				Type = "Damage",
@@ -71,6 +73,7 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 			Energy = 1,
 		},
 		CooldownTurns = 2,
+		Accuracy = 1.00,
 		Effects = {
 			{
 				Type = "Shield",
@@ -91,6 +94,7 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 			Energy = 2,
 		},
 		CooldownTurns = 3,
+		Accuracy = 1.00,
 		Effects = {
 			{
 				Type = "Shield",
@@ -116,6 +120,7 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 			Energy = 2,
 		},
 		CooldownTurns = 2,
+		Accuracy = 0.85,
 		Effects = {
 			{
 				Type = "Damage",
@@ -125,7 +130,7 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 			},
 		},
 		Tags = { "Attack", "Physical", "AoE" },
-		RequiredClassId = "Warlord",
+		RequiredClassId = nil,
 	},
 
 	["ShieldBash"] = {
@@ -137,6 +142,7 @@ local SKILL_REGISTRY: { [string]: SkillDefinition } = {
 			Energy = 1,
 		},
 		CooldownTurns = 2,
+		Accuracy = 0.88,
 		Effects = {
 			{
 				Type = "Damage",
@@ -169,13 +175,12 @@ function SkillData.getAllSkills(): { [string]: SkillDefinition }
 	return SKILL_REGISTRY
 end
 
--- Returns all skills usable by a given class (including universal skills)
-function SkillData.getSkillsForClass(classId: string?): { SkillDefinition }
+-- Kept for API compatibility: active skills, like cards, belong to the shared
+-- build pool and are never filtered by the selected hero class.
+function SkillData.getSkillsForClass(_classId: string?): { SkillDefinition }
 	local result: { SkillDefinition } = {}
 	for _, skill in SKILL_REGISTRY do
-		if not skill.RequiredClassId or skill.RequiredClassId == classId then
-			table.insert(result, skill)
-		end
+		table.insert(result, skill)
 	end
 	return result
 end
@@ -190,6 +195,9 @@ function SkillData.validateSkill(skill: SkillDefinition): (boolean, string?)
 	end
 	if skill.CooldownTurns < 0 then
 		return false, "CooldownTurns cannot be negative."
+	end
+	if skill.Accuracy <= 0 or skill.Accuracy > 1 then
+		return false, "Skill Accuracy must be within (0, 1]."
 	end
 	if not skill.Cost or skill.Cost.Energy < 0 then
 		return false, "Skill cost must specify non-negative Energy."

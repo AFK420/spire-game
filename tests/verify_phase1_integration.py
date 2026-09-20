@@ -34,6 +34,7 @@ required_files = [
     "STATE_SCHEMA.md",
     "NETWORK_CONTRACTS.md",
     "PHASE_4_IMPLEMENTATION.md",
+    "PHASE_5_IMPLEMENTATION.md",
     "PERSISTENCE_SCHEMA.md",
     "DECK_SYSTEM.md",
     "CARD_COLLECTION.md",
@@ -41,8 +42,10 @@ required_files = [
     "src/shared/StateTypes.luau",
     "src/shared/BuildInfo.luau",
     "src/shared/GameConfig.luau",
+    "src/shared/CombatFeedbackData.luau",
     "src/shared/CardData.luau",
     "src/shared/ReactionData.luau",
+    "src/shared/EnemyData.luau",
     "src/shared/ClassData.luau",
     "src/shared/RelicData.luau",
     "src/shared/DungeonMap.luau",
@@ -62,6 +65,11 @@ required_files = [
     "src/server/services/TargetResolver.luau",
     "src/server/services/ModifierResolver.luau",
     "src/server/services/DamagePipeline.luau",
+    "src/server/services/BreakService.luau",
+    "src/server/services/EnemyMechanicsService.luau",
+    "src/server/services/BossMechanicsService.luau",
+    "src/server/services/CardRulesService.luau",
+    "src/server/services/SpatialHazardService.luau",
     "src/server/services/StatusService.luau",
     "src/server/services/EffectResolver.luau",
     "src/server/services/ActionTransaction.luau",
@@ -531,7 +539,7 @@ test("[PassiveService] Keystone rejected when branch prerequisites not unlocked"
 
 test("--- [Suite 43] Phase 3 Active Skills Runtime" in testrunner_src, "TestRunner includes Suite 43: Phase 3 Active Skills Runtime")
 test("[SkillService] createInstance created HeroicStrike" in testrunner_src, "Suite 43 tests Skill createInstance")
-test("[SkillService] Warlord skill rejected for AetherMage" in testrunner_src, "Suite 43 tests class skill restrictions")
+test("[SkillService] Any class can equip an owned shared-pool skill" in testrunner_src, "Suite 43 tests class-agnostic skill access")
 test("[SkillService] useSkill executes successfully" in testrunner_src, "Suite 43 tests Skill execution")
 test("[SkillService] useSkill rejected while on cooldown" in testrunner_src, "Suite 43 tests cooldown enforcement")
 test("[SkillService] onTurnStart decremented cooldown from 1 to 0" in testrunner_src, "Suite 43 tests cooldown turn decrements")
@@ -607,7 +615,7 @@ test("--- [Suite 46] Phase 3.1 Active Skill Ownership & Cooldown Hardening" in t
 test("[SkillHardening] Unowned skill equip rejected" in testrunner_src, "Suite 46 tests unowned skill equip rejection")
 test("[SkillHardening] unlockSkill authoritatively unlocked Whirlwind" in testrunner_src, "Suite 46 tests unlockSkill API")
 test("[SkillHardening] equipSkill rejects invalid runtime slot" in testrunner_src, "Suite 46 tests invalid slot rejection")
-test("[SkillHardening] unlockSkill rejects class-mismatched skill" in testrunner_src, "Suite 46 tests class restriction enforcement")
+test("[SkillHardening] unlockSkill allows shared-pool skill on any class" in testrunner_src, "Suite 46 tests class-agnostic skill access")
 test("[SkillHardening] Cooldown strictly preserved and isolated on runtime instance" in testrunner_src, "Suite 46 tests cooldown isolation")
 
 test("--- [Suite 47] Phase 3.1 Passive Tree Hardening & Negative Modifier Stacking" in testrunner_src, "TestRunner includes Suite 47: Passive Hardening & Negative Modifiers")
@@ -825,7 +833,7 @@ test("[DeckValidation] Starter deck passes validation" in testrunner_src, "Suite
 test("[DeckValidation] Unknown card definition rejected" in testrunner_src, "Suite 56 tests unknown card validation rejection")
 test("[DeckValidation] Unowned card rejected" in testrunner_src, "Suite 56 tests unowned card validation rejection")
 test("[DeckValidation] Quantity exceeding collection ownership rejected" in testrunner_src, "Suite 56 tests over-ownership validation rejection")
-test("[DeckValidation] Exceeding MaxCopiesPerCard (4 > 3) rejected" in testrunner_src, "Suite 56 tests max copies per card rejection")
+test("[DeckValidation] Exceeding card copy limit rejected" in testrunner_src, "Suite 56 tests per-card copy limit rejection")
 test("[DeckValidation] Deck with 6 cards (< 8 min) rejected" in testrunner_src, "Suite 56 tests min deck size rejection")
 test("[DeckValidation] Deck with 31 cards (> 30 max) rejected" in testrunner_src, "Suite 56 tests max deck size rejection")
 test("[ActiveDeck] Selecting valid custom deck as active succeeds" in testrunner_src, "Suite 56 tests active deck selection")
@@ -1171,7 +1179,8 @@ test("[Suite 64.10b] Second hit retains _killTriggered without redundant re-trig
 test("[Suite 64.11a] Deterministic RNG hook forces critical hit" in testrunner_src, "Suite 64 tests DamagePipeline deterministic crit RNG hook")
 test("[Suite 64.11b] Deterministic RNG hook forces non-critical hit" in testrunner_src, "Suite 64 tests DamagePipeline deterministic non-crit RNG hook")
 test("[Suite 64.12] EffectResolver.evaluateCondition fails closed (false) on unknown condition" in testrunner_src, "Suite 64 tests evaluateCondition fails closed")
-test("[Suite 64.13] EffectResolver.resolveEffects returns failure on unsupported effect type" in testrunner_src, "Suite 64 tests resolveEffects returns failure on unsupported effect")
+test("[Suite 64.13] EffectResolver returns a pure failure-result array for unsupported effects" in testrunner_src,
+     "Suite 64 tests pure-array failure results for unsupported effects")
 test("[Suite 64.14a] CardView base cost is 1" in testrunner_src, "Suite 64 tests CardView base cost")
 test("[Suite 64.14b] CardView with playerState computes valid effective cost" in testrunner_src, "Suite 64 tests CardView effective cost calculation")
 test("[Suite 64.15a] resetCooldowns resets equipped skill cooldown to 0" in testrunner_src, "Suite 64 tests SkillService.resetCooldowns on equipped skills")
@@ -1513,7 +1522,8 @@ test("[Suite 70.23]" in testrunner_src, "Suite 70 tests ArenaVisualizer.cleanup 
 # Server Turn Resolution Invariants
 test('CardService.discardHand(playerState)' in combat_svc_src, "CombatService discards hand during turn resolution")
 test('CombatService.broadcastSnapshots("Enemies are counterattacking...")' in combat_svc_src, "CombatService broadcasts resolution snapshot after discard")
-test('local atkPower = enemy.AttackPower or 10' in combat_svc_src, "CombatService protects against nil enemy AttackPower")
+test('EnemyData.createIntent(enemy.DefinitionId, nextMoveIndex, enemy.AttackPower, enemy.BossPhase)' in combat_svc_src,
+     "CombatService advances phase-aware authored intent cycles from authoritative AttackPower")
 test('activeCombat.TurnNumber += 1' in combat_svc_src, "CombatService advances TurnNumber in guaranteed recovery")
 test('activeCombat.Phase = "PlayerPhase"' in combat_svc_src, "CombatService restores PlayerPhase in guaranteed recovery")
 test('ArenaVisualizer.cleanup()' in combat_svc_src, "CombatService calls ArenaVisualizer.cleanup")
@@ -1538,8 +1548,8 @@ client_init_src = (ROOT / "src/client/init.client.luau").read_text(encoding="utf
 build_info_src = (ROOT / "src/shared/BuildInfo.luau").read_text(encoding="utf-8")
 
 # Build Fingerprint Invariants
-test('BUILD_ID = "hardened_server_deck_contracts_20260919"' in build_info_src, "BuildInfo declares BUILD_ID = hardened_server_deck_contracts_20260919")
-test('BUILD_NAME = "Hardened Server Deck Invariants & Contracts"' in build_info_src, "BuildInfo declares BUILD_NAME = Hardened Server Deck Invariants & Contracts")
+test('BUILD_ID = "phase5_flexible_builds_20260920"' in build_info_src, "BuildInfo declares BUILD_ID = phase5_flexible_builds_20260920")
+test('BUILD_NAME = "Phase 5 Flexible Builds"' in build_info_src, "BuildInfo declares Flexible Builds milestone name")
 test('[BUILD] Server build=' in init_server_src, "Server logs build fingerprint on startup")
 test('[BUILD] Client build=' in ui_ctrl_src, "Client UIController logs build fingerprint on startup")
 test('[BUILD] Client bootstrap build=' in client_init_src, "Client bootstrap logs build fingerprint on startup")
@@ -1913,7 +1923,7 @@ test("[Suite 76.51]" in testrunner_src, "Suite 76 tests player energy remains un
 test("[Suite 76.54]" in testrunner_src, "Suite 76 tests card remains in player hand after energy rejection")
 test("[Suite 76.56]" in testrunner_src, "Suite 76 tests valid Poison ApplyStatus succeeds")
 test("[Suite 76.57]" in testrunner_src, "Suite 76 tests unknown status ApplyStatus fails closed")
-test("[Suite 76.59]" in testrunner_src, "Suite 76 tests unimplemented status (Shock) ApplyStatus fails closed")
+test("[Suite 76.59]" in testrunner_src, "Suite 76 tests unimplemented status (Chill) ApplyStatus fails closed")
 test("[Suite 76.60]" in testrunner_src, "Suite 76 tests card with invalid status effect fails execution")
 test("[Suite 76.61]" in testrunner_src, "Suite 76 tests energy rolled back on failed status card execution")
 test("[Suite 76.62]" in testrunner_src, "Suite 76 tests enemy HP undamaged and rolled back on transaction rollback")
@@ -2013,8 +2023,10 @@ test('Campfire left without resting' in run_mgr_src, "RunManager emits non-rest 
 
 # RunManager Deterministic Merchant Wares
 test("local function hashStringToSeed(str: string): number" in run_mgr_src, "RunManager implements hashStringToSeed helper")
-test("local function computeMerchantSeed(seed: number, act: number, tier: number, nodeId: string): number" in run_mgr_src, "RunManager implements computeMerchantSeed helper")
-test("RunManager.generateMerchantWares(dRun.Seed, node.Act, node.Tier, node.Id)" in run_mgr_src, "RunManager passes seed, act, tier, nodeId to generateMerchantWares")
+test("local function computeMerchantSeed(seed: number, act: number, tier: number, nodeId: string, userId: number?): number" in run_mgr_src,
+     "RunManager implements player-aware computeMerchantSeed helper")
+test("RunManager.generateMerchantWares(dRun.Seed, node.Act, node.Tier, node.Id, userId)" in run_mgr_src,
+     "RunManager passes seed, act, tier, nodeId, and userId to personal merchant generation")
 
 # RunManager Merchant Purchase Concurrency Lock & Atomic Fail-Closed Transaction
 test("local merchantPurchaseLocks: { [string]: boolean } = {}" in run_mgr_src, "RunManager declares merchantPurchaseLocks concurrency table")
@@ -2048,10 +2060,10 @@ test("[Suite 76.136]" in testrunner_src, "Suite 76 tests generateMerchantWares i
 test("[Suite 76.137]" in testrunner_src, "Suite 76 tests generateMerchantWares changes inventory when nodeId changes")
 test("[Suite 76.138]" in testrunner_src, "Suite 76 tests generateMerchantWares changes inventory when act or tier changes")
 test("[Suite 76.141]" in testrunner_src, "Suite 76 tests Player A purchase of ware succeeds")
-test("[Suite 76.142]" in testrunner_src, "Suite 76 tests Ware is marked IsPurchased across party")
-test("[Suite 76.144]" in testrunner_src, "Suite 76 tests Player B purchase of same ware rejected due to shared party stock")
-test("[Suite 76.146]" in testrunner_src, "Suite 76 tests Player B gold completely untouched")
-test("[Suite 76.147]" in testrunner_src, "Suite 76 tests Player B deck completely untouched")
+test("[Suite 76.142]" in testrunner_src, "Suite 76 tests Player A purchase mutates only Player A personal stock")
+test("[Suite 76.144]" in testrunner_src, "Suite 76 tests Player B can purchase the same personal slot")
+test("[Suite 76.146]" in testrunner_src, "Suite 76 tests Player B pays the personal ware cost")
+test("[Suite 76.147]" in testrunner_src, "Suite 76 tests Player B independently receives the purchased card")
 test("[Suite 76.148]" in testrunner_src, "Suite 76 tests Concurrent purchase rejected when lock is held")
 test("[Suite 76.150]" in testrunner_src, "Suite 76 tests buyMerchantItem fails closed on invalid card definition")
 test("[Suite 76.151]" in testrunner_src, "Suite 76 tests Player gold untouched after failed card grant")
@@ -2186,7 +2198,7 @@ test("Cannot modify decks during an active run." in init_server_src, "init.serve
 test("CreateDeckEvent:FireServer(string.format(\"Deck %d\", totalDecks + 1), {}, nil)" in ui_ctrl_src, "UIController creates class-agnostic decks with nil classId")
 
 # BuildInfo
-test('BUILD_ID = "hardened_server_deck_contracts_20260919"' in build_info_src, "BuildInfo BUILD_ID updated to hardened_server_deck_contracts_20260919")
+test('BUILD_ID = "phase5_flexible_builds_20260920"' in build_info_src, "BuildInfo BUILD_ID updated to phase5_flexible_builds_20260920")
 
 # Documentation Sync
 test("DeckListUpdateEvent:FireClient(player, summaries, activeDeckId, slotInfo)" in network_contracts_src, "NETWORK_CONTRACTS.md documents exact DeckListUpdateEvent server dispatch")
@@ -2240,6 +2252,417 @@ test("[Suite 76.242]" in testrunner_src, "Suite 76 tests runtime deck card inser
 test("[Suite 76.243]" in testrunner_src, "Suite 76 tests ware marked IsPurchased after successful purchase")
 test("[Suite 76.244]" in testrunner_src, "Suite 76 tests run StateRevision incremented after successful purchase")
 
+# Check 75: Phase 5 Break/Stagger & Card Tag Foundation
+print("\n--- [Check 75] Phase 5 Break/Stagger & Card Tag Foundation ---")
+break_service_src = (ROOT / "src/server/services/BreakService.luau").read_text(encoding="utf-8")
+card_data_src = (ROOT / "src/shared/CardData.luau").read_text(encoding="utf-8")
+state_types_src = (ROOT / "src/shared/StateTypes.luau").read_text(encoding="utf-8")
+damage_pipeline_src = (ROOT / "src/server/services/DamagePipeline.luau").read_text(encoding="utf-8")
+combat_svc_src = (ROOT / "src/server/services/CombatService.luau").read_text(encoding="utf-8")
+ui_ctrl_src = (ROOT / "src/client/UIController.client.luau").read_text(encoding="utf-8")
+
+test("GameConfig.Break =" in game_config_src, "GameConfig centralizes Break tuning")
+test('Tags = { "Attack", "Heavy" }' in card_data_src, "Heavy Blow declares Attack and Heavy tags")
+test("Tags: { string }?" in card_data_src, "Card definition schema supports gameplay tags")
+test("BreakMeter: number?" in state_types_src and "BreakThreshold: number?" in state_types_src,
+     "EnemyState exposes authoritative Break fields")
+test("BreakMeter: number" in state_types_src and "IsBroken: boolean" in state_types_src,
+     "EnemyView exposes serializable Break fields")
+test("function BreakService.applyBreakDamage" in break_service_src, "BreakService applies clamped Break damage")
+test("function BreakService.resolveBeforeEnemyAction" in break_service_src, "BreakService owns action skip and recovery transition")
+test("function BreakService.getDirectDamageMultiplier" in break_service_src, "BreakService exposes direct-damage vulnerability")
+test("BreakService.getDirectDamageMultiplier" in damage_pipeline_src, "DamagePipeline applies Broken target vulnerability")
+test("context.IsPeriodic" in damage_pipeline_src, "DamagePipeline excludes periodic damage from Break vulnerability")
+test("BreakService.getCardBreakDamage(cardDef)" in combat_svc_src, "CombatService applies Heavy-card Break damage")
+test("GameConfig.Break.PerfectParryDamage" in combat_svc_src, "Perfect Parry contributes configured Break damage")
+test("BreakService.resolveBeforeEnemyAction(enemy)" in combat_svc_src, "Combat resolution consumes Break action skip")
+test("breakThreshold = GameConfig.Break.EliteThreshold" in combat_svc_src, "Elite encounters initialize a Break meter")
+test("breakThreshold = GameConfig.Break.BossThreshold" in combat_svc_src, "Boss encounters initialize a Break meter")
+test('breakContainer.Name = "BreakMeter"' in ui_ctrl_src, "Combat HUD renders Break meter")
+test('"💥 BROKEN — +25% DIRECT DAMAGE"' in ui_ctrl_src, "Combat HUD renders explicit Broken feedback")
+test("local function runSuite77()" in testrunner_src and "runSuite77()" in testrunner_src,
+     "TestRunner defines and invokes Suite 77")
+test("[Suite 77.14]" in testrunner_src, "Suite 77 covers Break state, damage, skip, and recovery invariants")
+
+# Check 76: Personal Merchant Stock Isolation
+print("\n--- [Check 76] Personal Merchant Stock Isolation ---")
+test("MerchantWaresByPlayer: { [number]: { MerchantItemView } }?" in state_types_src,
+     "ActiveRoom stores merchant offers per player")
+test('string.format("%s:%d", nodeId, userId)' in run_manager_src,
+     "Merchant generation namespaces deterministic seed by player")
+test("waresByPlayer[userId] = RunManager.generateMerchantWares" in run_manager_src,
+     "Merchant room creates a separate ware table for each party member")
+test("merchantWares = runToRead.ActiveRoom.MerchantWaresByPlayer[userId]" in run_manager_src,
+     "Run snapshot exposes only the requesting player's wares")
+test('string.format("%s:%d:%s", tostring(runToUse.RunId), userId, tostring(itemId))' in run_manager_src,
+     "Merchant purchase lock is scoped by run, player, and item")
+test("[Suite 76.138a]" in testrunner_src and "[Suite 76.138b]" in testrunner_src,
+     "Suite 76 verifies per-player seed isolation and determinism")
+test("[Suite 76.140a]" in testrunner_src,
+     "Suite 76 verifies merchant snapshot privacy")
+test("Player B independently purchases same personal slot" in testrunner_src,
+     "Suite 76 verifies one player's purchase does not remove another player's offer")
+
+# Check 77: Data-Driven Act 1 Enemy Registry, Encounters & Intent Cycles
+print("\n--- [Check 77] Data-Driven Act 1 Enemies & Intent Cycles ---")
+enemy_data_src = (ROOT / "src/shared/EnemyData.luau").read_text(encoding="utf-8")
+test("function EnemyData.getEncounter" in enemy_data_src,
+     "EnemyData owns mechanics-first encounter composition")
+test("function EnemyData.createIntent" in enemy_data_src,
+     "EnemyData creates deterministic authored intents")
+test("function EnemyData.validateDefinitions" in enemy_data_src,
+     "EnemyData exposes definition integrity validation")
+for enemy_id in ("SpireSentinel", "Cultist", "ShieldPriest", "BombCarrier", "SoulEater", "StormMage", "GremlinNob", "IronBulwark", "SpireGuardian"):
+    test(f"{enemy_id} = {{" in enemy_data_src, f"EnemyData defines {enemy_id}")
+test('AttackProfileId = "UnreactableExplosion"' in enemy_data_src and 'TargetMode = "AllPlayers"' in enemy_data_src,
+     "EnemyData authors party-wide unreactable pressure explicitly")
+test('TargetMode = "LowestHPAlly"' in enemy_data_src,
+     "EnemyData authors Shield Priest ally-protection targeting")
+test('local EnemyData = require(Shared:WaitForChild("EnemyData")' in combat_svc_src,
+     "CombatService loads the shared enemy registry")
+test("EnemyData.getEncounter(roomType, tier)" in combat_svc_src,
+     "CombatService builds encounters from EnemyData")
+test("enemy.Intent.AttackProfileId or \"SlowHeavy\"" in combat_svc_src,
+     "CombatService selects reaction timing from authored intent data")
+test('enemy.Intent.TargetMode == "LowestHPAlly"' in combat_svc_src,
+     "CombatService resolves protector targeting against living allies")
+test("enemy.Intent.Description or enemy.Intent.Type" in combat_svc_src,
+     "Combat snapshots expose authored move descriptions")
+test('enemy.DefinitionId == "GremlinNob"' not in combat_svc_src and 'enemy.DefinitionId == "SpireGuardian"' not in combat_svc_src,
+     "Combat attack profile selection contains no enemy-name branches")
+test("local function runSuite78()" in testrunner_src and "runSuite78()" in testrunner_src,
+     "TestRunner defines and invokes Suite 78")
+test("[Suite 78.15]" in testrunner_src,
+     "Suite 78 covers registry, composition, targeting, and deterministic move cycles")
+
+# Check 78: Soul Eater Devour the Fallen Mechanic
+print("\n--- [Check 78] Soul Eater Devour the Fallen Mechanic ---")
+enemy_mechanics_src = (ROOT / "src/server/services/EnemyMechanicsService.luau").read_text(encoding="utf-8")
+skill_service_src = (ROOT / "src/server/services/SkillService.luau").read_text(encoding="utf-8")
+test("OnAllyDefeatedAttackGain: number?" in enemy_data_src,
+     "Enemy definition schema supports on-ally-defeat Attack scaling")
+test("OnAllyDefeatedAttackGain = 3" in enemy_data_src,
+     "Soul Eater authors +3 Attack for each allied defeat")
+test("function EnemyMechanicsService.processEnemyDefeat" in enemy_mechanics_src,
+     "EnemyMechanicsService owns reusable defeat-triggered reactions")
+test("defeatedEnemy.DefeatProcessed == true" in enemy_mechanics_src and "defeatedEnemy.DefeatProcessed = true" in enemy_mechanics_src,
+     "EnemyMechanicsService prevents duplicate defeat processing")
+test("table.sort(sortedEnemyIds)" in enemy_mechanics_src,
+     "Enemy mechanics resolve multiple reactors in deterministic order")
+test('MechanicId = "DevourFallen"' in enemy_mechanics_src,
+     "Soul Eater reaction emits a structured mechanic result")
+test('enemy.Intent.Type == "Attack"' in enemy_mechanics_src and "EnemyData.createIntent" in enemy_mechanics_src,
+     "Soul Eater refreshes active attack telegraphs after gaining power")
+test("DefeatProcessed: boolean?" in state_types_src,
+     "EnemyState stores transactional one-time defeat state")
+test("EnemyMechanicsService.processEnemyDefeat(defeatedEnemy, activeCombat.Enemies)" in combat_svc_src,
+     "Card kills route through authoritative enemy defeat mechanics")
+test("recordEnemyDefeat(enemy, killer" in combat_svc_src,
+     "Status kills route through authoritative enemy defeat mechanics")
+test('recordEnemyDefeat(enemy, "ParryCounter"' in combat_svc_src,
+     "Parry counter kills route through authoritative enemy defeat mechanics")
+test('recordEnemyDefeat(enemy, "BronzeScales"' in combat_svc_src,
+     "Thorns kills route through authoritative enemy defeat mechanics")
+test("EnemyMechanicsService.processEnemyDefeat(defeatedEnemy, combatState.Enemies)" in skill_service_src,
+     "Skill kills route through authoritative enemy defeat mechanics")
+test("ActionTransaction.beginCombatTransaction" in combat_svc_src and "DefeatProcessed" in state_types_src,
+     "Defeat marker and Soul Eater mutation participate in combat action rollback snapshots")
+test("local function runSuite79()" in testrunner_src and "runSuite79()" in testrunner_src,
+     "TestRunner defines and invokes Suite 79")
+test("[Suite 79.12]" in testrunner_src,
+     "Suite 79 covers one-time, living, multi-reactor, and self-defeat invariants")
+
+# Check 79: Storm Mage Shock & Server-Authoritative Movement Hazard
+print("\n--- [Check 79] Storm Mage Shock & Movement Hazard ---")
+reaction_data_src = (ROOT / "src/shared/ReactionData.luau").read_text(encoding="utf-8")
+spatial_hazard_src = (ROOT / "src/server/services/SpatialHazardService.luau").read_text(encoding="utf-8")
+reaction_service_src = (ROOT / "src/server/services/ReactionService.luau").read_text(encoding="utf-8")
+combat_vfx_src = (ROOT / "src/client/CombatVFXController.client.luau").read_text(encoding="utf-8")
+
+test("GameConfig.Status = {" in game_config_src and "ShockDamageTakenPerStack = 0.05" in game_config_src,
+     "GameConfig centralizes Shock vulnerability tuning")
+test("GameConfig.SpatialCombat = {" in game_config_src and "LightningFieldRadius = 7" in game_config_src,
+     "GameConfig centralizes Lightning Field geometry")
+test('AvoidanceMode = "Movement"' in reaction_data_src and '["LightningField"]' in reaction_data_src,
+     "ReactionData authors a movement-only Lightning Field profile")
+test("AvoidanceMode: AvoidanceMode?" in state_types_src and "HazardRadius: number?" in state_types_src,
+     "Reaction DTOs expose explicit avoidance mode and hazard radius")
+test("profile.AvoidanceMode = preset.AvoidanceMode" in reaction_service_src
+     and "HazardRadius = windowState.HazardRadius" in reaction_service_src,
+     "ReactionService propagates movement-hazard metadata to clients")
+test("function SpatialHazardService.isPositionOutsideCircle" in spatial_hazard_src
+     and "deltaX" in spatial_hazard_src and "deltaZ" in spatial_hazard_src,
+     "SpatialHazardService validates horizontal floor distance")
+test('return false, 0, "Character unavailable at hazard impact."' in spatial_hazard_src,
+     "Spatial hazard validation fails closed when authoritative character state is missing")
+test('StatusId = "Shock"' in enemy_data_src and 'StatusStacks = 2' in enemy_data_src
+     and 'AttackProfileId = "LightningField"' in enemy_data_src,
+     "Storm Mage Static Field authors party-wide movement and Shock pressure")
+test('TickBehaviorId = "ShockDecay"' in status_service_src and "function StatusService.getIncomingDamageMultiplier" in status_service_src,
+     "StatusService implements expiring Shock vulnerability")
+test("StatusServiceModule.getIncomingDamageMultiplier" in damage_pipeline_src,
+     "DamagePipeline applies target-side Shock amplification")
+test("SpatialHazardService.isPlayerOutsideCircle" in combat_svc_src
+     and 'activeProfile.AvoidanceMode == "Movement"' in combat_svc_src,
+     "CombatService resolves movement hazards against authoritative positions")
+test("StatusService.applyStatus(tostring(tUserId), statusId, statusStacks" in combat_svc_src,
+     "Failed Static Field movement applies authored Shock stacks")
+test('win.AvoidanceMode == "Movement"' in combat_vfx_src and "win.HazardRadius" in combat_vfx_src,
+     "Combat VFX renders movement field geometry from replicated metadata")
+test('MOVE OUT OF THE RED ZONE!' in ui_ctrl_src and 'Shock: %d (+%d%% damage)' in ui_ctrl_src,
+     "Combat HUD explains both movement response and Shock penalty")
+test("local function runSuite80()" in testrunner_src and "runSuite80()" in testrunner_src,
+     "TestRunner defines and invokes Suite 80")
+test("[Suite 80.15]" in testrunner_src,
+     "Suite 80 covers geometry, fail-closed validation, amplification, cap, and expiry")
+
+# Check 80: Card Click Reliability & Living-Target Reconciliation
+print("\n--- [Check 80] Card Click Reliability & Living-Target Reconciliation ---")
+test("local function getFirstLivingEnemyId" in ui_ctrl_src and "if enemy.HP > 0 then" in ui_ctrl_src,
+     "Combat HUD derives automatic targets from living enemies only")
+test("table.sort(livingIds)" in ui_ctrl_src,
+     "Automatic enemy targeting is deterministic across dictionary iteration order")
+test("not selected or selected.HP <= 0" in ui_ctrl_src and "ensureLivingEnemySelected()" in ui_ctrl_src,
+     "Combat HUD replaces missing or defeated selected targets")
+test("clickBtn.ZIndex = 10" in ui_ctrl_src and "clickBtn.Activated:Connect" in ui_ctrl_src,
+     "Card interaction uses a topmost cross-input activation surface")
+test('bannerLabel.Text = string.format("🃏 Playing %s...", card.Name)' in ui_ctrl_src,
+     "Card clicks provide immediate local acknowledgement before server response")
+test('bannerLabel.Text = "✅ Card played."' in ui_ctrl_src,
+     "Successful server card actions provide explicit confirmation")
+
+# Check 81: Live Card Resolution Regression from Studio Trace
+print("\n--- [Check 81] Live Card Resolution Regression ---")
+effect_resolver_src = (ROOT / "src/server/services/EffectResolver.luau").read_text(encoding="utf-8")
+test("function EffectResolver.resolveEffects(effects: any, context: ActionContext?): { EffectExecutionResult }" in effect_resolver_src,
+     "EffectResolver returns a typed numeric result array")
+test("retAny.Success" not in effect_resolver_src and "retAny.Error" not in effect_resolver_src,
+     "Effect result arrays no longer mix boolean summary fields with numeric records")
+test("function EffectResolver.summarizeResults" in effect_resolver_src,
+     "EffectResolver exposes summary data through a separate API")
+test("for _, res in ipairs(effectResults) do" in combat_svc_src,
+     "CombatService iterates only numeric card-effect records")
+test("local playerState = partyRef[tUserId]" in combat_svc_src and "activeCombat.Party[tUserId]" not in combat_svc_src,
+     "Enemy reaction resolution reads the authoritative party table")
+test("local callOk, success, err = pcall(CombatService.playCard" in init_server_src
+     and "NetworkService.sendCombatState(player, snapshot)" in init_server_src,
+     "PlayCard handler reports unexpected server errors and resynchronizes the client")
+test("[Suite 64.13a]" in testrunner_src,
+     "Studio suite guards against mixed-key effect result regressions")
+
+# Check 82: Break-Driven Enemy Interrupts
+print("\n--- [Check 82] Break-Driven Enemy Interrupts ---")
+test("NormalInterruptThreshold = 20" in game_config_src,
+     "GameConfig centralizes the normal-enemy interrupt threshold")
+test("UsesInterruptMeter: boolean?" in enemy_data_src
+     and "BreakInterruptible: boolean?" in enemy_data_src
+     and "InterruptText: string?" in enemy_data_src,
+     "Enemy definitions and moves expose explicit interrupt metadata")
+test('UsesInterruptMeter = true' in enemy_data_src
+     and 'InterruptText = "BREAK TO CANCEL THE SHIELD"' in enemy_data_src,
+     "Shield Priest authors an interruptible Aegis Transfer")
+test('InterruptText = "BREAK TO CANCEL DETONATION"' in enemy_data_src
+     and 'Id = "Detonate"' in enemy_data_src,
+     "Bomb Carrier authors an interruptible Detonate")
+test("function BreakService.isCurrentIntentInterruptible" in break_service_src
+     and "threshold - 1" in break_service_src,
+     "BreakService preserves progress without cancelling non-interruptible moves")
+test("definition.UsesInterruptMeter == true" in combat_svc_src
+     and "GameConfig.Break.NormalInterruptThreshold" in combat_svc_src,
+     "CombatService initializes data-driven normal-enemy interrupt meters")
+test('logEvent("EnemyActionInterrupted"' in combat_svc_src
+     and 'BREAK INTERRUPT!' in combat_svc_src,
+     "Combat resolution announces the exact cancelled enemy move")
+test("IntentInterruptible: boolean" in state_types_src
+     and "IntentInterruptText: string?" in state_types_src,
+     "Enemy views replicate interrupt guidance explicitly")
+test('interruptLabel.Name = "InterruptLabel"' in ui_ctrl_src
+     and 'enemy.IntentInterruptText or "BREAK TO INTERRUPT"' in ui_ctrl_src,
+     "Combat HUD renders unmistakable Break interrupt guidance")
+test("local function runSuite81()" in testrunner_src and "runSuite81()" in testrunner_src,
+     "TestRunner defines and invokes Suite 81")
+test("[Suite 81.8]" in testrunner_src,
+     "Suite 81 covers metadata, staging, cancellation, recovery, and Shield Priest interruption")
+
+# Check 83: Exact Intent Targets & Reaction Guidance
+print("\n--- [Check 83] Exact Intent Targets & Reaction Guidance ---")
+test("local function assignIntentPlayerTarget" in combat_svc_src
+     and "stableTargetIndex" in combat_svc_src,
+     "CombatService locks deterministic living-player targets while telegraphing")
+test("assignIntentPlayerTarget(enemyState, enemyState.Intent)" in combat_svc_src
+     and "assignIntentPlayerTarget(enemy, intent)" in combat_svc_src,
+     "Initial and subsequent authored intents receive targets before snapshots")
+test("livingPlayers[math.random" not in combat_svc_src
+     and "livingPlayer.UserId == enemy.Intent.TargetUserId" in combat_svc_src,
+     "Enemy resolution consumes the same locked target shown by the HUD")
+test('return "TARGET: ALL PLAYERS"' in combat_svc_src
+     and 'return if target then "TARGET: " .. target.DisplayName' in combat_svc_src,
+     "Intent DTOs describe exact single-player and party-wide targets")
+test('return "C: DODGE  •  V: PARRY", "DodgeParry"' in combat_svc_src
+     and 'return "C: DODGE ONLY  •  V WILL FAIL", "DodgeOnly"' in combat_svc_src
+     and 'return "V: PARRY ONLY  •  C WILL FAIL", "ParryOnly"' in combat_svc_src,
+     "Intent guidance distinguishes both, Dodge-only, and Parry-only attacks")
+test('return "MOVE OUT — C/V DO NOT WORK", "Movement"' in combat_svc_src
+     and 'return "CANNOT DODGE OR PARRY — SHIELD/PREPARE", "DefenseOnly"' in combat_svc_src,
+     "Intent guidance distinguishes movement and non-reactable defense checks")
+test("IntentTargetUserId: number?" in state_types_src
+     and "IntentTargetText: string" in state_types_src
+     and "IntentReactionText: string" in state_types_src
+     and "IntentReactionStyle: string" in state_types_src,
+     "Enemy views replicate target and reaction guidance fields")
+test('intentLabel.Name = "IntentLabel"' in ui_ctrl_src
+     and 'reactionLabel.Name = "ReactionGuidance"' in ui_ctrl_src
+     and "enemy.IntentTargetUserId == localPlayer.UserId" in ui_ctrl_src,
+     "Combat HUD separates intent, reaction guidance, and local-player danger highlighting")
+test("local function runSuite82()" in testrunner_src and "runSuite82()" in testrunner_src,
+     "TestRunner defines and invokes Suite 82")
+test("[Suite 82.8]" in testrunner_src,
+     "Suite 82 covers locked targets and all four reaction guidance modes")
+
+# Check 84: Spire Guardian Multi-Phase Boss
+print("\n--- [Check 84] Spire Guardian Multi-Phase Boss ---")
+boss_mechanics_src = (ROOT / "src/server/services/BossMechanicsService.luau").read_text(encoding="utf-8")
+test("BossPhases: { BossPhaseDefinition }?" in enemy_data_src
+     and "function EnemyData.resolveBossPhase" in enemy_data_src,
+     "EnemyData exposes authored boss phases and deterministic HP threshold resolution")
+test('Name = "The Warden"' in enemy_data_src
+     and 'Name = "Fractured Sentinel"' in enemy_data_src
+     and 'Name = "Core Unbound"' in enemy_data_src,
+     "Spire Guardian defines three distinct named phases")
+test("StartHPRatio = 0.70" in enemy_data_src and "StartHPRatio = 0.35" in enemy_data_src,
+     "Boss phase thresholds are authored at 70% and 35% HP")
+test('Id = "RiftSweep"' in enemy_data_src
+     and 'Id = "FractureSlam"' in enemy_data_src
+     and 'Id = "CorePulse"' in enemy_data_src,
+     "Phase 2 combines Dodge-only, Parry-only, and defense preparation attacks")
+test('Id = "CoreOverload"' in enemy_data_src
+     and 'InterruptText = "PARTY: BREAK TO STOP CORE OVERLOAD"' in enemy_data_src,
+     "Phase 3 opens with an explicit party Break coordination check")
+test("function BossMechanicsService.initializeBoss" in boss_mechanics_src
+     and "function BossMechanicsService.getPhaseHealthFloor" in boss_mechanics_src
+     and "function BossMechanicsService.updatePhase" in boss_mechanics_src,
+     "BossMechanicsService owns initialization, phase health floors, and one-way transitions")
+test("BossMechanicsService.getPhaseHealthFloor(enemy)" in damage_pipeline_src,
+     "DamagePipeline enforces boss phase health gates before applying HP damage")
+test("enemy.Shield += shieldGained" in boss_mechanics_src
+     and "enemy.MoveIndex = 1" in boss_mechanics_src,
+     "Phase transitions grant their authored barrier and reset the phase move cycle")
+test("BossPhase: number?" in state_types_src and "BossPhaseName: string?" in state_types_src,
+     "Boss phase state and view metadata are explicit")
+test("syncBossPhase(targetEnemy, playerState.DisplayName)" in combat_svc_src
+     and "onEnemyStateChanged" in skill_service_src
+     and "phaseTransitionsBeforeEnemyAction" in combat_svc_src,
+     "Card, skill, status, and end-turn damage route through authoritative phase synchronization")
+test('logEvent("BossPhasePreparation"' in combat_svc_src
+     and '"BossPhaseChanged"' in combat_svc_src,
+     "Boss transitions emit combat events and grant preparation when triggered during resolution")
+test('"  [PHASE %d: %s]"' in ui_ctrl_src and "enemy.BossPhaseName" in ui_ctrl_src,
+     "Combat HUD displays the current named boss phase")
+test("local function runSuite83()" in testrunner_src and "runSuite83()" in testrunner_src
+     and "[Suite 83.13]" in testrunner_src,
+     "Suite 83 covers thresholds, phase cycles, HP gates, one-time barriers, coordination Break, and defeat safety")
+
+# Check 85: Positional Combat Feedback
+print("\n--- [Check 85] Positional Combat Feedback ---")
+combat_feedback_src = (ROOT / "src/shared/CombatFeedbackData.luau").read_text(encoding="utf-8")
+test("GameConfig.CombatFeedback" in game_config_src
+     and 'ReducedMotionAttribute = "ReduceMotion"' in game_config_src,
+     "GameConfig centralizes bounded combat-feedback tuning and reduced-motion opt-out")
+test('DamageDealt = {' in combat_feedback_src
+     and "WorldPopup = true" in combat_feedback_src
+     and "LocalHitShake = 0.16" in combat_feedback_src,
+     "Shared feedback policy authors positional damage and restrained victim response")
+test('if event.Type == "EnemyBroken" then' in combat_feedback_src
+     and 'return "BREAK!"' in combat_feedback_src,
+     "Break feedback has a concise high-priority world callout")
+test('GameNetwork:WaitForChild("CombatEventLogged")' in combat_vfx_src
+     and "handleCombatFeedback(event)" in combat_vfx_src,
+     "CombatVFXController consumes authoritative combat events")
+test('popup.Name = "CombatFeedbackPopup"' in combat_vfx_src
+     and "StudsOffsetWorldSpace" in combat_vfx_src,
+     "Combat values render as world-space target popups")
+test('highlight.Name = "CombatImpactFlash"' in combat_vfx_src
+     and "flashTarget(targetModel, style.Color)" in combat_vfx_src,
+     "Damage and Break events flash the resolved target model")
+test("playCameraShake(style.LocalHitShake)" in combat_vfx_src
+     and "MaximumShakeStrength" in combat_vfx_src
+     and "ReducedMotionAttribute" in combat_vfx_src,
+     "Camera response is local, capped, and respects reduced motion")
+test("while #activeFeedbackPopups >= feedbackConfig.MaxConcurrentPopups" in combat_vfx_src,
+     "World feedback bounds concurrent popup count")
+test('enemy.InstanceId,' in effect_resolver_src
+     and 'tostring(recipient.UserId),' in effect_resolver_src
+     and 'tostring(playerState.UserId)' in combat_svc_src,
+     "Authoritative feedback events address enemies and players with stable IDs")
+test('event.Type == "DamageDealt"' in ui_ctrl_src
+     and "Positional combat feedback is owned by CombatVFXController" in ui_ctrl_src,
+     "HUD suppresses duplicate central popups for positional combat feedback")
+test("local function runSuite84()" in testrunner_src and "runSuite84()" in testrunner_src
+     and "[Suite 84.6]" in testrunner_src,
+     "Suite 84 covers presentation policy, motion limits, display text, and safe fallback")
+
+# Check 86: Flexible Builds, Card Limits, Accuracy, and Enemy Defenses
+print("\n--- [Check 86] Flexible Builds, Card Limits, Accuracy, and Enemy Defenses ---")
+card_rules_src = (ROOT / "src/server/services/CardRulesService.luau").read_text(encoding="utf-8")
+skill_data_src = (ROOT / "src/shared/SkillData.luau").read_text(encoding="utf-8")
+skill_service_src = (ROOT / "src/server/services/SkillService.luau").read_text(encoding="utf-8")
+arena_visualizer_src = (ROOT / "src/server/services/ArenaVisualizer.luau").read_text(encoding="utf-8")
+test('export type CardRarity = "Common" | "Uncommon" | "Rare" | "SuperRare" | "UltraRare"' in card_data_src
+     and "MaxCopiesPerDeck: number?" in card_data_src
+     and "UseLimit: CardUseLimit?" in card_data_src,
+     "Card definitions support five rarities, individual copy limits, and battle/run use limits")
+test("setCardIdentity(UnholyOffering, \"UltraRare\"" in card_data_src
+     and '"Run", 1)' in card_data_src,
+     "Ultra Rare and run-limited cards are authored in the shared pool")
+test("RarityCopyLimits" in game_config_src
+     and 'DefaultDeckClass = nil' in game_config_src,
+     "Deck configuration is class-agnostic and caps copies by rarity")
+test("ClassId = nil," in deck_service_src
+     and "classId is retained only for backwards-compatible callers" in deck_service_src,
+     "DeckService normalizes new decks to class-agnostic ownership")
+test("function CardRulesService.canUseCard" in card_rules_src
+     and "function CardRulesService.recordUse" in card_rules_src
+     and "function CardRulesService.resetRunUsage" in card_rules_src,
+     "CardRulesService authoritatively owns definition-level usage counters")
+test("function CardRulesService.resolveHit" in card_rules_src
+     and "enemy.Evasion" in card_rules_src
+     and "MinimumCardHitChance" in card_rules_src,
+     "Card Accuracy and enemy Evasion resolve server-side with a configured floor")
+test("CardRulesService.canUseCard(playerState, cardDef)" in combat_svc_src
+     and 'logEvent(\n\t\t\t"CardMissed"' in combat_svc_src
+     and "CardRulesService.recordUse(playerState, cardDef)" in combat_svc_src,
+     "CombatService validates limits, consumes uses transactionally, and emits misses")
+test("ArmorScalingConstant" in game_config_src
+     and 'table.find(context.Tags, "Piercing")' in damage_pipeline_src
+     and "ArmorMitigated = armorMitigated" in damage_pipeline_src,
+     "DamagePipeline applies capped Armor mitigation with data-driven Piercing bypass")
+test("BaseArmor: number" in enemy_data_src and "BaseEvasion: number" in enemy_data_src
+     and "BaseArmor = 22" in enemy_data_src and "BaseEvasion = 0.16" in enemy_data_src,
+     "Act 1 enemies author distinct Armor and Evasion defenses")
+test("ArmorAfterAction: number?" in enemy_data_src
+     and 'DefenseText = "Fortified stance"' in enemy_data_src
+     and 'logEvent(\n\t\t\t\t\t\t\t"EnemyDefenseShift"' in combat_svc_src,
+     "Enemy move cycles can shift Armor and Evasion to create changing tactical windows")
+test('AnimationType: CardAnimationType' in card_data_src
+     and "playCardPresentation(event)" in combat_vfx_src
+     and "configureProjectileShape" in combat_vfx_src,
+     "Cards carry animation/projectile identity rendered by the client VFX controller")
+test("CARD_RARITY_STYLE" in ui_ctrl_src
+     and 'UltraRare = { Color' in ui_ctrl_src
+     and 'rulesLabel.Name = "CardRules"' in ui_ctrl_src,
+     "Card UI differentiates rarity silhouettes and displays accuracy/use limits")
+test("getSkillsForClass(_classId" in skill_data_src
+     and "CardRulesService.resolveAbilityHit" in skill_service_src
+     and '"SkillMissed"' in skill_service_src,
+     "Active skills share the flexible pool and offensive skills can miss evasive enemies")
+test("enemy.Armor or 0" in arena_visualizer_src
+     and "enemy.Evasion or 0" in arena_visualizer_src
+     and "enemy.EvasionPercent" in ui_ctrl_src,
+     "World and HUD enemy displays expose Armor and Evasion")
+test("local function runSuite85()" in testrunner_src and "runSuite85()" in testrunner_src
+     and "[Suite 85.12]" in testrunner_src,
+     "Suite 85 covers flexible pools, use scopes, misses, defenses, and Piercing")
+
 # Static Compilation of all Luau files with luau-compile
 import subprocess
 print("\n--- [Check 60] Static Compilation of All Luau Files ---")
@@ -2267,6 +2690,3 @@ if failed > 0:
 	sys.exit(1)
 else:
     print("ALL LOGIC CHECKS VERIFIED 100% CLEAN!\n")
-
-
-

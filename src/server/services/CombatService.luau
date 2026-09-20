@@ -32,6 +32,7 @@ local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 local ReactionData = require(Shared:WaitForChild("ReactionData") :: ModuleScript)
+local EnemyData = require(Shared:WaitForChild("EnemyData") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local CardService = require(servicesFolder:WaitForChild("CardService") :: ModuleScript)
@@ -42,11 +43,16 @@ local ArenaVisualizer = require(servicesFolder:WaitForChild("ArenaVisualizer") :
 local TargetResolver = require(servicesFolder:WaitForChild("TargetResolver") :: ModuleScript)
 local ModifierResolver = require(servicesFolder:WaitForChild("ModifierResolver") :: ModuleScript)
 local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: ModuleScript)
+local BreakService = require(servicesFolder:WaitForChild("BreakService") :: ModuleScript)
+local EnemyMechanicsService = require(servicesFolder:WaitForChild("EnemyMechanicsService") :: ModuleScript)
+local BossMechanicsService = require(servicesFolder:WaitForChild("BossMechanicsService") :: ModuleScript)
+local SpatialHazardService = require(servicesFolder:WaitForChild("SpatialHazardService") :: ModuleScript)
 local StatusService = require(servicesFolder:WaitForChild("StatusService") :: ModuleScript)
 local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
 local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
 local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
 local ActionTransaction = require(servicesFolder:WaitForChild("ActionTransaction") :: ModuleScript)
+local CardRulesService = require(servicesFolder:WaitForChild("CardRulesService") :: ModuleScript)
 
 local CombatService = {}
 
@@ -147,6 +153,108 @@ function CombatService.isTestIsolationActive(): boolean
 	return isCombatIsolation
 end
 
+local function getSortedLivingPlayers(): { StateTypes.PlayerState }
+	local livingPlayers: { StateTypes.PlayerState } = {}
+	for _, playerState in partyRef do
+		if not playerState.IsDowned and playerState.IsConnected ~= false then
+			table.insert(livingPlayers, playerState)
+		end
+	end
+	table.sort(livingPlayers, function(a, b)
+		return a.UserId < b.UserId
+	end)
+	return livingPlayers
+end
+
+local function stableTargetIndex(key: string, count: number): number
+	local hash = 0
+	for index = 1, #key do
+		hash = (hash * 31 + string.byte(key, index)) % 2147483647
+	end
+	return (hash % count) + 1
+end
+
+local function assignIntentPlayerTarget(enemy: StateTypes.EnemyState, intent: StateTypes.EnemyIntent)
+	if intent.TargetMode ~= "RandomPlayer" then
+		intent.TargetUserId = nil
+		return
+	end
+
+	local existingTarget = if intent.TargetUserId then partyRef[intent.TargetUserId] else nil
+	if existingTarget and not existingTarget.IsDowned and existingTarget.IsConnected ~= false then
+		return
+	end
+
+	local livingPlayers = getSortedLivingPlayers()
+	if #livingPlayers == 0 then
+		intent.TargetUserId = nil
+		return
+	end
+
+	local turnNumber = if activeCombat then activeCombat.TurnNumber else 1
+	local targetKey = string.format("%s:%d:%d", enemy.InstanceId, enemy.MoveIndex or 1, turnNumber)
+	intent.TargetUserId = livingPlayers[stableTargetIndex(targetKey, #livingPlayers)].UserId
+end
+
+local function getLowestHPEnemy(enemies: { [string]: StateTypes.EnemyState }): StateTypes.EnemyState?
+	local lowestTarget: StateTypes.EnemyState? = nil
+	local lowestRatio = math.huge
+	for _, ally in enemies do
+		if ally.HP > 0 then
+			local hpRatio = ally.HP / math.max(1, ally.MaxHP)
+			local winsTie = hpRatio == lowestRatio
+				and (lowestTarget == nil or ally.InstanceId < lowestTarget.InstanceId)
+			if hpRatio < lowestRatio or winsTie then
+				lowestRatio = hpRatio
+				lowestTarget = ally
+			end
+		end
+	end
+	return lowestTarget
+end
+
+local function getIntentTargetText(enemy: StateTypes.EnemyState): string
+	local targetMode = enemy.Intent.TargetMode
+	if targetMode == "AllPlayers" then
+		return "TARGET: ALL PLAYERS"
+	elseif targetMode == "Self" then
+		return "TARGET: SELF"
+	elseif targetMode == "LowestHPAlly" and activeCombat then
+		local ally = getLowestHPEnemy(activeCombat.Enemies)
+		return if ally then "TARGET: " .. ally.Name else "TARGET: NO LIVING ALLY"
+	elseif targetMode == "RandomPlayer" then
+		local target = if enemy.Intent.TargetUserId then partyRef[enemy.Intent.TargetUserId] else nil
+		return if target then "TARGET: " .. target.DisplayName else "TARGET: NO LIVING PLAYER"
+	end
+	return "TARGET: NONE"
+end
+
+local function getIntentReactionGuidance(intent: StateTypes.EnemyIntent): (string, string)
+	if intent.Type ~= "Attack" then
+		if intent.BreakInterruptible == true then
+			return "USE HEAVY/BREAK NOW — NO C/V REACTION", "Interrupt"
+		end
+		return "PREPARE WITH CARDS — NO C/V REACTION", "Preparation"
+	end
+
+	local profile = ReactionData.getProfile(intent.AttackProfileId or "")
+	if not profile then
+		return "REACTION UNKNOWN — PREPARE DEFENSES", "DefenseOnly"
+	end
+	if profile.AvoidanceMode == "Movement" then
+		return "MOVE OUT — C/V DO NOT WORK", "Movement"
+	elseif profile.AvoidanceMode == "DefenseOnly" or (not profile.CanDodge and not profile.CanParry) then
+		return "CANNOT DODGE OR PARRY — SHIELD/PREPARE", "DefenseOnly"
+	elseif profile.CanDodge and profile.CanParry then
+		return "C: DODGE  •  V: PARRY", "DodgeParry"
+	elseif profile.CanDodge then
+		return "C: DODGE ONLY  •  V WILL FAIL", "DodgeOnly"
+	elseif profile.CanParry then
+		return "V: PARRY ONLY  •  C WILL FAIL", "ParryOnly"
+	end
+	return "CANNOT REACT — PREPARE DEFENSES", "DefenseOnly"
+end
+
 --------------------------------------------------------------------------------
 -- Snapshot Generators
 --------------------------------------------------------------------------------
@@ -174,6 +282,8 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 			intentIcon = "🧪"
 		end
 
+		local intentDescription = enemy.Intent.Description or enemy.Intent.Type
+		local reactionText, reactionStyle = getIntentReactionGuidance(enemy.Intent)
 		enemyViews[id] = {
 			InstanceId = enemy.InstanceId,
 			Name = enemy.Name,
@@ -181,9 +291,22 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 			MaxHP = enemy.MaxHP,
 			Shield = enemy.Shield,
 			Poison = enemy.Poison,
+			Armor = enemy.Armor or 0,
+			EvasionPercent = math.round((enemy.Evasion or 0) * 100),
 			AttackPower = enemy.AttackPower,
-			IntentText = string.format("%s (%d)", enemy.Intent.Type, enemy.Intent.Value),
+			BreakMeter = enemy.BreakMeter or 0,
+			BreakThreshold = enemy.BreakThreshold or 0,
+			IsBroken = enemy.IsBroken == true,
+			IntentText = string.format("%s (%d)", intentDescription, enemy.Intent.Value),
 			IntentIcon = intentIcon,
+			IntentInterruptible = enemy.Intent.BreakInterruptible == true,
+			IntentInterruptText = enemy.Intent.InterruptText,
+			IntentTargetUserId = enemy.Intent.TargetUserId,
+			IntentTargetText = getIntentTargetText(enemy),
+			IntentReactionText = reactionText,
+			IntentReactionStyle = reactionStyle,
+			BossPhase = enemy.BossPhase,
+			BossPhaseName = enemy.BossPhaseName,
 		}
 	end
 
@@ -218,6 +341,7 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 			end
 		end
 
+		local shockStatus = StatusService.getStatus(tostring(pUserId), "Shock")
 		partyViews[tostring(pUserId)] = {
 			UserId = pUserId,
 			DisplayName = pState.DisplayName,
@@ -240,6 +364,7 @@ function CombatService.getCombatSnapshotForPlayer(player: any): StateTypes.Comba
 			SkillInventory = skillInventoryList,
 			UnlockedPassives = table.clone(pState.UnlockedPassives or {}),
 			PassivePoints = pState.PassivePoints or 0,
+			Shock = if shockStatus then shockStatus.Stacks else 0,
 		}
 	end
 
@@ -314,32 +439,11 @@ end
 --------------------------------------------------------------------------------
 
 local function generateEnemyIntent(enemy: StateTypes.EnemyState): StateTypes.EnemyIntent
-	local rng = Random.new()
-	local roll = rng:NextInteger(1, 100)
-	local atkPower = enemy.AttackPower or 10
-
-	if roll <= 65 then
-		local variance = rng:NextInteger(-2, 3)
-		local dmg = math.max(4, atkPower + variance)
-		return {
-			Type = "Attack",
-			Value = dmg,
-			Description = string.format("Striking for %d damage", dmg),
-		}
-	elseif roll <= 85 then
-		local shieldVal = math.max(6, math.floor(atkPower * 0.8))
-		return {
-			Type = "Defend",
-			Value = shieldVal,
-			Description = string.format("Fortifying for %d shield", shieldVal),
-		}
-	else
-		return {
-			Type = "Debuff",
-			Value = 3,
-			Description = "Exhaling venomous fumes (3 Poison)",
-		}
-	end
+	local nextMoveIndex = (enemy.MoveIndex or 1) + 1
+	enemy.MoveIndex = nextMoveIndex
+	local intent = EnemyData.createIntent(enemy.DefinitionId, nextMoveIndex, enemy.AttackPower, enemy.BossPhase)
+	assignIntentPlayerTarget(enemy, intent)
+	return intent
 end
 
 --------------------------------------------------------------------------------
@@ -382,7 +486,7 @@ local function applyDamageToPlayer(playerState: StateTypes.PlayerState, rawDamag
 	return res.HPLost, res.ShieldAbsorbed
 end
 
-local function logEvent(eventType: string, sourceId: string, targetId: string, value: number?, text: string?)
+local function logEvent(eventType: string, sourceId: string, targetId: string, value: number?, text: string?, metadata: any?)
 	if not activeCombat then return end
 
 	local event: StateTypes.CombatEvent = {
@@ -392,6 +496,14 @@ local function logEvent(eventType: string, sourceId: string, targetId: string, v
 		Value = value,
 		ExtraText = text,
 		Timestamp = os.clock(),
+		CardDefinitionId = if metadata then metadata.CardDefinitionId else nil,
+		CardRarity = if metadata then metadata.CardRarity else nil,
+		AnimationId = if metadata then metadata.AnimationId else nil,
+		AnimationType = if metadata then metadata.AnimationType else nil,
+		ProjectileShape = if metadata then metadata.ProjectileShape else nil,
+		EffectColor = if metadata then metadata.EffectColor else nil,
+		ImpactEffectId = if metadata then metadata.ImpactEffectId else nil,
+		DidHit = if metadata then metadata.DidHit else nil,
 	}
 
 	if ActionTransaction.isTransactionActive() then
@@ -405,6 +517,85 @@ local function logEvent(eventType: string, sourceId: string, targetId: string, v
 	end
 
 	NetworkService.broadcastCombatEvent(event)
+end
+
+local function syncBossPhase(enemy: StateTypes.EnemyState, sourceId: string): boolean
+	local transition = BossMechanicsService.updatePhase(enemy)
+	if not transition then
+		return false
+	end
+	assignIntentPlayerTarget(enemy, enemy.Intent)
+	logEvent(
+		"BossPhaseChanged",
+		sourceId,
+		enemy.InstanceId,
+		transition.ToPhase,
+		string.format(
+			"%s entered Phase %d — %s! +%d transition Shield.",
+			transition.EnemyName,
+			transition.ToPhase,
+			transition.PhaseName,
+			transition.ShieldGained
+		)
+	)
+	return true
+end
+
+local function recordEnemyDefeat(
+	defeatedEnemy: StateTypes.EnemyState,
+	sourceId: string,
+	defeatText: string,
+	emitDefeatEvent: boolean
+): boolean
+	if not activeCombat or defeatedEnemy.HP > 0 or defeatedEnemy.DefeatProcessed == true then
+		return false
+	end
+
+	if emitDefeatEvent then
+		logEvent("EnemyDefeated", sourceId, defeatedEnemy.InstanceId, nil, defeatText)
+	end
+	local mechanicResults, processed = EnemyMechanicsService.processEnemyDefeat(defeatedEnemy, activeCombat.Enemies)
+	for _, result in mechanicResults do
+		logEvent(
+			"BuffGained",
+			result.SourceEnemyName,
+			result.SourceEnemyId,
+			result.AttackGain,
+			string.format("%s devoured the fallen and gained +%d Attack!", result.SourceEnemyName, result.AttackGain)
+		)
+	end
+	return processed
+end
+
+local function applyEnemyHitToPlayer(
+	enemy: StateTypes.EnemyState,
+	playerState: StateTypes.PlayerState,
+	rawDamage: number,
+	detail: string
+): number
+	if not activeCombat then
+		return 0
+	end
+	local hpLost, _ = applyDamageToPlayer(playerState, rawDamage)
+	logEvent("DamageDealt", enemy.Name, tostring(playerState.UserId), rawDamage, string.format("-%d HP (%s)", hpLost, detail))
+
+	if hpLost > 0 then
+		local dmgRelic = RelicService.triggerEvent(playerState, activeCombat, "OnDamageTaken", {
+			Damage = hpLost,
+			Enemy = enemy,
+		})
+		if dmgRelic.BonusDamage > 0 then
+			local thornsLost, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
+			logEvent("DamageDealt", "BronzeScales", enemy.InstanceId, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsLost))
+			recordEnemyDefeat(enemy, "BronzeScales", string.format("%s was defeated by Thorns!", enemy.Name), true)
+		end
+		if dmgRelic.BonusDraw > 0 then
+			CardService.drawCards(playerState, dmgRelic.BonusDraw)
+			logEvent("CardDrawn", "Relic", playerState.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
+		end
+	end
+
+	return hpLost
 end
 
 --------------------------------------------------------------------------------
@@ -495,6 +686,7 @@ local function resolveTurn()
 	if not activeCombat or activeCombat.Phase ~= "PlayerPhase" then return end
 
 	activeCombat.Phase = "ResolutionPhase"
+	local phaseTransitionsBeforeEnemyAction: { [string]: boolean } = {}
 
 	-- 1. End of Turn Class Gimmicks & Relic Triggers
 	for userId, playerState in partyRef do
@@ -535,10 +727,13 @@ local function resolveTurn()
 				if gimmickEnd.EndTurnDamage > 0 then
 					for _, enemy in activeCombat.Enemies do
 						if enemy.HP > 0 then
+							local hpBeforeGimmick = enemy.HP
 							local remDmg, _ = applyDamageToEnemy(enemy, gimmickEnd.EndTurnDamage)
-							logEvent("DamageDealt", "Gimmick", enemy.Name, gimmickEnd.EndTurnDamage, string.format("-%d HP (Gimmick)", remDmg))
+							logEvent("DamageDealt", "Gimmick", enemy.InstanceId, gimmickEnd.EndTurnDamage, string.format("-%d HP (Gimmick)", remDmg))
 							if enemy.HP <= 0 then
-								logEvent("EnemyDefeated", "Gimmick", enemy.InstanceId, nil, string.format("%s was defeated by gimmick damage!", enemy.Name))
+								recordEnemyDefeat(enemy, "Gimmick", string.format("%s was defeated by gimmick damage!", enemy.Name), true)
+							elseif enemy.HP < hpBeforeGimmick and syncBossPhase(enemy, "Gimmick") then
+								phaseTransitionsBeforeEnemyAction[enemy.InstanceId] = true
 							end
 							break
 						end
@@ -561,9 +756,11 @@ local function resolveTurn()
 				if enemy.HP > 0 then
 					local statusTicks = StatusService.tickStatuses(enemyId, "TurnStart", enemy, true)
 					local statusKiller: string? = nil
+					local statusDamageTotal = 0
 					for _, tick in statusTicks do
 						if tick.DamageDealt > 0 then
-							logEvent("DamageDealt", tick.DefinitionId, enemy.Name, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
+							statusDamageTotal += tick.DamageDealt
+							logEvent("DamageDealt", tick.DefinitionId, enemy.InstanceId, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
 						end
 						if tick.Defeated then
 							statusKiller = tick.DefinitionId
@@ -572,7 +769,28 @@ local function resolveTurn()
 
 					if enemy.HP <= 0 then
 						local killer = statusKiller or "Poison"
-						logEvent("EnemyDefeated", killer, enemyId, nil, string.format("%s collapsed from %s!", enemy.Name, killer:lower()))
+						recordEnemyDefeat(enemy, killer, string.format("%s collapsed from %s!", enemy.Name, killer:lower()), true)
+						continue
+					end
+
+					if statusDamageTotal > 0 and syncBossPhase(enemy, statusKiller or "Status") then
+						phaseTransitionsBeforeEnemyAction[enemyId] = true
+					end
+					if phaseTransitionsBeforeEnemyAction[enemyId] then
+						logEvent("BossPhasePreparation", enemy.Name, enemyId, enemy.BossPhase, string.format("%s pauses as %s begins.", enemy.Name, enemy.BossPhaseName or "a new phase"))
+						CombatService.broadcastSnapshots(string.format("⚠️ PHASE %d: %s — prepare now!", enemy.BossPhase or 1, enemy.BossPhaseName or "Boss transition"))
+						continue
+					end
+
+					local skipBrokenAction, recoveredFromBreak = BreakService.resolveBeforeEnemyAction(enemy)
+					if recoveredFromBreak then
+						logEvent("BreakRecovered", enemy.Name, enemyId, nil, string.format("%s recovered from Break.", enemy.Name))
+					end
+					if skipBrokenAction then
+						local interruptedMove = enemy.Intent.Description or enemy.Intent.MoveId or "enemy action"
+						logEvent("EnemyActionInterrupted", "Break", enemyId, nil, string.format("%s interrupted: %s cancelled.", enemy.Name, interruptedMove))
+						CombatService.broadcastSnapshots(string.format("✋ BREAK INTERRUPT! %s cancelled %s!", enemy.Name, interruptedMove))
+						enemy.Intent = generateEnemyIntent(enemy)
 						continue
 					end
 
@@ -580,44 +798,54 @@ local function resolveTurn()
 					if not (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) then
 						task.wait(0.3)
 					end
+					local hpBeforeEnemyAction = enemy.HP
 					if enemy.Intent.Type == "Attack" then
-						local livingPlayers: { StateTypes.PlayerState } = {}
-						for _, pState in partyRef do
-							if not pState.IsDowned and pState.IsConnected ~= false then
-								table.insert(livingPlayers, pState)
-							end
-						end
+						local livingPlayers = getSortedLivingPlayers()
 
 						if #livingPlayers > 0 then
-							local target = livingPlayers[math.random(1, #livingPlayers)]
+							assignIntentPlayerTarget(enemy, enemy.Intent)
+							local target = livingPlayers[1]
+							if enemy.Intent.TargetUserId then
+								for _, livingPlayer in livingPlayers do
+									if livingPlayer.UserId == enemy.Intent.TargetUserId then
+										target = livingPlayer
+										break
+									end
+								end
+							end
 
-							-- Select data-driven attack timing profile based on enemy type
-							local profilePreset = "SlowHeavy"
-							if enemy.DefinitionId == "GremlinNob" then
-								profilePreset = if (activeCombat.TurnNumber % 2 == 0) then "JumpAttack" else "SlowHeavy"
-							elseif enemy.DefinitionId == "SpireGuardian" then
-								profilePreset = if (activeCombat.TurnNumber % 3 == 0) then "UnreactableExplosion" else "BossHeavyStrike"
-							elseif enemy.DefinitionId == "Cultist" then
-								profilePreset = if (activeCombat.TurnNumber % 2 == 0) then "ProjectileBolt" else "FastDagger"
-							elseif enemy.DefinitionId == "SpireSentinel" then
-								profilePreset = if (activeCombat.TurnNumber % 2 == 0) then "FastDagger" else "SlowHeavy"
+							local profilePreset = enemy.Intent.AttackProfileId or "SlowHeavy"
+							local targetAllPlayers = enemy.Intent.TargetMode == "AllPlayers"
+							local targetUserIds: { number } = {}
+							if targetAllPlayers then
+								for _, livingPlayer in livingPlayers do
+									table.insert(targetUserIds, livingPlayer.UserId)
+								end
+							else
+								table.insert(targetUserIds, target.UserId)
 							end
 
 							-- Open authoritative 3D reaction window
 							local rs = getReactionService()
 							local windowResults: { [number]: any } = {}
+							local activeProfile: StateTypes.AttackReactionProfile? = nil
+							local movementHazardCenter: Vector3? = nil
 
 							if rs then
 								-- Preserve data-driven DamageType from preset (pass nil for damageType override)
 								local profile = rs.createProfileFromPreset(profilePreset, enemy.Intent.Value, nil)
-								local targetUserIds: { number } = {}
-								local isAoE = (profile.AttackType == "AoE" or profile.IsAoE)
+								activeProfile = profile
+								local isAoE = targetAllPlayers or profile.AttackType == "AoE" or profile.IsAoE
 								if isAoE then
-									for _, p in livingPlayers do
-										table.insert(targetUserIds, p.UserId)
+									profile.IsAoE = true
+									if not targetAllPlayers then
+										table.clear(targetUserIds)
+										for _, livingPlayer in livingPlayers do
+											table.insert(targetUserIds, livingPlayer.UserId)
+										end
 									end
 								else
-									table.insert(targetUserIds, target.UserId)
+									profile.IsAoE = false
 								end
 
 								-- Resolve authoritative 3D target world position
@@ -646,7 +874,13 @@ local function resolveTurn()
 									attackerWorldPos = Vector3.new(0, 1.2, -16)
 								end
 
-								if isAoE then
+								local isMovementHazard = profile.AvoidanceMode == "Movement"
+								if isMovementHazard then
+									profile.HazardRadius = profile.HazardRadius or GameConfig.SpatialCombat.LightningFieldRadius
+									profile.TargetWorldPos = targetWorldPos
+									profile.TargetWorldPosition = targetWorldPos
+									movementHazardCenter = targetWorldPos
+								elseif isAoE then
 									profile.TargetWorldPos = nil
 									profile.TargetWorldPosition = nil
 								else
@@ -665,14 +899,19 @@ local function resolveTurn()
 
 								local windowState = rs.openReactionWindow(activeCombat, profile, enemyId, targetUserIds)
 
-								CombatService.broadcastSnapshots(string.format("⚠️ %s is attacking %s with %s!", enemy.Name, if isAoE then "the entire party" else target.DisplayName, profile.AttackName))
+								if isMovementHazard then
+									CombatService.broadcastSnapshots(string.format("🏃 %s cast %s — MOVE OUT OF THE RED ZONE!", enemy.Name, profile.AttackName))
+								else
+									CombatService.broadcastSnapshots(string.format("⚠️ %s is attacking %s with %s!", enemy.Name, if isAoE then "the entire party" else target.DisplayName, profile.AttackName))
+								end
 
 								-- Wait for reaction window in live play using synchronized server time, skip in test isolation
 								local rm = getRunManager()
 								local isIso = (rm and rm.isTestIsolationActive and rm.isTestIsolationActive()) or isCombatIsolation
 								if not isIso then
 									local now = (pcall(function() return Workspace:GetServerTimeNow() end) and Workspace:GetServerTimeNow()) or os.clock()
-									local waitTime = math.max(0.1, windowState.ReactionCloseServerTime - now)
+									local resolutionTime = if isMovementHazard then windowState.ImpactServerTime else windowState.ReactionCloseServerTime
+									local waitTime = math.max(0.1, resolutionTime - now)
 									task.wait(waitTime)
 								end
 
@@ -686,11 +925,31 @@ local function resolveTurn()
 									for uId in windowResults do table.insert(ids, uId) end
 									return ids
 								end)()
-								else { target.UserId }
+								else targetUserIds
 
 							for _, tUserId in effectiveTargetIds do
-								local playerState = activeCombat.Party[tUserId]
+								local playerState = partyRef[tUserId]
 								if playerState and not playerState.IsDowned then
+									if activeProfile and activeProfile.AvoidanceMode == "Movement" and movementHazardCenter then
+										local playerInstance = Players:GetPlayerByUserId(tUserId)
+										local isSafe, distance = SpatialHazardService.isPlayerOutsideCircle(
+											playerInstance,
+											movementHazardCenter,
+											activeProfile.HazardRadius or GameConfig.SpatialCombat.LightningFieldRadius
+										)
+										if isSafe then
+											logEvent("SpatialHazardAvoided", playerState.DisplayName, enemyId, math.round(distance), "Escaped the lightning field")
+										else
+											applyEnemyHitToPlayer(enemy, playerState, enemy.Intent.Value, "Static Lightning Field")
+											if not playerState.IsDowned then
+												local statusId = enemy.Intent.StatusId or "Shock"
+												local statusStacks = enemy.Intent.StatusStacks or GameConfig.SpatialCombat.LightningFieldShockStacks
+												StatusService.applyStatus(tostring(tUserId), statusId, statusStacks, nil, enemy.InstanceId, playerState)
+												logEvent("DebuffApplied", enemy.Name, playerState.DisplayName, statusStacks, string.format("Applied %d %s", statusStacks, statusId))
+											end
+										end
+										continue
+									end
 									local pResult = windowResults[tUserId]
 									local reacted = false
 									local rType: StateTypes.ReactionType? = nil
@@ -713,17 +972,29 @@ local function resolveTurn()
 											CombatService.broadcastSnapshots(string.format("💨 %s dodged the attack!", playerState.DisplayName))
 										end
 									elseif reacted and rType == "Parry" then
+										local breakAmount = if pJudgement == "Perfect"
+											then GameConfig.Break.PerfectParryDamage
+											else GameConfig.Break.ParryDamage
+										local breakAdded, didBreak = BreakService.applyBreakDamage(enemy, breakAmount, true)
+										if breakAdded > 0 then
+											logEvent("BreakDamage", playerState.DisplayName, enemyId, breakAdded, string.format("+%d Break", breakAdded))
+										end
+										if didBreak then
+											logEvent("EnemyBroken", playerState.DisplayName, enemyId, nil, string.format("%s was Broken!", enemy.Name))
+										end
 										if pJudgement == "Perfect" then
 											logEvent("CombatReaction", tostring(tUserId), enemyId, 0, string.format("🛡️ %s executed a PERFECT PARRY against %s!", playerState.DisplayName, enemy.Name))
 											local parryCounterDmg = math.max(2, math.floor(enemy.Intent.Value * 0.6))
 											local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
-											logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Perfect Parry Riposte)", thornsRem))
+											logEvent("DamageDealt", "ParryCounter", enemy.InstanceId, parryCounterDmg, string.format("-%d HP (Perfect Parry Riposte)", thornsRem))
+											recordEnemyDefeat(enemy, "ParryCounter", string.format("%s fell to a Perfect Parry riposte!", enemy.Name), true)
 											CombatService.broadcastSnapshots(string.format("⚔️ PERFECT PARRY! %s riposted for %d damage!", playerState.DisplayName, parryCounterDmg))
 										else
 											logEvent("CombatReaction", tostring(tUserId), enemyId, 0, string.format("⚔️ %s PARRIED %s's attack!", playerState.DisplayName, enemy.Name))
 											local parryCounterDmg = math.max(1, math.floor(enemy.Intent.Value * 0.3))
 											local thornsRem, _ = applyDamageToEnemy(enemy, parryCounterDmg)
-											logEvent("DamageDealt", "ParryCounter", enemy.Name, parryCounterDmg, string.format("-%d HP (Parry Counter)", thornsRem))
+											logEvent("DamageDealt", "ParryCounter", enemy.InstanceId, parryCounterDmg, string.format("-%d HP (Parry Counter)", thornsRem))
+											recordEnemyDefeat(enemy, "ParryCounter", string.format("%s fell to a Parry counter!", enemy.Name), true)
 											CombatService.broadcastSnapshots(string.format("⚔️ %s parried and countered for %d damage!", playerState.DisplayName, parryCounterDmg))
 										end
 									else
@@ -733,37 +1004,26 @@ local function resolveTurn()
 											CombatService.broadcastSnapshots(string.format("⚠️ %s reacted too late!", playerState.DisplayName))
 										end
 
-										local remDmg, _ = applyDamageToPlayer(playerState, enemy.Intent.Value)
-										logEvent("DamageDealt", enemy.Name, playerState.DisplayName, enemy.Intent.Value, string.format("-%d HP", remDmg))
-
-										if remDmg > 0 then
-											local dmgRelic = RelicService.triggerEvent(playerState, activeCombat, "OnDamageTaken", {
-												Damage = remDmg,
-												Enemy = enemy,
-											})
-											if dmgRelic.BonusDamage > 0 then
-												local thornsRem, _ = applyDamageToEnemy(enemy, dmgRelic.BonusDamage)
-												logEvent("DamageDealt", "BronzeScales", enemy.Name, dmgRelic.BonusDamage, string.format("-%d Thorns", thornsRem))
-											end
-											if dmgRelic.BonusDraw > 0 then
-												CardService.drawCards(playerState, dmgRelic.BonusDraw)
-												logEvent("CardDrawn", "Relic", playerState.DisplayName, dmgRelic.BonusDraw, string.format("+%d Cards Drawn (Relic)", dmgRelic.BonusDraw))
-											end
-										end
+										applyEnemyHitToPlayer(enemy, playerState, enemy.Intent.Value, "Enemy attack")
 									end
 								end
 							end
 						end
 
 					elseif enemy.Intent.Type == "Defend" then
-						enemy.Shield += enemy.Intent.Value
-						logEvent("ShieldGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Shield", enemy.Intent.Value))
+						local shieldTarget = enemy
+						if enemy.Intent.TargetMode == "LowestHPAlly" then
+							shieldTarget = getLowestHPEnemy(activeCombat.Enemies) or enemy
+						end
+						shieldTarget.Shield += enemy.Intent.Value
+					logEvent("ShieldGained", enemy.Name, shieldTarget.InstanceId, enemy.Intent.Value, string.format("+%d Shield", enemy.Intent.Value))
 
 					elseif enemy.Intent.Type == "Debuff" then
 						for _, pState in partyRef do
 							if not pState.IsDowned and pState.IsConnected ~= false then
-								StatusService.applyStatus(tostring(pState.UserId), "Poison", enemy.Intent.Value, nil, enemy.InstanceId, pState)
-								logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, "Debuffed with Poison")
+								local statusId = enemy.Intent.StatusId or "Poison"
+								StatusService.applyStatus(tostring(pState.UserId), statusId, enemy.Intent.Value, nil, enemy.InstanceId, pState)
+								logEvent("DebuffApplied", enemy.Name, pState.DisplayName, enemy.Intent.Value, string.format("Debuffed with %s", statusId))
 							end
 						end
 
@@ -772,7 +1032,28 @@ local function resolveTurn()
 						logEvent("BuffGained", enemy.Name, enemy.Name, enemy.Intent.Value, string.format("+%d Attack Power", enemy.Intent.Value))
 					end
 
-					enemy.Intent = generateEnemyIntent(enemy)
+					if enemy.Intent.ArmorAfterAction ~= nil or enemy.Intent.EvasionAfterAction ~= nil then
+						enemy.Armor = math.max(0, enemy.Intent.ArmorAfterAction or enemy.Armor or 0)
+						enemy.Evasion = math.clamp(enemy.Intent.EvasionAfterAction or enemy.Evasion or 0, 0, 0.75)
+						logEvent(
+							"EnemyDefenseShift",
+							enemy.InstanceId,
+							enemy.InstanceId,
+							enemy.Armor,
+							string.format(
+								"%s — Armor %d, Evasion %d%%",
+								enemy.Intent.DefenseText or "Defense shifted",
+								enemy.Armor,
+								math.round(enemy.Evasion * 100)
+							)
+						)
+					end
+
+					local transitionedDuringAction = if enemy.HP < hpBeforeEnemyAction
+						then syncBossPhase(enemy, "ReactionDamage") else false
+					if not transitionedDuringAction then
+						enemy.Intent = generateEnemyIntent(enemy)
+					end
 				end
 			end
 
@@ -798,7 +1079,7 @@ local function resolveTurn()
 					local pTicks = StatusService.tickStatuses(pTargetId, "TurnStart", playerState, false)
 					for _, tick in pTicks do
 						if tick.DamageDealt > 0 then
-							logEvent("DamageDealt", tick.DefinitionId, playerState.DisplayName, tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
+							logEvent("DamageDealt", tick.DefinitionId, tostring(playerState.UserId), tick.DamageDealt, string.format("-%d HP (%s)", tick.DamageDealt, tick.DefinitionId))
 						end
 						if tick.Defeated or playerState.Resources.HP <= 0 then
 							if not playerState.IsDowned then
@@ -872,78 +1153,50 @@ function CombatService.startCombat(
 	for _ in party do playerCount += 1 end
 
 	local enemies: { [string]: StateTypes.EnemyState } = {}
+	local encounterDefinitionIds = EnemyData.getEncounter(roomType, tier)
+	for index, definitionId in encounterDefinitionIds do
+		local definition = EnemyData.getEnemy(definitionId)
+		assert(definition, string.format("Missing EnemyData definition: %s", definitionId))
 
-	if roomType == "Elite Monster" then
-		local baseHp = 135 + (tier * 15)
-		local baseAtk = 14 + (tier * 2)
+		local instancePrefix = if roomType == "Elite Monster"
+			then "elite"
+			elseif roomType == "Act Boss" then "boss" else "enemy"
+		local instanceId = string.format("%s_%d", instancePrefix, index)
+		local baseHp = definition.BaseHP + (tier * definition.HPPerTier)
+		local baseAttack = definition.BaseAttack + math.floor(tier * definition.AttackPerTier)
 		local hp = GameConfig.scaleEnemyHp(baseHp, playerCount)
-		local atk = GameConfig.scaleEnemyAttack(baseAtk, playerCount)
-
-		enemies["elite_1"] = {
-			InstanceId = "elite_1",
-			DefinitionId = "GremlinNob",
-			Name = "Gremlin Nob (Elite)",
-			HP = hp,
-			MaxHP = hp,
-			Shield = 0,
-			Poison = 0,
-			AttackPower = atk,
-			Intent = { Type = "Attack", Value = atk, Description = "Fierce Slam" },
-			ModelRef = nil,
-		}
-	elseif roomType == "Act Boss" then
-		local baseHp = 220 + (tier * 25)
-		local baseAtk = 16 + (tier * 3)
-		local hp = GameConfig.scaleEnemyHp(baseHp, playerCount)
-		local atk = GameConfig.scaleEnemyAttack(baseAtk, playerCount)
-
-		enemies["boss_1"] = {
-			InstanceId = "boss_1",
-			DefinitionId = "SpireGuardian",
-			Name = "The Spire Guardian (Boss)",
-			HP = hp,
-			MaxHP = hp,
-			Shield = 0,
-			Poison = 0,
-			AttackPower = atk,
-			Intent = { Type = "Attack", Value = atk, Description = "Cataclysm Strike" },
-			ModelRef = nil,
-		}
-	else
-		local baseHp = 70 + (tier * 10)
-		local baseAtk = 8 + math.floor(tier * 1.5)
-		local hp = GameConfig.scaleEnemyHp(baseHp, playerCount)
-		local atk = GameConfig.scaleEnemyAttack(baseAtk, playerCount)
-
-		enemies["enemy_1"] = {
-			InstanceId = "enemy_1",
-			DefinitionId = "SpireSentinel",
-			Name = "Spire Sentinel",
-			HP = hp,
-			MaxHP = hp,
-			Shield = 0,
-			Poison = 0,
-			AttackPower = atk,
-			Intent = { Type = "Attack", Value = atk, Description = "Sentry Bolt" },
-			ModelRef = nil,
-		}
-
-		if tier >= 3 then
-			local minionHp = GameConfig.scaleEnemyHp(40, playerCount)
-			local minionAtk = GameConfig.scaleEnemyAttack(5, playerCount)
-			enemies["enemy_2"] = {
-				InstanceId = "enemy_2",
-				DefinitionId = "Cultist",
-				Name = "Dark Cultist",
-				HP = minionHp,
-				MaxHP = minionHp,
-				Shield = 0,
-				Poison = 0,
-				AttackPower = minionAtk,
-				Intent = { Type = "Buff", Value = 2, Description = "Ritual Chant" },
-				ModelRef = nil,
-			}
+		local attack = GameConfig.scaleEnemyAttack(baseAttack, playerCount)
+		local breakThreshold = if definition.UsesInterruptMeter == true
+			then GameConfig.Break.NormalInterruptThreshold else 0
+		if roomType == "Elite Monster" then
+			breakThreshold = GameConfig.Break.EliteThreshold
+		elseif roomType == "Act Boss" then
+			breakThreshold = GameConfig.Break.BossThreshold
 		end
+
+		local enemyState: StateTypes.EnemyState = {
+			InstanceId = instanceId,
+			DefinitionId = definitionId,
+			Name = definition.Name,
+			HP = hp,
+			MaxHP = hp,
+			Shield = 0,
+			Poison = 0,
+			Armor = definition.BaseArmor,
+			Evasion = definition.BaseEvasion,
+			AttackPower = attack,
+			Intent = EnemyData.createIntent(definitionId, 1, attack, if roomType == "Act Boss" then 1 else nil),
+			MoveIndex = 1,
+			Role = definition.Role,
+			BreakMeter = 0,
+			BreakThreshold = breakThreshold,
+			IsBroken = false,
+			BreakActionsToSkip = 0,
+			ModelRef = nil,
+		}
+		BossMechanicsService.initializeBoss(enemyState)
+		assignIntentPlayerTarget(enemyState, enemyState.Intent)
+		enemies[instanceId] = enemyState
 	end
 
 	-- Initialize environment for combat
@@ -981,6 +1234,7 @@ function CombatService.startCombat(
 		table.insert(activeCombat.Participants, userId)
 		ClassService.resetCombatResources(playerState)
 		ClassService.resetClassCombatGimmicks(userId)
+		CardRulesService.resetBattleUsage(playerState)
 		CardService.resetCombatPiles(playerState)
 		RelicService.resetCombatState(userId)
 
@@ -1053,6 +1307,10 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	end
 
 	local cardDef = cardInst.CardData
+	local usageAllowed, usageError = CardRulesService.canUseCard(playerState, cardDef)
+	if not usageAllowed then
+		return false, usageError
+	end
 	-- Authoritative target resolution via TargetResolver
 	local resolvedTarget = TargetResolver.resolveTarget(
 		playerState,
@@ -1067,6 +1325,7 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 
 	local targetEnemy = resolvedTarget.EnemyTarget
 	local targetPlayer = resolvedTarget.PlayerTarget
+	local targetEnemyHPBefore = if targetEnemy then targetEnemy.HP else nil
 
 	-- Pre-validate effect preconditions before mutating any state or resources
 	local anyApplicable = false
@@ -1144,6 +1403,42 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 
 	-- Move card from hand to discard pile
 	CardService.playCardFromHand(playerState, cardInstanceId)
+	local remainingUses = CardRulesService.recordUse(playerState, cardDef)
+
+	local cardDidHit = true
+	local hitChance = 1
+	if targetEnemy then
+		local hitResult = CardRulesService.resolveHit(cardDef, targetEnemy)
+		cardDidHit = hitResult.DidHit
+		hitChance = hitResult.HitChance
+	end
+	local presentation = cardDef.Presentation
+	logEvent(
+		"CardPresented",
+		tostring(playerState.UserId),
+		resolvedTarget.TargetId,
+		nil,
+		cardDef.Name,
+		{
+			CardDefinitionId = cardDef.Id,
+			CardRarity = cardDef.Rarity or "Common",
+			AnimationId = if presentation then presentation.AnimationId else cardDef.Id,
+			AnimationType = if presentation then presentation.AnimationType else "Aura",
+			ProjectileShape = if presentation then presentation.ProjectileShape else nil,
+			EffectColor = if presentation then presentation.EffectColor else cardDef.Color,
+			ImpactEffectId = if presentation then presentation.ImpactEffectId else "DefaultImpact",
+			DidHit = cardDidHit,
+		}
+	)
+	if not cardDidHit and targetEnemy then
+		logEvent(
+			"CardMissed",
+			tostring(playerState.UserId),
+			targetEnemy.InstanceId,
+			math.round(hitChance * 100),
+			string.format("MISS! %s had %d%% accuracy.", cardDef.Name, math.round(hitChance * 100))
+		)
+	end
 
 	-- Relic Trigger: OnCardPlay
 	local relicTrigger = RelicService.triggerEvent(playerState, activeCombat, "OnCardPlay", {
@@ -1166,7 +1461,7 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		end
 	end
 
-	if gimmick.PoisonApplied > 0 and targetEnemy then
+	if gimmick.PoisonApplied > 0 and targetEnemy and cardDidHit then
 		StatusService.applyStatus(targetEnemy.InstanceId, "Poison", gimmick.PoisonApplied, nil, tostring(playerState.UserId), targetEnemy)
 	end
 
@@ -1213,6 +1508,7 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		Modifiers = actionModifiers,
 		LogEvent = logEvent,
 		OnKillCallback = function(defeatedEnemy)
+			recordEnemyDefeat(defeatedEnemy, playerState.DisplayName, string.format("%s was defeated!", defeatedEnemy.Name), false)
 			ClassService.processGimmickOnKill(playerState)
 			local relicResult = RelicService.triggerEvent(playerState, activeCombat, "OnKill", { Enemy = defeatedEnemy })
 			if relicResult then
@@ -1229,16 +1525,40 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 		GuaranteedCritical = gimmick.GuaranteedCritical,
 	}
 
-	local effectResults = EffectResolver.resolveEffects(cardInst.CardData.Effects, actionCtx)
+	local effectsToResolve: { CardData.Effect } = {}
+	for _, effect in cardInst.CardData.Effects do
+		local effectTarget = effect.Target or cardDef.Target
+		if cardDidHit or effectTarget ~= "Enemy" then
+			table.insert(effectsToResolve, effect)
+		end
+	end
+	local effectResults = EffectResolver.resolveEffects(effectsToResolve, actionCtx)
+	if targetEnemy and targetEnemyHPBefore and targetEnemy.HP > 0 and targetEnemy.HP < targetEnemyHPBefore then
+		syncBossPhase(targetEnemy, playerState.DisplayName)
+	end
+
+	-- Heavy cards contribute Break exactly once per card action. This mutation is
+	-- inside the transaction: any later effect failure rolls the meter back with
+	-- HP, Energy, card piles, statuses, and buffered combat events.
+	if targetEnemy and cardDidHit then
+		local breakDamage = BreakService.getCardBreakDamage(cardDef)
+		local breakAdded, didBreak = BreakService.applyBreakDamage(targetEnemy, breakDamage, false)
+		if breakAdded > 0 then
+			logEvent("BreakDamage", playerState.DisplayName, targetEnemy.InstanceId, breakAdded, string.format("+%d Break", breakAdded))
+		end
+		if didBreak then
+			logEvent("EnemyBroken", playerState.DisplayName, targetEnemy.InstanceId, nil, string.format("%s was Broken!", targetEnemy.Name))
+		end
+	end
 
 	-- Transaction verification: all required effects must succeed
 	local hasFailure = false
 	local failureMsg = "Card effect execution failed."
-	if #cardInst.CardData.Effects > 0 and #effectResults == 0 then
+	if #effectsToResolve > 0 and #effectResults == 0 then
 		hasFailure = true
 		failureMsg = "No card effects were satisfied or executed."
 	else
-		for _, res in effectResults do
+		for _, res in ipairs(effectResults) do
 			if not res.Success then
 				hasFailure = true
 				failureMsg = res.Message or failureMsg
@@ -1250,6 +1570,10 @@ function CombatService.playCard(player: any, cardInstanceId: string, targetParam
 	if hasFailure then
 		ActionTransaction.rollbackCombatTransaction(txSnapshot, playerState, activeCombat, partyRef)
 		return false, failureMsg
+	end
+
+	if remainingUses ~= nil and remainingUses <= 0 then
+		CardService.exhaustUnavailableDefinitionCopies(playerState, cardDef.Id)
 	end
 
 	-- Execution succeeded: commit transaction
@@ -1279,7 +1603,17 @@ function CombatService.useSkill(player: any, slot: StateTypes.SkillSlot, targetP
 		return false, "Player not in party."
 	end
 
-	local ok, err = SkillService.useSkill(playerState, slot, targetParam, activeCombat, partyRef, logEvent)
+	local ok, err = SkillService.useSkill(
+		playerState,
+		slot,
+		targetParam,
+		activeCombat,
+		partyRef,
+		logEvent,
+		function(enemy)
+			syncBossPhase(enemy, playerState.DisplayName)
+		end
+	)
 	if not ok then
 		return false, err
 	end

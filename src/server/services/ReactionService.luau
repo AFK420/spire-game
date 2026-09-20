@@ -139,7 +139,7 @@ function ReactionService.createProfileFromPreset(
 	local dmg = rawDamage or preset.RawDamage
 	local dt = damageType or preset.DamageType
 
-	return ReactionService.createAttackProfile(
+	local profile = ReactionService.createAttackProfile(
 		preset.AttackId,
 		preset.AttackName,
 		dmg,
@@ -159,6 +159,9 @@ function ReactionService.createProfileFromPreset(
 		preset.AttackType,
 		preset.ProjectileSpeed
 	)
+	profile.AvoidanceMode = preset.AvoidanceMode or if preset.CanDodge or preset.CanParry then "Reaction" else "DefenseOnly"
+	profile.HazardRadius = preset.HazardRadius
+	return profile
 end
 
 function ReactionService.setParryHook(fn: ((targetUserId: number, attackProfile: StateTypes.AttackReactionProfile, isPerfect: boolean) -> ())?)
@@ -224,6 +227,8 @@ function ReactionService.openReactionWindow(
 		TargetWorldPos = attackProfile.TargetWorldPos or attackProfile.TargetWorldPosition,
 		TargetWorldPosition = attackProfile.TargetWorldPosition or attackProfile.TargetWorldPos,
 		AttackerWorldPos = attackProfile.AttackerWorldPos,
+		AvoidanceMode = attackProfile.AvoidanceMode,
+		HazardRadius = attackProfile.HazardRadius,
 		PerPlayerResult = perPlayerMap,
 	}
 
@@ -510,6 +515,8 @@ function ReactionService.getReactionWindowView(
 		TargetWorldPos = windowState.TargetWorldPos or windowState.AttackProfile.TargetWorldPos,
 		TargetWorldPosition = windowState.TargetWorldPosition or windowState.TargetWorldPos or windowState.AttackProfile.TargetWorldPosition,
 		AttackerWorldPos = windowState.AttackerWorldPos or windowState.AttackProfile.AttackerWorldPos,
+		AvoidanceMode = windowState.AvoidanceMode or windowState.AttackProfile.AvoidanceMode,
+		HazardRadius = windowState.HazardRadius or windowState.AttackProfile.HazardRadius,
 	}
 end
 

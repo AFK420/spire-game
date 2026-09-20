@@ -166,7 +166,7 @@ Each category operates an independent token bucket per connected player:
 #### 18. `SaveDeck`
 - **Category**: `General`
 - **Payload**: `deckId: string, cards: { [string]: number }`
-- **Server Action**: Authoritatively validates that card counts do not exceed permanent `CardCollection` ownership, bounds deck to 8–30 cards, max 3 copies, and saves. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
+- **Server Action**: Authoritatively validates that card counts do not exceed permanent `CardCollection` ownership, bounds the deck to 8–30 cards, applies rarity/card-specific copy limits, and saves. Decks are class-agnostic. Rejected during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
 
 #### 19. `DuplicateDeck`
 - **Category**: `General`
@@ -209,7 +209,8 @@ Each category operates an independent token bucket per connected player:
   ```luau
   event: StateTypes.CombatEvent
   ```
-- **Client Handling**: Spawns floating damage/shield numbers and appends to combat log.
+- **Optional Card Presentation Fields**: `CardDefinitionId`, `CardRarity`, `AnimationId`, `AnimationType`, `ProjectileShape`, `EffectColor`, `ImpactEffectId`, and `DidHit`. These server-authored fields drive card-specific melee/projectile/aura/summon visuals and explicit miss feedback without letting the client decide combat outcomes.
+- **Client Handling**: Spawns floating damage/shield/miss feedback, plays the authored card presentation, and appends to the combat log.
 
 #### 4. `Announcement`
 - **Target**: Broadcast (`FireAllClients`).
@@ -281,5 +282,3 @@ Each category operates an independent token bucket per connected player:
   }
   ```
 - **Client Handling**: On success (`Success == true`), confirms lock-in, animates button, hides `ClassSelectModal`, and disables `CardRiftClassSelectGui` to reveal the lobby view. On failure (`Success == false`), restores lock-in button to active state and presents error prompt.
-
-

@@ -20,6 +20,9 @@ GameConfig.Combat = {
 	DefaultStartingEnergy = 3,    -- Fallback hero starting energy
 	BaseHandDrawCount = 4,        -- Cards drawn at the beginning of each turn
 	MaxTurnHistoryLog = 25,       -- Maximum entries preserved in active combat log
+	MinimumCardHitChance = 0.10,  -- Targeted cards always retain a small comeback chance
+	MaximumEnemyArmorReduction = 0.60, -- Hard cap prevents Armor from creating immunity
+	ArmorScalingConstant = 50,    -- Reduction = Armor / (Armor + constant)
 }
 
 --------------------------------------------------------------------------------
@@ -82,6 +85,40 @@ GameConfig.Reaction = {
 	MaxClientTimestampArrivalGrace = 0.20,
 }
 
+-- Boss/elite Break tuning. Break is deliberately configured here instead of
+-- being embedded in CombatService so designers can tune the vertical slice
+-- without changing the combat state machine.
+GameConfig.Break = {
+	BossThreshold = 100,
+	EliteThreshold = 60,
+	NormalInterruptThreshold = 20,
+	HeavyCardDamage = 20,
+	ParryDamage = 15,
+	PerfectParryDamage = 30,
+	BrokenDamageMultiplier = 1.25,
+}
+
+-- Status and spatial-combat tuning for mechanics-first Act 1 encounters.
+GameConfig.Status = {
+	ShockDamageTakenPerStack = 0.05, -- +5% direct damage received per stack
+}
+
+GameConfig.SpatialCombat = {
+	LightningFieldRadius = 7,
+	LightningFieldShockStacks = 2,
+}
+
+-- Client-only combat feedback limits. These values never influence damage or
+-- timing authority; they keep repeated co-op hits readable and restrained.
+GameConfig.CombatFeedback = {
+	PopupLifetime = 0.80,
+	PopupRiseStuds = 2.8,
+	MaxConcurrentPopups = 12,
+	ShakeDuration = 0.16,
+	MaximumShakeStrength = 0.18,
+	ReducedMotionAttribute = "ReduceMotion",
+}
+
 --------------------------------------------------------------------------------
 -- Environmental Combat Tuning
 --------------------------------------------------------------------------------
@@ -126,6 +163,13 @@ GameConfig.Deck = {
 	MinDeckSize = 8,             -- Minimum cards required in a valid playable deck
 	MaxDeckSize = 30,            -- Maximum cards allowed in a deck
 	MaxCopiesPerCard = 3,        -- Maximum copies of the same card allowed in a deck
+	RarityCopyLimits = {
+		Common = 3,
+		Uncommon = 3,
+		Rare = 2,
+		SuperRare = 1,
+		UltraRare = 1,
+	},
 	MaxDeckNameLength = 30,      -- Maximum character length for deck names
 }
 
@@ -143,13 +187,13 @@ GameConfig.StarterCollection = {
 
 	-- Default starter deck configuration
 	DefaultDeckName = "Starter Deck",
-	DefaultDeckClass = "Warlord",
+	DefaultDeckClass = nil,       -- Decks are intentionally independent from hero class choice
 	DefaultDeckCards = {
 		["Strike"] = 3,
 		["Defend"] = 2,
 		["HeavyBlow"] = 1,
-		["RageSlash"] = 1,
-		["ShieldSlam"] = 1,
+		["PoisonDart"] = 1,
+		["FirstAid"] = 1,
 	} :: { [string]: number },
 }
 

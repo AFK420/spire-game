@@ -1763,7 +1763,7 @@ combatHudView.Parent = mainFrame
 -- Multi-Enemy Container (Top Center)
 local enemiesContainer = Instance.new("Frame")
 enemiesContainer.Name = "EnemiesContainer"
-enemiesContainer.Size = UDim2.new(0, 800, 0, 100)
+enemiesContainer.Size = UDim2.new(0, 800, 0, 125)
 enemiesContainer.Position = UDim2.new(0.5, -400, 0, 55)
 enemiesContainer.BackgroundTransparency = 1
 enemiesContainer.Parent = combatHudView
@@ -1775,14 +1775,36 @@ enemiesLayout.Padding = UDim.new(0, 20)
 enemiesLayout.Parent = enemiesContainer
 
 local selectedEnemyId: string? = nil
+local currentEnemyViews: { [string]: StateTypes.EnemyView } = {}
 local currentCombatPhase: string = "PlayerPhase"
 local isPlayCardPending: boolean = false
 local isReadyVotePending: boolean = false
 
+local function getFirstLivingEnemyId(enemies: { [string]: StateTypes.EnemyView }): string?
+	local livingIds: { string } = {}
+	for enemyId, enemy in enemies do
+		if enemy.HP > 0 then
+			table.insert(livingIds, enemyId)
+		end
+	end
+	table.sort(livingIds)
+	return livingIds[1]
+end
+
+local function ensureLivingEnemySelected(): string?
+	local selected = if selectedEnemyId then currentEnemyViews[selectedEnemyId] else nil
+	if not selected or selected.HP <= 0 then
+		selectedEnemyId = getFirstLivingEnemyId(currentEnemyViews)
+	end
+	return selectedEnemyId
+end
+
 local function renderEnemyCard(enemy: StateTypes.EnemyView): Frame
 	local card = Instance.new("Frame")
 	card.Name = "Enemy_" .. enemy.InstanceId
-	card.Size = UDim2.new(0, 320, 0, 90)
+	local hasBreakMeter = enemy.BreakThreshold > 0
+	local cardHeight = if enemy.IntentInterruptible then 170 elseif hasBreakMeter then 148 else 124
+	card.Size = UDim2.new(0, 320, 0, cardHeight)
 	card.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
 	card.BackgroundTransparency = 0.15
 	card.BorderSizePixel = 0
@@ -1797,11 +1819,14 @@ local function renderEnemyCard(enemy: StateTypes.EnemyView): Frame
 	nameLabel.Size = UDim2.new(1, -20, 0, 24)
 	nameLabel.Position = UDim2.new(0, 10, 0, 6)
 	nameLabel.BackgroundTransparency = 1
-	nameLabel.Text = "👹 " .. enemy.Name
-	nameLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+	local phaseSuffix = if enemy.BossPhase and enemy.BossPhaseName
+		then string.format("  [PHASE %d: %s]", enemy.BossPhase, string.upper(enemy.BossPhaseName)) else ""
+	nameLabel.Text = "👹 " .. enemy.Name .. phaseSuffix
+	nameLabel.TextColor3 = if enemy.BossPhase then Color3.fromRGB(215, 120, 255) else Color3.fromRGB(255, 100, 100)
 	nameLabel.Font = Enum.Font.GothamBold
-	nameLabel.TextSize = 14
+	nameLabel.TextSize = if enemy.BossPhase then 12 else 14
 	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	nameLabel.Parent = card
 
 	local hpContainer = Instance.new("Frame")
@@ -1813,16 +1838,87 @@ local function renderEnemyCard(enemy: StateTypes.EnemyView): Frame
 	local _, _, updateHp = UIFactory.createProgressBar(hpContainer, Color3.fromRGB(220, 45, 45))
 	updateHp(enemy.HP, enemy.MaxHP)
 
+	local statusY = 54
+	if hasBreakMeter then
+		local breakContainer = Instance.new("Frame")
+		breakContainer.Name = "BreakMeter"
+		breakContainer.Size = UDim2.new(1, -20, 0, 18)
+		breakContainer.Position = UDim2.new(0, 10, 0, 54)
+		breakContainer.BackgroundTransparency = 1
+		breakContainer.Parent = card
+
+		local _, breakLabel, updateBreak = UIFactory.createProgressBar(breakContainer, Color3.fromRGB(255, 170, 45))
+		updateBreak(enemy.BreakMeter, enemy.BreakThreshold)
+		breakLabel.Text = if enemy.IsBroken
+			then "💥 BROKEN — +25% DIRECT DAMAGE"
+			else string.format("BREAK %d / %d", enemy.BreakMeter, enemy.BreakThreshold)
+		breakLabel.TextColor3 = if enemy.IsBroken then Color3.fromRGB(255, 245, 160) else Color3.fromRGB(255, 255, 255)
+		statusY = 80
+	end
+
 	local statusLabel = Instance.new("TextLabel")
-	statusLabel.Size = UDim2.new(1, -20, 0, 24)
-	statusLabel.Position = UDim2.new(0, 10, 0, 54)
+	statusLabel.Size = UDim2.new(1, -20, 0, 18)
+	statusLabel.Position = UDim2.new(0, 10, 0, statusY)
 	statusLabel.BackgroundTransparency = 1
-	statusLabel.Text = string.format("🛡️ %d   🧪 %d   |   %s %s", enemy.Shield, enemy.Poison, enemy.IntentIcon, enemy.IntentText)
-	statusLabel.TextColor3 = Color3.fromRGB(245, 225, 160)
+	statusLabel.Text = string.format(
+		"🛡️ %d   🪨 ARMOR %d   💨 EVADE %d%%   🧪 %d",
+		enemy.Shield,
+		enemy.Armor,
+		enemy.EvasionPercent,
+		enemy.Poison
+	)
+	statusLabel.TextColor3 = Color3.fromRGB(220, 220, 225)
 	statusLabel.Font = Enum.Font.GothamMedium
-	statusLabel.TextSize = 12
+	statusLabel.TextSize = 11
 	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 	statusLabel.Parent = card
+
+	local intentLabel = Instance.new("TextLabel")
+	intentLabel.Name = "IntentLabel"
+	intentLabel.Size = UDim2.new(1, -20, 0, 22)
+	intentLabel.Position = UDim2.new(0, 10, 0, statusY + 18)
+	intentLabel.BackgroundTransparency = 1
+	intentLabel.Text = string.format("%s %s  →  %s", enemy.IntentIcon, enemy.IntentText, enemy.IntentTargetText)
+	intentLabel.TextColor3 = if enemy.IntentTargetUserId == localPlayer.UserId
+		then Color3.fromRGB(255, 115, 115) else Color3.fromRGB(245, 225, 160)
+	intentLabel.Font = Enum.Font.GothamBold
+	intentLabel.TextSize = 11
+	intentLabel.TextXAlignment = Enum.TextXAlignment.Left
+	intentLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	intentLabel.Parent = card
+
+	local reactionLabel = Instance.new("TextLabel")
+	reactionLabel.Name = "ReactionGuidance"
+	reactionLabel.Size = UDim2.new(1, -20, 0, 20)
+	reactionLabel.Position = UDim2.new(0, 10, 0, statusY + 42)
+	reactionLabel.BackgroundTransparency = 1
+	reactionLabel.Text = enemy.IntentReactionText
+	reactionLabel.TextColor3 = if enemy.IntentReactionStyle == "DefenseOnly"
+		then Color3.fromRGB(255, 105, 105)
+		elseif enemy.IntentReactionStyle == "Movement" then Color3.fromRGB(90, 220, 255)
+		elseif enemy.IntentReactionStyle == "ParryOnly" then Color3.fromRGB(255, 205, 80)
+		elseif enemy.IntentReactionStyle == "DodgeOnly" then Color3.fromRGB(120, 255, 160)
+		elseif enemy.IntentReactionStyle == "Interrupt" then Color3.fromRGB(255, 180, 60)
+		else Color3.fromRGB(190, 210, 255)
+	reactionLabel.Font = Enum.Font.GothamBold
+	reactionLabel.TextSize = 11
+	reactionLabel.TextXAlignment = Enum.TextXAlignment.Left
+	reactionLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	reactionLabel.Parent = card
+
+	if enemy.IntentInterruptible then
+		local interruptLabel = Instance.new("TextLabel")
+		interruptLabel.Name = "InterruptLabel"
+		interruptLabel.Size = UDim2.new(1, -20, 0, 18)
+		interruptLabel.Position = UDim2.new(0, 10, 0, statusY + 64)
+		interruptLabel.BackgroundTransparency = 1
+		interruptLabel.Text = "✋ " .. (enemy.IntentInterruptText or "BREAK TO INTERRUPT")
+		interruptLabel.TextColor3 = Color3.fromRGB(255, 190, 75)
+		interruptLabel.Font = Enum.Font.GothamBold
+		interruptLabel.TextSize = 11
+		interruptLabel.TextXAlignment = Enum.TextXAlignment.Left
+		interruptLabel.Parent = card
+	end
 
 	local clickBtn = Instance.new("TextButton")
 	clickBtn.Size = UDim2.new(1, 0, 1, 0)
@@ -2169,11 +2265,18 @@ local function startReactionOpportunity(win: StateTypes.ReactionWindowView)
 
 	reactionWidget.Visible = true
 
-	if not win.CanDodge and not win.CanParry then
+	if win.AvoidanceMode == "Movement" then
+		reactionAttackLabel.Text = string.format("🏃 %s: MOVE OUT OF THE RED ZONE!", win.AttackName)
+		reactionAttackLabel.TextColor3 = Color3.fromRGB(255, 120, 255)
+		dodgeBtnFrame.Visible = false
+		parryBtnFrame.Visible = false
+	elseif not win.CanDodge and not win.CanParry then
 		reactionAttackLabel.Text = string.format("⚠️ %s: %s (UNREACTABLE)", win.EnemyName, win.AttackName)
+		reactionAttackLabel.TextColor3 = Color3.fromRGB(255, 230, 170)
 		dodgeBtnFrame.Visible = false
 		parryBtnFrame.Visible = false
 	else
+		reactionAttackLabel.TextColor3 = Color3.fromRGB(255, 230, 170)
 		local permText = if (win.CanDodge and win.CanParry) then ""
 			elseif win.CanDodge then " [Unparryable]"
 			else " [Undodgeable]"
@@ -2192,9 +2295,11 @@ local function startReactionOpportunity(win: StateTypes.ReactionWindowView)
 			activeReactionWindowId = nil
 			currentReactionWindowView = nil
 			reactionWidget.Visible = false
-			showJudgementFeedback("MISS", Color3.fromRGB(255, 60, 60))
-			bannerLabel.Text = "💀 Reaction Missed!"
-			bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+			if win.AvoidanceMode ~= "Movement" then
+				showJudgementFeedback("MISS", Color3.fromRGB(255, 60, 60))
+				bannerLabel.Text = "💀 Reaction Missed!"
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+			end
 		end
 	end)
 end
@@ -2215,17 +2320,36 @@ UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: 
 	end
 end)
 
+local CARD_RARITY_STYLE: { [string]: { Color: Color3, Corner: number, Stroke: number } } = {
+	Common = { Color = Color3.fromRGB(155, 160, 170), Corner = 8, Stroke = 1.5 },
+	Uncommon = { Color = Color3.fromRGB(75, 205, 115), Corner = 10, Stroke = 2 },
+	Rare = { Color = Color3.fromRGB(70, 145, 255), Corner = 12, Stroke = 2.5 },
+	SuperRare = { Color = Color3.fromRGB(185, 85, 255), Corner = 15, Stroke = 3 },
+	UltraRare = { Color = Color3.fromRGB(255, 205, 55), Corner = 19, Stroke = 4 },
+}
+
 -- Card Widget Creator (Uses CardView with CardInstanceId)
 local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (() -> ())?): Frame
+	local rarity = card.Rarity or "Common"
+	local rarityStyle = CARD_RARITY_STYLE[rarity] or CARD_RARITY_STYLE.Common
 	local cardFrame = Instance.new("Frame")
 	cardFrame.Name = "Card_" .. card.InstanceId
 	cardFrame.Size = UDim2.new(0, 135, 0, 175)
 	cardFrame.BackgroundColor3 = Color3.fromRGB(26, 28, 34)
 	cardFrame.BorderSizePixel = 0
-	UIFactory.createCorner(cardFrame, 10)
+	UIFactory.createCorner(cardFrame, rarityStyle.Corner)
 
 	local cardColor = card.Color or Color3.fromRGB(80, 120, 200)
-	UIFactory.createStroke(cardFrame, cardColor, 2.5)
+	UIFactory.createStroke(cardFrame, rarityStyle.Color, rarityStyle.Stroke)
+	if rarity == "SuperRare" or rarity == "UltraRare" then
+		local rarityGradient = Instance.new("UIGradient")
+		rarityGradient.Name = "RaritySurface"
+		rarityGradient.Color = if rarity == "UltraRare"
+			then ColorSequence.new(Color3.fromRGB(62, 45, 18), Color3.fromRGB(34, 25, 50))
+			else ColorSequence.new(Color3.fromRGB(48, 28, 66), Color3.fromRGB(24, 30, 48))
+		rarityGradient.Rotation = 35
+		rarityGradient.Parent = cardFrame
+	end
 
 	local header = Instance.new("Frame")
 	header.Size = UDim2.new(1, 0, 0, 30)
@@ -2244,6 +2368,19 @@ local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (
 	nameLabel.TextSize = 12
 	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 	nameLabel.Parent = header
+
+	local rarityLabel = Instance.new("TextLabel")
+	rarityLabel.Name = "RarityLabel"
+	rarityLabel.Size = UDim2.new(0, 60, 0, 14)
+	rarityLabel.Position = UDim2.new(1, -62, 0, 31)
+	rarityLabel.BackgroundColor3 = rarityStyle.Color
+	rarityLabel.BackgroundTransparency = 0.12
+	rarityLabel.Text = string.upper(rarity)
+	rarityLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	rarityLabel.Font = Enum.Font.GothamBold
+	rarityLabel.TextSize = 8
+	rarityLabel.Parent = cardFrame
+	UIFactory.createCorner(rarityLabel, math.max(4, math.floor(rarityStyle.Corner / 2)))
 
 	local costBadge = Instance.new("Frame")
 	costBadge.Size = UDim2.new(0, 26, 0, 26)
@@ -2272,7 +2409,7 @@ local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (
 	iconLabel.Parent = cardFrame
 
 	local descLabel = Instance.new("TextLabel")
-	descLabel.Size = UDim2.new(1, -14, 0, 65)
+	descLabel.Size = UDim2.new(1, -14, 0, 53)
 	descLabel.Position = UDim2.new(0, 7, 0, 88)
 	descLabel.BackgroundColor3 = Color3.fromRGB(18, 20, 24)
 	descLabel.BorderSizePixel = 0
@@ -2284,12 +2421,51 @@ local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (
 	descLabel.Parent = cardFrame
 	UIFactory.createCorner(descLabel, 6)
 
+	local rulesLabel = Instance.new("TextLabel")
+	rulesLabel.Name = "CardRules"
+	rulesLabel.Size = UDim2.new(1, -12, 0, 14)
+	rulesLabel.Position = UDim2.new(0, 6, 0, 142)
+	rulesLabel.BackgroundTransparency = 1
+	local usageText = "UNLIMITED"
+	if card.MaxUses and card.UseLimitScope then
+		usageText = string.format("%d/%d %s", card.RemainingUses or card.MaxUses, card.MaxUses, string.upper(card.UseLimitScope))
+	end
+	rulesLabel.Text = string.format("ACC %d%%  •  %s", card.AccuracyPercent or 100, usageText)
+	rulesLabel.TextColor3 = if card.RemainingUses ~= nil and card.RemainingUses <= 0
+		then Color3.fromRGB(255, 90, 90) else rarityStyle.Color
+	rulesLabel.Font = Enum.Font.GothamBold
+	rulesLabel.TextSize = 8
+	rulesLabel.Parent = cardFrame
+
+	if card.Tags and #card.Tags > 0 then
+		local tagsLabel = Instance.new("TextLabel")
+		tagsLabel.Name = "CardTags"
+		tagsLabel.Size = UDim2.new(1, -12, 0, 16)
+		tagsLabel.Position = UDim2.new(0, 6, 1, -18)
+		tagsLabel.BackgroundTransparency = 1
+		tagsLabel.Text = string.upper(table.concat(card.Tags, " • "))
+		tagsLabel.TextColor3 = Color3.fromRGB(255, 205, 90)
+		tagsLabel.Font = Enum.Font.GothamBold
+		tagsLabel.TextSize = 9
+		tagsLabel.TextXAlignment = Enum.TextXAlignment.Center
+		tagsLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		tagsLabel.Parent = cardFrame
+	end
+
 	local clickBtn = Instance.new("TextButton")
 	clickBtn.Name = "ClickButton"
 	clickBtn.Size = UDim2.new(1, 0, 1, 0)
 	clickBtn.BackgroundTransparency = 1
 	clickBtn.Text = ""
+	clickBtn.Active = true
+	clickBtn.AutoButtonColor = false
+	clickBtn.ZIndex = 10
 	clickBtn.Parent = cardFrame
+	local usageDepleted = card.RemainingUses ~= nil and card.RemainingUses <= 0
+	if usageDepleted then
+		cardFrame.BackgroundTransparency = 0.45
+		clickBtn.Active = false
+	end
 
 	clickBtn.MouseEnter:Connect(function()
 		TweenService:Create(cardFrame, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -2308,28 +2484,45 @@ local function renderCardWidget(card: StateTypes.CardView, customClickHandler: (
 	if customClickHandler then
 		clickBtn.MouseButton1Click:Connect(customClickHandler)
 	else
-		clickBtn.MouseButton1Click:Connect(function()
+		clickBtn.Activated:Connect(function()
+			if usageDepleted then
+				bannerLabel.Text = string.format("⚠️ %s has no uses remaining.", card.Name)
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+				return
+			end
 			if currentCombatPhase ~= "PlayerPhase" then
 				bannerLabel.Text = "⏳ Please wait: Enemies are taking their turn..."
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 				return
 			end
 			if isPlayCardPending then return end
+			if not PlayCardEvent then
+				bannerLabel.Text = "⚠️ Card network is unavailable. Rejoin the server."
+				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+				return
+			end
+
+			local targetParam: any = nil
+			if card.Target == "Enemy" then
+				targetParam = ensureLivingEnemySelected()
+				if not targetParam then
+					bannerLabel.Text = "⚠️ No living enemy is available for this card."
+					bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+					return
+				end
+			elseif card.Target == "Ally" then
+				targetParam = localPlayer.UserId
+			elseif card.Target == "Self" or card.Target == "None" then
+				targetParam = nil
+			end
+
 			isPlayCardPending = true
+			bannerLabel.Text = string.format("🃏 Playing %s...", card.Name)
+			bannerLabel.TextColor3 = Color3.fromRGB(130, 205, 255)
+			PlayCardEvent:FireServer(card.InstanceId, targetParam)
 			task.delay(2.0, function()
 				isPlayCardPending = false
 			end)
-			if PlayCardEvent then
-				local targetParam: any = nil
-				if card.Target == "Enemy" then
-					targetParam = selectedEnemyId
-				elseif card.Target == "Ally" then
-					targetParam = localPlayer.UserId
-				elseif card.Target == "Self" or card.Target == "None" then
-					targetParam = nil
-				end
-				PlayCardEvent:FireServer(card.InstanceId, targetParam)
-			end
 		end)
 	end
 
@@ -2811,7 +3004,7 @@ local merchantTitle = Instance.new("TextLabel")
 merchantTitle.Size = UDim2.new(0, 300, 0, 30)
 merchantTitle.Position = UDim2.new(0, 20, 0, 12)
 merchantTitle.BackgroundTransparency = 1
-merchantTitle.Text = "💰 RIFT MERCHANT BAZAAR"
+merchantTitle.Text = "💰 YOUR RIFT BAZAAR"
 merchantTitle.TextColor3 = Color3.fromRGB(255, 215, 80)
 merchantTitle.Font = Enum.Font.GothamBold
 merchantTitle.TextSize = 20
@@ -3097,6 +3290,11 @@ if CombatStateUpdateEvent then
 		isPlayCardPending = false
 		isReadyVotePending = false
 
+		-- Reconcile target selection before rendering. Defeated enemies remain in
+		-- snapshots for presentation, but must never remain the implicit card target.
+		currentEnemyViews = snapshot.Enemies
+		ensureLivingEnemySelected()
+
 		-- Render Multi-Enemies
 		for _, child in enemiesContainer:GetChildren() do
 			if child:IsA("Frame") then
@@ -3104,15 +3302,9 @@ if CombatStateUpdateEvent then
 			end
 		end
 
-		local defaultFirstEnemy: string? = nil
-		for instId, enemyView in snapshot.Enemies do
-			if not defaultFirstEnemy then defaultFirstEnemy = instId end
+		for _, enemyView in snapshot.Enemies do
 			local enemyWidget = renderEnemyCard(enemyView)
 			enemyWidget.Parent = enemiesContainer
-		end
-
-		if not selectedEnemyId or not snapshot.Enemies[selectedEnemyId] then
-			selectedEnemyId = defaultFirstEnemy
 		end
 
 		-- Monotonic Timer Update
@@ -3142,7 +3334,9 @@ if CombatStateUpdateEvent then
 			end
 
 			updatePlayerHpBar(myView.HP, myView.MaxHP)
-			playerShieldLabel.Text = string.format("🛡️ Shield: %d", myView.Shield)
+			playerShieldLabel.Text = if (myView.Shock or 0) > 0
+				then string.format("🛡️ Shield: %d   ⚡ Shock: %d (+%d%% damage)", myView.Shield, myView.Shock, math.round(myView.Shock * 5))
+				else string.format("🛡️ Shield: %d", myView.Shield)
 			playerEnergyLabel.Text = string.format("⚡ %d / %d Energy", myView.Energy, myView.MaxEnergy)
 			deckStatsLabel.Text = string.format("🃏 Deck: %d   |   🗑️ Discard: %d", myView.DeckCount, myView.DiscardCount)
 		end
@@ -3210,6 +3404,19 @@ end
 if CombatEventLoggedEvent then
 	CombatEventLoggedEvent.OnClientEvent:Connect(function(event: StateTypes.CombatEvent)
 		if not event then return end
+		-- Positional combat feedback is owned by CombatVFXController so damage,
+		-- healing, Shield, and Break values do not appear twice on screen.
+		if event.Type == "DamageDealt"
+			or event.Type == "Healed"
+			or event.Type == "ShieldGained"
+			or event.Type == "BreakDamage"
+			or event.Type == "EnemyBroken"
+			or event.Type == "BossPhaseChanged"
+			or event.Type == "CardPresented"
+			or event.Type == "CardMissed"
+			or event.Type == "SkillMissed" then
+			return
+		end
 
 		local popup = Instance.new("TextLabel")
 		popup.Size = UDim2.new(0, 180, 0, 32)
@@ -3329,6 +3536,9 @@ if ActionResultEvent then
 			if res.Success == false then
 				bannerLabel.Text = string.format("⚠️ %s", tostring(res.Message or "Cannot play card."))
 				bannerLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+			else
+				bannerLabel.Text = "✅ Card played."
+				bannerLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
 			end
 		elseif res.Action == "InteractEventObject" then
 			isEventInteractPending = false

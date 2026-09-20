@@ -6,31 +6,43 @@ Up to 4 players form an adventuring party, choose from 10 distinct RPG Hero clas
 
 ---
 
-## 🚀 Current Project Status: Phase 4 Persistent Decks, Deck Builder Frontend, 3D Rooms / Events / Merchant / Campfire, Reaction V2 & Server Hardening
+## 🚀 Current Project Status: Phase 5 Vertical Slice — Flexible Builds & Enemy Defenses
 
 The current codebase implements and hardens the following foundational pillars:
 * **Phase 4 Persistent Collection & Decks (`CardCollectionService.luau`, `DeckService.luau`, `PersistenceService.luau`)**: Profile versioning (`ProfileVersion = 1`), permanent card collection ownership tracking, configurable deck slot entitlements (4 base, up to 20), class-agnostic saved decks (`classId = nil`), and deterministic active deck fallback.
-* **Deck Builder Frontend (`UIController.client.luau`)**: 3-column interactive modal interface, client-side draft editing with legal bounds validation (8–30 cards, max 3 copies), collection browser with search filter, and authoritative remote synchronization.
-* **3D Physical Room Streaming & Encounters (`WorldRoomService.luau`, `EventService.luau`, `RunManager.luau`)**: Physical room geometry lifecycle streaming (`Workspace.CardRiftWorld.ActiveRoom`), interactive co-op event puzzles, shared merchant party stock with double-purchase concurrency locks, campfire choice semantics (Rest vs. Leave), and two-stage failure injection state rollbacks.
-* **Reaction V2 & 3D Attack Presentation (`ReactionService.luau`, `CombatVFXController.client.luau`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Players react visually to 3D enemy windups, jump arcs, projectile flights, and AoE telegraphs using C (Dodge) and V (Parry) with bounded latency compensation.
+* **Deck Builder Frontend (`UIController.client.luau`)**: 3-column interactive modal interface, client-side draft editing with legal bounds validation (8–30 cards), rarity/card-specific copy limits, collection browser with search filter, and authoritative remote synchronization.
+* **3D Physical Room Streaming & Encounters (`WorldRoomService.luau`, `EventService.luau`, `RunManager.luau`)**: Physical room geometry lifecycle streaming (`Workspace.CardRiftWorld.ActiveRoom`), interactive co-op event puzzles, deterministic personal merchant offers with per-player purchase locks, campfire choice semantics (Rest vs. Leave), and two-stage failure injection state rollbacks.
+* **Reaction V2 & 3D Attack Presentation (`ReactionService.luau`, `CombatVFXController.client.luau`)**: Real-time 3D attack reactions without rhythm rings or approach circles. Normal attacks use C (Dodge) and V (Parry) with bounded latency compensation; authored movement hazards instead validate physical player position at impact.
 * **Server-Authoritative Invariants & Hardening (`DeckService.luau`, `init.server.luau`, `RunManager.luau`)**: Server-authoritative deck deletion rules (strictly rejecting deletion of sole or active decks), mid-run mutation boundary guards outside Lobby (`Phase ~= "Lobby"`), and fail-closed card grant test seams with zero persistence side effects.
 * **Core Combat & RPG Subsystems (`CombatService.luau`, `DamagePipeline.luau`, `ClassService.luau`)**: Decoupled combat execution, dynamic co-op HP scaling, multi-enemy support, equipment/stat/skill/passive services, and 8 implemented class combat gimmicks (with remaining gimmicks reserved on the roadmap).
+* **Phase 5 Break/Stagger Foundation (`BreakService.luau`)**: Elite and boss Break meters, Heavy-card and Parry contributions, Perfect Parry bonuses, one-action cancellation, a server-authoritative Broken damage window, and explicit HUD feedback.
+* **Data-Driven Act 1 Enemies (`EnemyData.luau`)**: Nine enemy definitions, deterministic move cycles, mechanics-first tier compositions, authored reaction profiles and target modes, ally protection, party-wide attacks, and readable move descriptions without enemy-name branches in combat resolution.
+* **Soul Eater Escalation (`EnemyMechanicsService.luau`)**: `Devour the Fallen` grants every living Soul Eater +3 Attack when another enemy dies, refreshes an active attack telegraph, resolves multiple reactors deterministically, participates in action rollback, and cannot trigger twice for the same defeat.
+* **Storm Mage Movement Hazard (`SpatialHazardService.luau`)**: `Static Lightning Field` marks a seven-stud floor circle around a snapshotted player position. Players physically move outside before impact; the server checks horizontal root-part distance, damages failures, and applies two Shock stacks. Each Shock stack adds 5% direct damage taken and expires by duration.
+* **Reliable Card Interaction (`UIController.client.luau`, `EffectResolver.luau`, `CombatService.luau`)**: Card activation uses a topmost cross-input button, automatically selects only living enemies, and shows the authoritative result. Effect execution now returns a pure numeric result array, preventing successful Strike resolution from crashing before damage, card consumption, and the combat snapshot are committed.
+* **Break-Driven Enemy Interrupts (`EnemyData.luau`, `BreakService.luau`)**: Shield Priest and Bomb Carrier now expose 20-point normal-enemy Break meters. A Heavy card can cancel the telegraphed Aegis Transfer or Detonate, while non-interruptible setup moves preserve Break progress below the threshold. The HUD states exactly when and why a move can be interrupted.
+* **Exact Intent Targets & Reaction Guidance (`CombatService.luau`, `UIController.client.luau`)**: Single-target attacks lock a living player when telegraphed and resolve against that same player. Enemy panels name the exact target and explicitly distinguish Dodge+Parry, Dodge-only, Parry-only, movement, preparation, and fully non-reactable attacks. Intents targeting the local player are highlighted red.
+* **Spire Guardian Multi-Phase Encounter (`BossMechanicsService.luau`, `EnemyData.luau`)**: The Act 1 boss advances through three named, server-authoritative phases at 70% and 35% HP. Phase health gates prevent giant hits or damage-over-time from skipping mechanics, transition barriers are granted once, phase changes during enemy resolution provide a preparation window, and the final phase opens with a party Break coordination check.
+* **World-Space Combat Feedback (`CombatFeedbackData.luau`, `CombatVFXController.client.luau`)**: Authoritative damage, healing, Shield, Break, and boss-phase events render over their actual targets. Hostile impacts add a short target flash and locally scoped, strength-capped camera response; `ReduceMotion = true` disables camera movement, and popup concurrency is bounded for four-player bursts.
+* **Flexible Shared Build Pool (`DeckService.luau`, `SkillService.luau`)**: Hero class selection controls base stats and class mechanics, never card or active-skill eligibility. Saved decks normalize to `ClassId = nil`, the fallback deck is universal, and every class sees the same owned card and skill pool.
+* **Card Limits, Accuracy & Presentation (`CardRulesService.luau`, `CardData.luau`)**: Cards define Common through Ultra Rare identity, per-card deck-copy caps, optional per-battle/per-run use limits, Accuracy, and their own melee/projectile/aura/summon presentation. Misses consume the action normally, counters participate in transaction rollback, and completed limits exhaust remaining copies for the encounter.
+* **Enemy Armor, Evasion & Stances (`EnemyData.luau`, `DamagePipeline.luau`)**: Act 1 enemies now have visible Armor and Evasion. Armor reduces direct physical damage while Arcane/Piercing attacks counter it; Evasion contests card and active-skill Accuracy. Sentinel, Storm Mage, and Iron Bulwark rotate data-driven defensive stances to create changing tactical windows.
 
 ### 🧪 Verification Baseline
-* **76 In-Game Integration Suites** in `TestRunner.luau` (244 test assertions in Suite 76 alone, hundreds of assertions across all suites) covering state machines, combat mechanics, room transactions, failure injection rollback, and deterministic timing math.
-* **Offline verifier contains 1,429 checks** in `tests/verify_phase1_integration.py`; runtime execution must be performed locally/Studio.
-* **Authoritative Build Fingerprint**: `BUILD_ID = "hardened_server_deck_contracts_20260919"` (`Hardened Server Deck Invariants & Contracts`).
-* **Strict Luau (`--!strict`)** across 100% of all 45 project modules.
+* **85 In-Game Integration Suites** in `TestRunner.luau`, including flexible-build, card-limit, Accuracy/defense, combat-feedback, Break/Stagger, enemy-interrupt, exact-intent, Spire Guardian, Soul Eater, Shock, and movement-hazard coverage.
+* **Offline verifier contains 1,767 checks** in `tests/verify_phase1_integration.py`; runtime execution must still be performed locally/Studio.
+* **Authoritative Build Fingerprint**: `BUILD_ID = "phase5_flexible_builds_20260920"` (`Phase 5 Flexible Builds`).
+* **Strict Luau (`--!strict`)** across 100% of all 52 project modules.
 * **Zero `_G` Global Pollution** across the entire codebase.
-* **Clean Rojo compilation** (`rojo build -o build.rbxl` exits code 0).
-* **Static & Offline vs. In-Game & Interactive Verification**: Offline verification (`tests/verify_phase1_integration.py` and `luau-compile.exe`) guarantees schema, condition semantics, and contract invariants; in-game automated testing (`TestRunner.luau`) validates runtime transactions and state recovery on boot; 3D visual rendering and reaction feel are verified interactively in Roblox Studio using developer commands (`/SlowHeavy`, `/FastDagger`, `/JumpAttack`, `/ProjectileBolt`, `/UnreactableExplosion`).
+* **Clean Luau compilation**: all 52 source files compile with the repository's `luau-compile.exe`. Rojo build and Studio execution remain required release checks.
+* **Static & Offline vs. In-Game & Interactive Verification**: Offline verification (`tests/verify_phase1_integration.py` and `luau-compile.exe`) validates schemas, source contracts, and compilation. In-game suites (`TestRunner.luau`) and 3D/reaction feel still require explicit Roblox Studio execution using developer commands (`/SlowHeavy`, `/FastDagger`, `/JumpAttack`, `/ProjectileBolt`, `/UnreactableExplosion`).
 
 ---
 
 ## 🌟 Key Features & Subsystems
 
 ### 1. 10 Core Classes & 20 Subclasses (`ClassData.luau`, `ClassService.luau`)
-Every class features unique base stats, starting decks, passive skill trees, and combat mechanics:
+Every class provides unique base stats and combat mechanics, while all cards and active skills remain freely mixable across classes:
 * **Warlord** (`⚔️`, 110 HP, 3 ⚡) — *Rage*: Gains +1 ATK per 10% missing HP.
   * *Berserker*: +4 flat damage when below 50% HP.
   * *Titan*: Starts combat with +10 Shield and +10 Max HP.
@@ -81,7 +93,7 @@ Every class features unique base stats, starting decks, passive skill trees, and
 * **Multi-Enemy Encounters**: Keyed collection `Enemies: { [string]: EnemyState }` supporting 1 to $N$ combatants.
 * **Authoritative Pipelines**:
   * `DamagePipeline.luau`: Multi-phase damage, armor/shield absorption, piercing damage, and downed handling.
-  * `StatusService.luau`: Poison, Ignite, Chill, Freeze, Shock, Bleed with distinct definitions and instances.
+  * `StatusService.luau`: Poison, Ignite, Shock, and Bleed runtime behavior plus fail-closed Chill/Freeze definitions.
   * `EffectResolver.luau`: Generic, data-driven effect handlers with recursion depth limits.
   * `TargetResolver.luau`: Authoritative target validation (`Enemy`, `Self`, `Ally`, `None`).
   * `ModifierResolver.luau`: Deterministic math `(Base + Add) * Mult` with absolute override precedence.
@@ -116,7 +128,7 @@ Every class features unique base stats, starting decks, passive skill trees, and
 * **Deck Management (`DeckService.luau`)**:
   * Server-generated GUIDs for persistent decks.
   * Configurable slot entitlements (`BaseDeckSlots = 4`, expandible up to 20).
-  * Authoritative validation: collection ownership, max 3 copies per card, 8–30 card deck bounds, class-agnostic decks (`classId = nil` by default).
+  * Authoritative validation: collection ownership, rarity/card-specific copy limits, 8–30 card deck bounds, and class-agnostic decks (`classId = nil`).
   * Server-authoritative deck deletion: rejects deleting the sole remaining deck and the currently active deck, strictly preserving `ActiveDeckId` and deck counts without profile mutations; deleting inactive decks succeeds cleanly.
   * Mid-run mutation boundary: `DeckService` and `init.server` strictly reject all deck mutations (`CreateDeck`, `RenameDeck`, `DeleteDeck`, `SaveDeck`, `DuplicateDeck`, `SelectActiveDeck`) during active dungeon runs outside Lobby (`Phase ~= "Lobby"`).
   * Deterministic active-deck fallback: resolves first valid playable deck or default class starter deck with zero persistence mutation on read/fallback.
@@ -149,11 +161,11 @@ Every class features unique base stats, starting decks, passive skill trees, and
   * `Rest`: Restores 30% Max HP to connected party members (`m.IsConnected ~= false`), sets `CampfireUsed = true`, idempotently clears node, cleans room geometry, increments `StateRevision`, and transitions run to `MapSelect`. Disconnected party members receive zero healing.
   * `Leave`: Exits without resting (0 healing, `CampfireUsed` remains false), clears node, cleans room, and transitions to `MapSelect`.
   * Invalid choices: Cleanly rejected (`return false, err`) with fail-closed guarantee (zero healing, node uncleared, phase remains `ActiveRoom`).
-* **Authoritative Merchant Purchasing & Shared Party Stock**:
-  * **Shared Party Stock**: In co-op, merchant stock is shared across the party (stock = 1 per ware). Player A purchasing an item marks `IsPurchased = true`, locking out Player B.
-  * **Double-Purchase Prevention & Concurrency Locking**: In-memory lock keyed by `runId:itemId` serializes concurrent purchase attempts and rejects simultaneous actions with in-progress notifications.
+* **Authoritative Merchant Purchasing & Personal Stock**:
+  * **Personal Normal Offers**: Every party member receives deterministic offers namespaced by user ID. Player A purchasing a normal item does not remove Player B's opportunity.
+  * **Double-Purchase Prevention & Concurrency Locking**: In-memory locks keyed by `runId:userId:itemId` serialize rapid duplicate purchases without coupling different players' stock.
   * **Fail-Closed Card Grant Ordering**: `CardCollectionService.grantCard()` is verified and granted before deducting player gold or modifying the runtime deck. Any grant failure aborts without mutating gold, deck, or ware status.
-  * **Deterministic Shop Inventory**: Wares are generated deterministically from `(seed, act, tier, nodeId)` using 32-bit polynomial string hashing (`hashStringToSeed`) and bitwise mixing.
+  * **Deterministic Shop Inventory**: Wares are generated deterministically from `(seed, act, tier, nodeId, userId)` using 32-bit polynomial string hashing (`hashStringToSeed`) and bitwise mixing.
 * **Two-Stage Combat Failure Injection & State Rollback**:
   * Stage 1: Pre-setup failure injection testing initial parameter validation and abort.
   * Stage 2: Post-card-draw and resource initialization failure injection, verifying caller `RunManager.travelToNode` cleanly rolls back party HP, Shield, Energy, Hand, Deck, Discard, Exhaust, and downs status, resets `activeCombat = nil`, cleans room geometry, and keeps the run in `MapSelect`.
@@ -187,21 +199,25 @@ spire-game/
 ├── PERSISTENCE_SCHEMA.md         # DataStore profile, migrations, and concurrency safety
 ├── DECK_SYSTEM.md                # Deck model, slot entitlements, and validation rules
 ├── CARD_COLLECTION.md            # Permanent collection ownership and grant APIs
+├── MASTER_PLAN_AUDIT_2026-09-20.md # Evidence-based implementation and production gap audit
 ├── PHASE_4_IMPLEMENTATION.md     # Phase 4 & 4.1 implementation and verification record
+├── PHASE_5_IMPLEMENTATION.md     # Vertical-slice implementation, acceptance, and roadmap
 │
 ├── src/
 │   ├── shared/                   # ReplicatedStorage.Shared
 │   │   ├── StateTypes.luau       # Canonical Luau type definitions (--!strict)
 │   │   ├── GameConfig.luau       # Global game constants, limits, and scaling curves
+│   │   ├── CombatFeedbackData.luau # Shared world-feedback presentation policy
 │   │   ├── BuildInfo.luau        # Authoritative build fingerprinting
 │   │   ├── CardData.luau         # Card library with data-driven effects
-│   │   ├── ClassData.luau        # 10 Classes, 20 Subclasses, starting decks
+│   │   ├── ClassData.luau        # 10 Classes, 20 Subclasses, stats & archetype suggestions
 │   │   ├── RelicData.luau        # 18 Relics, rarities, and trigger hooks
 │   │   ├── DungeonMap.luau       # 4-Act, 10-Tier procedural Spire tree generator
 │   │   ├── EquipmentData.luau    # RPG Equipment catalog and stat modifiers
 │   │   ├── SkillData.luau        # Active skills catalog and costs
 │   │   ├── PassiveData.luau      # Passive skill trees (DAG) and prerequisites
 │   │   ├── ReactionData.luau     # 3D attack timing profiles and projectile resolver
+│   │   ├── EnemyData.luau        # Act 1 enemy definitions, moves, roles, encounters
 │   │   ├── EventData.luau        # 3D interactive co-op event definitions and riddles
 │   │   └── EnvironmentData.luau  # Elemental affinities and battlefield transformations
 │   │
@@ -215,7 +231,7 @@ spire-game/
 │   │       ├── RunManager.luau            # RunState SSOT & expedition lifecycle
 │   │       ├── CombatService.luau         # CombatState SSOT & turn orchestration
 │   │       ├── CardService.luau           # Runtime CardInstance synthesis & piles
-│   │       ├── ClassService.luau          # Hero classes, starting decks, gimmicks
+│   │       ├── ClassService.luau          # Hero stats/gimmicks & class-agnostic deck synthesis
 │   │       ├── RelicService.luau          # Relic inventory & passive triggers
 │   │       ├── DungeonService.luau        # Procedural map lifecycle & voting
 │   │       ├── EquipmentService.luau      # RPG gear inventory, equipping, modifiers
@@ -225,14 +241,19 @@ spire-game/
 │   │       ├── TargetResolver.luau        # Authoritative target validation
 │   │       ├── ModifierResolver.luau      # Deterministic modifier calculations
 │   │       ├── DamagePipeline.luau        # Multi-phase damage, shields, downed
-│   │       ├── StatusService.luau         # Poison, Ignite, Chill, Freeze, Bleed
+│   │       ├── BreakService.luau          # Elite/boss Break meter and recovery rules
+│   │       ├── BossMechanicsService.luau  # Boss phase gates, transitions, and barriers
+│   │       ├── CardRulesService.luau       # Accuracy, Evasion, and battle/run card-use limits
+│   │       ├── EnemyMechanicsService.luau # Defeat-triggered enemy reactions and guards
+│   │       ├── SpatialHazardService.luau  # Server-authoritative floor-zone position checks
+│   │       ├── StatusService.luau         # Poison, Ignite, Shock, Bleed; planned Chill/Freeze
 │   │       ├── EffectResolver.luau        # Data-driven generic effect dispatcher
 │   │       ├── ArenaVisualizer.luau       # Reactive 3D enemy models & health bars
 │   │       ├── WorldRoomService.luau      # 3D physical room streaming & geometry lifecycle
 │   │       ├── EventService.luau          # 3D co-op puzzle & riddle encounter engine
 │   │       ├── ReactionService.luau       # Authoritative 3D attack reaction window engine
 │   │       ├── EnvironmentService.luau    # Elemental affinities & battlefield transformations
-│   │       └── TestRunner.luau            # 76 end-to-end integration test suites
+│   │       └── TestRunner.luau            # 85 end-to-end integration test suites
 │   │
 │   └── client/                   # StarterPlayerScripts.Client
 │       ├── init.client.luau            # Client bootstrap
@@ -242,7 +263,7 @@ spire-game/
 │       └── CombatVFXController.client.luau # Client 3D attack motions, projectiles, and AoE
 │
 └── tests/
-    └── verify_phase1_integration.py    # 1,429 offline architecture & logic verifiers
+    └── verify_phase1_integration.py    # 1,767 offline architecture & logic verifiers
 ```
 
 ---
@@ -258,7 +279,7 @@ spire-game/
 ```bash
 python tests/verify_phase1_integration.py
 ```
-*Executes all 1,429 verifier checks against file schemas, network contracts, typing, and logic rules.*
+*Executes all 1,767 verifier checks against file schemas, network contracts, typing, and logic rules.*
 
 ### 2. Build Roblox Place File
 ```bash

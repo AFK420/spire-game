@@ -42,6 +42,7 @@ local PersistenceService = require(servicesFolder:WaitForChild("PersistenceServi
 local SkillService = require(servicesFolder:WaitForChild("SkillService") :: ModuleScript)
 local RelicService = require(servicesFolder:WaitForChild("RelicService") :: ModuleScript)
 local CardCollectionService = require(servicesFolder:WaitForChild("CardCollectionService") :: ModuleScript)
+local CardRulesService = require(servicesFolder:WaitForChild("CardRulesService") :: ModuleScript)
 
 local CombatService: any = nil
 local StatusService: any = nil
@@ -351,13 +352,17 @@ function RunManager.getRunSnapshotForPlayer(player: any): StateTypes.RunSnapshot
 
 	local activeRoomView: StateTypes.ActiveRoomView? = nil
 	if runToRead.ActiveRoom then
+		local merchantWares: { StateTypes.MerchantItemView }? = runToRead.ActiveRoom.MerchantWares
+		if runToRead.ActiveRoom.MerchantWaresByPlayer then
+			merchantWares = runToRead.ActiveRoom.MerchantWaresByPlayer[userId]
+		end
 		activeRoomView = {
 			NodeId = runToRead.ActiveRoom.NodeId,
 			Type = runToRead.ActiveRoom.Type,
 			Tier = runToRead.ActiveRoom.Tier,
 			ActIndex = runToRead.ActiveRoom.ActIndex,
 			CampfireUsed = runToRead.ActiveRoom.CampfireUsed,
-			MerchantWares = runToRead.ActiveRoom.MerchantWares,
+			MerchantWares = merchantWares,
 		}
 	end
 
@@ -518,6 +523,8 @@ function RunManager.addPlayer(player: any): StateTypes.PlayerState?
 		IsConnected = true,
 		ClassLocked = false,
 		VotedNodeId = nil,
+		CardUsesThisBattle = {},
+		CardUsesThisRun = {},
 		EquippedItems = {},
 		EquipmentInventory = {},
 		EquippedSkills = {},
@@ -736,6 +743,7 @@ function RunManager.startRun(initiator: any?): boolean
 	for _, pState in runToStart.PartyMembers do
 		pState.VotedNodeId = nil
 		pState.Resources.HP = pState.Resources.MaxHP
+		CardRulesService.resetRunUsage(pState)
 		ClassService.resetCombatResources(pState)
 		CardService.resetCombatPiles(pState)
 
@@ -895,8 +903,9 @@ local function hashStringToSeed(str: string): number
 	return hash
 end
 
-local function computeMerchantSeed(seed: number, act: number, tier: number, nodeId: string): number
-	local nodeHash = hashStringToSeed(nodeId)
+local function computeMerchantSeed(seed: number, act: number, tier: number, nodeId: string, userId: number?): number
+	local personalKey = if userId then string.format("%s:%d", nodeId, userId) else nodeId
+	local nodeHash = hashStringToSeed(personalKey)
 	local combined = bit32.bxor(
 		bit32.band(seed, 0x7FFFFFFF),
 		bit32.band(act * 73856093, 0x7FFFFFFF),
@@ -912,8 +921,8 @@ end
 RunManager.hashStringToSeed = hashStringToSeed
 RunManager.computeMerchantSeed = computeMerchantSeed
 
-function RunManager.generateMerchantWares(seed: number, act: number, tier: number, nodeId: string): { StateTypes.MerchantItemView }
-	local shopSeed = computeMerchantSeed(seed, act, tier, nodeId)
+function RunManager.generateMerchantWares(seed: number, act: number, tier: number, nodeId: string, userId: number?): { StateTypes.MerchantItemView }
+	local shopSeed = computeMerchantSeed(seed, act, tier, nodeId, userId)
 	local rng = Random.new(shopSeed)
 	local cardPool = { "HeavyBlow", "PoisonDart", "FirstAid", "Defend", "Strike" }
 	local chosenCards = {}
@@ -1177,9 +1186,12 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		envId = activeCombat.Environment.EnvironmentId
 	end
 
-	local wares: { StateTypes.MerchantItemView }? = nil
+	local waresByPlayer: { [number]: { StateTypes.MerchantItemView } }? = nil
 	if node.Type == "Merchant Shop" then
-		wares = RunManager.generateMerchantWares(dRun.Seed, node.Act, node.Tier, node.Id)
+		waresByPlayer = {}
+		for userId in runToMutate.PartyMembers do
+			waresByPlayer[userId] = RunManager.generateMerchantWares(dRun.Seed, node.Act, node.Tier, node.Id, userId)
+		end
 	end
 
 	runToMutate.ActiveRoom = {
@@ -1193,7 +1205,8 @@ function RunManager.travelToNode(targetNodeId: string, isLiveAction: boolean?): 
 		EventId = if activeEvent then activeEvent.EventId else nil,
 		CampfireUsed = false,
 		ShopVisited = (node.Type == "Merchant Shop"),
-		MerchantWares = wares,
+		MerchantWares = nil,
+		MerchantWaresByPlayer = waresByPlayer,
 	}
 
 	runToMutate.Phase = "ActiveRoom"
@@ -1702,6 +1715,9 @@ function RunManager.buyMerchantItem(player: any, itemId: string, isLiveAction: b
 	end
 
 	local wares = runToUse.ActiveRoom.MerchantWares
+	if runToUse.ActiveRoom.MerchantWaresByPlayer then
+		wares = runToUse.ActiveRoom.MerchantWaresByPlayer[userId]
+	end
 	if not wares then
 		return false, "Merchant has no wares."
 	end
@@ -1726,9 +1742,9 @@ function RunManager.buyMerchantItem(player: any, itemId: string, isLiveAction: b
 		return false, string.format("Not enough gold (need %d, have %d).", targetItem.Cost, member.Gold)
 	end
 
-	-- Double Purchase Prevention & In-Memory Lock (keyed by runId:itemId)
-	-- Shared Party Stock: stock = 1 per ware across the party; serialized under lockKey
-	local lockKey = string.format("%s:%s", tostring(runToUse.RunId), tostring(itemId))
+	-- Double-purchase prevention is scoped to the caller's personal stock. One
+	-- player's normal purchase must never remove another player's offer.
+	local lockKey = string.format("%s:%d:%s", tostring(runToUse.RunId), userId, tostring(itemId))
 	if merchantPurchaseLocks[lockKey] then
 		return false, "Item purchase is currently being processed."
 	end

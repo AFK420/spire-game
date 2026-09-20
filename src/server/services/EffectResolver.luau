@@ -169,7 +169,7 @@ handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext, r
 		TargetEntityKind = "Enemy",
 		TargetEnemy = enemy,
 		TargetPlayer = nil,
-		Tags = effect.Tags,
+		Tags = effect.Tags or (if context.CardInstance then context.CardInstance.CardData.Tags else nil),
 		Critical = if context.GuaranteedCritical then true else nil,
 		CanHitShield = true,
 		IsPeriodic = false,
@@ -181,7 +181,7 @@ handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext, r
 		context.LogEvent(
 			"DamageDealt",
 			context.SourcePlayer.DisplayName,
-			enemy.Name,
+			enemy.InstanceId,
 			dmgResult.FinalDamage,
 			string.format("-%d HP", dmgResult.HPLost)
 		)
@@ -191,7 +191,7 @@ handlers["Damage"] = function(effect: CardData.Effect, context: ActionContext, r
 			context.LogEvent(
 				"EnemyDefeated",
 				context.SourcePlayer.DisplayName,
-				enemy.Name,
+				enemy.InstanceId,
 				nil,
 				string.format("%s was defeated!", enemy.Name)
 			)
@@ -240,7 +240,7 @@ handlers["Shield"] = function(effect: CardData.Effect, context: ActionContext, r
 		context.LogEvent(
 			"ShieldGained",
 			context.SourcePlayer.DisplayName,
-			recipient.DisplayName,
+			tostring(recipient.UserId),
 			finalShield,
 			string.format("+%d Shield", finalShield)
 		)
@@ -302,9 +302,9 @@ handlers["Heal"] = function(effect: CardData.Effect, context: ActionContext, res
 		context.LogEvent(
 			"Healed",
 			context.SourcePlayer.DisplayName,
-			recipient.DisplayName,
-			finalHeal,
-			string.format("+%d HP", finalHeal)
+			tostring(recipient.UserId),
+			actualHealed,
+			string.format("+%d HP", actualHealed)
 		)
 	end
 
@@ -698,7 +698,7 @@ function EffectResolver.isSupportedEffectType(effectType: string): boolean
 end
 
 -- Resolves an array of card/action effects against the given context
-function EffectResolver.resolveEffects(effects: any, context: ActionContext?): any
+function EffectResolver.resolveEffects(effects: any, context: ActionContext?): { EffectExecutionResult }
 	if currentDepth >= MAX_RECURSION_DEPTH then
 		local msg = "[EffectResolver] Exceeded maximum recursion depth of " .. tostring(MAX_RECURSION_DEPTH)
 		warn(msg)
@@ -709,8 +709,6 @@ function EffectResolver.resolveEffects(effects: any, context: ActionContext?): a
 				Message = msg,
 			}
 		}
-		(recRes :: any).Success = false
-		(recRes :: any).Error = msg
 		return recRes
 	end
 
@@ -804,22 +802,22 @@ function EffectResolver.resolveEffects(effects: any, context: ActionContext?): a
 		})
 	end
 
-	-- Attach helper properties for callers expecting a summary object
-	local allSuccess = #results > 0
-	local firstError: string? = nil
-	for _, r in results do
-		if not r.Success then
-			allSuccess = false
-			firstError = r.Message or "Effect resolution failed."
-			break
+	-- Keep this return value a pure numeric array. Mixing summary fields such as
+	-- results.Success into it makes generalized Luau iteration yield booleans as
+	-- though they were EffectExecutionResult records.
+	return results
+end
+
+function EffectResolver.summarizeResults(results: { EffectExecutionResult }): (boolean, string?)
+	if #results == 0 then
+		return false, "No effects were satisfied or executed."
+	end
+	for _, result in ipairs(results) do
+		if not result.Success then
+			return false, result.Message or "Effect resolution failed."
 		end
 	end
-
-	local retAny: any = results
-	retAny.Success = allSuccess
-	retAny.Error = firstError
-
-	return results
+	return true, nil
 end
 
 function EffectResolver.init()

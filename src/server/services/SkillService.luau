@@ -6,7 +6,7 @@
 	Authoritative runtime engine for active skills (Phase 3 / 3.1):
 	1. Instantiates runtime SkillInstance objects.
 	2. Enforces authoritative skill unlock/ownership boundaries on PlayerState.UnlockedSkills.
-	3. Rejects fabricated instances, unowned skills, invalid slots, and class mismatches.
+	3. Rejects fabricated instances, unowned skills, and invalid slots while keeping the skill pool class-agnostic.
 	4. Enforces runtime SkillSlot validation ("Skill1".."Skill4") and prevents duplicate equipped instances.
 	5. Transactional skill execution: validates party, connection, living state, phase, and target resolution
 	   BEFORE deducting resource costs or setting cooldowns. If target resolution or execution fails,
@@ -20,12 +20,15 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
 local SkillData = require(Shared:WaitForChild("SkillData") :: ModuleScript)
+local CardData = require(Shared:WaitForChild("CardData") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local TargetResolver = require(servicesFolder:WaitForChild("TargetResolver") :: ModuleScript)
 local EffectResolver = require(servicesFolder:WaitForChild("EffectResolver") :: ModuleScript)
 local StatResolver = require(servicesFolder:WaitForChild("StatResolver") :: ModuleScript)
 local ActionTransaction = require(servicesFolder:WaitForChild("ActionTransaction") :: ModuleScript)
+local EnemyMechanicsService = require(servicesFolder:WaitForChild("EnemyMechanicsService") :: ModuleScript)
+local CardRulesService = require(servicesFolder:WaitForChild("CardRulesService") :: ModuleScript)
 
 local SkillService = {}
 
@@ -119,10 +122,6 @@ function SkillService.unlockSkill(
 	local def = SkillData.getSkill(definitionId)
 	if not def then
 		return false, string.format("Unknown skill definition '%s'.", definitionId), nil
-	end
-
-	if def.RequiredClassId and def.RequiredClassId ~= playerState.ClassId then
-		return false, string.format("Skill '%s' requires class '%s', but player is '%s'.", def.Name, def.RequiredClassId, playerState.ClassId), nil
 	end
 
 	if not playerState.UnlockedSkills then
@@ -268,15 +267,10 @@ function SkillService.equipSkill(
 		return false, string.format("Invalid skill slot '%s'. Must be Skill1, Skill2, Skill3, or Skill4.", tostring(resolvedSlot))
 	end
 
-	-- Class requirement check
 	local def = SkillData.getSkill(targetInst.DefinitionId)
 	if not def then
 		return false, string.format("Invalid skill definition '%s'.", targetInst.DefinitionId)
 	end
-	if def.RequiredClassId and def.RequiredClassId ~= playerState.ClassId then
-		return false, string.format("Skill '%s' requires class '%s', but player is '%s'.", def.Name, def.RequiredClassId, playerState.ClassId)
-	end
-
 	if not playerState.EquippedSkills then
 		playerState.EquippedSkills = {}
 	end
@@ -381,7 +375,8 @@ function SkillService.useSkill(
 	targetParam: any?,
 	combatState: StateTypes.CombatState,
 	party: { [number]: StateTypes.PlayerState },
-	logEvent: ((eventType: string, sourceId: string, targetId: string, value: number?, text: string?) -> ())?
+	logEvent: ((eventType: string, sourceId: string, targetId: string, value: number?, text: string?) -> ())?,
+	onEnemyStateChanged: ((enemy: StateTypes.EnemyState) -> ())?
 ): (boolean, string?)
 	-- 1. Precondition checks
 	if not playerState then
@@ -445,6 +440,7 @@ function SkillService.useSkill(
 	if not resolvedTarget.Success then
 		return false, resolvedTarget.Error
 	end
+	local targetEnemyHPBefore = if resolvedTarget.EnemyTarget then resolvedTarget.EnemyTarget.HP else nil
 
 	-- 5. Pre-validate effect types and conditions before capturing snapshot or executing
 	local anyApplicable = false
@@ -507,6 +503,23 @@ function SkillService.useSkill(
 		end
 	end
 
+	local skillDidHit = true
+	local skillHitChance = 1
+	if resolvedTarget.EnemyTarget then
+		local hitResult = CardRulesService.resolveAbilityHit(def.Accuracy, def.Tags, resolvedTarget.EnemyTarget)
+		skillDidHit = hitResult.DidHit
+		skillHitChance = hitResult.HitChance
+		if not skillDidHit then
+			effectiveLogEvent(
+				"SkillMissed",
+				tostring(playerState.UserId),
+				resolvedTarget.EnemyTarget.InstanceId,
+				math.round(skillHitChance * 100),
+				string.format("MISS! %s had %d%% accuracy.", def.Name, math.round(skillHitChance * 100))
+			)
+		end
+	end
+
 	-- 7. Build action context and execute effects
 	local actionCtx: EffectResolver.ActionContext = {
 		SourcePlayer = playerState,
@@ -517,6 +530,16 @@ function SkillService.useSkill(
 		Modifiers = modifiers,
 		LogEvent = effectiveLogEvent,
 		OnKillCallback = function(defeatedEnemy)
+			local mechanicResults = EnemyMechanicsService.processEnemyDefeat(defeatedEnemy, combatState.Enemies)
+			for _, result in mechanicResults do
+				effectiveLogEvent(
+					"BuffGained",
+					result.SourceEnemyName,
+					result.SourceEnemyId,
+					result.AttackGain,
+					string.format("%s devoured the fallen and gained +%d Attack!", result.SourceEnemyName, result.AttackGain)
+				)
+			end
 			local RelicServiceMod = servicesFolder:FindFirstChild("RelicService")
 			if RelicServiceMod and RelicServiceMod:IsA("ModuleScript") then
 				local RelicService = require(RelicServiceMod) :: any
@@ -543,13 +566,20 @@ function SkillService.useSkill(
 		DidRevive = false,
 	}
 
-	local results = EffectResolver.resolveEffects(def.Effects, actionCtx)
+	local effectsToResolve: { CardData.Effect } = {}
+	for _, effect in def.Effects do
+		local effectTarget = effect.Target or def.Target
+		if skillDidHit or effectTarget ~= "Enemy" then
+			table.insert(effectsToResolve, effect)
+		end
+	end
+	local results = EffectResolver.resolveEffects(effectsToResolve, actionCtx)
 
 	-- Transaction verification: all required effects must succeed (all-required-success)
 	local hasFailure = false
 	local failureMsg = "Skill effect execution failed."
 
-	if #def.Effects > 0 and #results == 0 then
+	if #effectsToResolve > 0 and #results == 0 then
 		hasFailure = true
 		failureMsg = "No skill effects were satisfied or executed."
 	else
@@ -565,6 +595,12 @@ function SkillService.useSkill(
 	if hasFailure then
 		ActionTransaction.rollbackCombatTransaction(txSnapshot, playerState, combatState, party)
 		return false, failureMsg
+	end
+
+	if onEnemyStateChanged and resolvedTarget.EnemyTarget and targetEnemyHPBefore
+		and resolvedTarget.EnemyTarget.HP > 0 and resolvedTarget.EnemyTarget.HP < targetEnemyHPBefore
+	then
+		onEnemyStateChanged(resolvedTarget.EnemyTarget)
 	end
 
 	-- 8. Execution succeeded: deduct costs and trigger cooldown transactionally

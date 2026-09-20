@@ -10,9 +10,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local ModifierResolver = require(servicesFolder:WaitForChild("ModifierResolver") :: ModuleScript)
+local BreakService = require(servicesFolder:WaitForChild("BreakService") :: ModuleScript)
+local BossMechanicsService = require(servicesFolder:WaitForChild("BossMechanicsService") :: ModuleScript)
 
 local DamagePipeline = {}
 
@@ -79,8 +82,33 @@ function DamagePipeline.executeDamage(
 		end
 	end
 
+	-- Shock is a target-side electrical vulnerability. It amplifies direct hits
+	-- only, preventing damage-over-time effects from recursively scaling each other.
+	if not context.IsPeriodic then
+		local statusModule = servicesFolder:FindFirstChild("StatusService")
+		if statusModule then
+			local StatusServiceModule = require(statusModule :: ModuleScript)
+			local targetId = if context.TargetEntityKind == "Enemy" and context.TargetEnemy
+				then context.TargetEnemy.InstanceId
+				elseif context.TargetEntityKind == "Player" and context.TargetPlayer
+					then tostring(context.TargetPlayer.UserId)
+					else nil
+			if targetId and StatusServiceModule.getIncomingDamageMultiplier then
+				local shockMultiplier = StatusServiceModule.getIncomingDamageMultiplier(targetId, false)
+				finalDamage = math.round(finalDamage * shockMultiplier)
+			end
+		end
+	end
+
 	-- Periodic or direct hits cannot deal negative damage
 	finalDamage = math.max(0, finalDamage)
+
+	-- Broken enemies take increased direct damage. Periodic effects are excluded
+	-- so damage-over-time does not replace coordinated Break-phase burst play.
+	if context.TargetEntityKind == "Enemy" then
+		finalDamage *= BreakService.getDirectDamageMultiplier(context.TargetEnemy, context.IsPeriodic)
+		finalDamage = math.round(finalDamage)
+	end
 
 	-- 1b. Critical Hit Resolution
 	local isCritical = false
@@ -120,6 +148,26 @@ function DamagePipeline.executeDamage(
 		context.Critical = true
 	end
 
+	-- Enemy Armor reduces direct physical damage after offensive multipliers but
+	-- before Shield. Piercing cards and periodic damage bypass Armor entirely.
+	local armorMitigated = 0
+	if context.TargetEntityKind == "Enemy"
+		and context.TargetEnemy
+		and context.DamageType == "Physical"
+		and not context.IsPeriodic
+		and not (context.Tags and table.find(context.Tags, "Piercing")) then
+		local armor = math.max(0, context.TargetEnemy.Armor or 0)
+		if armor > 0 and finalDamage > 0 then
+			local reduction = math.min(
+				GameConfig.Combat.MaximumEnemyArmorReduction,
+				armor / (armor + GameConfig.Combat.ArmorScalingConstant)
+			)
+			local beforeArmor = finalDamage
+			finalDamage = math.max(1, math.round(finalDamage * (1 - reduction)))
+			armorMitigated = math.max(0, beforeArmor - finalDamage)
+		end
+	end
+
 	local shieldAbsorbed = 0
 	local hpLost = 0
 	local isDefeatedOrDowned = false
@@ -128,15 +176,16 @@ function DamagePipeline.executeDamage(
 	if context.TargetEntityKind == "Enemy" and context.TargetEnemy then
 		local enemy = context.TargetEnemy
 		if enemy.HP > 0 then
+			local phaseHealthFloor = BossMechanicsService.getPhaseHealthFloor(enemy)
 			if context.CanHitShield then
 				shieldAbsorbed = math.min(math.max(0, enemy.Shield), finalDamage)
 				enemy.Shield = math.max(0, enemy.Shield - shieldAbsorbed)
-				hpLost = finalDamage - shieldAbsorbed
+				hpLost = math.min(finalDamage - shieldAbsorbed, math.max(0, enemy.HP - phaseHealthFloor))
 				enemy.HP = math.max(0, enemy.HP - hpLost)
 			else
 				-- Bypasses Shield directly (e.g. Poison, Direct HP Drain)
 				shieldAbsorbed = 0
-				hpLost = finalDamage
+				hpLost = math.min(finalDamage, math.max(0, enemy.HP - phaseHealthFloor))
 				enemy.HP = math.max(0, enemy.HP - hpLost)
 			end
 
@@ -178,6 +227,7 @@ function DamagePipeline.executeDamage(
 		HPLost = hpLost,
 		IsDefeatedOrDowned = isDefeatedOrDowned,
 		IsCritical = isCritical,
+		ArmorMitigated = armorMitigated,
 	}
 end
 

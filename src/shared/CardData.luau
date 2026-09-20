@@ -3,7 +3,8 @@
 --[=[
 	CardData ModuleScript
 	Mapped to: ReplicatedStorage.Shared.CardData
-	Defines the core card library and class signature cards for Card Rift: Co-op Dungeon.
+	Defines the shared card library for Card Rift: Co-op Dungeon.
+	Card themes may echo a hero archetype, but no card is class-locked.
 ]=]
 
 export type EffectType =
@@ -24,6 +25,22 @@ export type EffectType =
 	| "TriggerEvent"
 
 export type TargetType = "Enemy" | "Self" | "Ally" | "None"
+export type CardRarity = "Common" | "Uncommon" | "Rare" | "SuperRare" | "UltraRare"
+export type UseLimitScope = "Battle" | "Run"
+export type CardAnimationType = "Melee" | "Projectile" | "Aura" | "Summon"
+
+export type CardUseLimit = {
+	Scope: UseLimitScope,
+	MaxUses: number,
+}
+
+export type CardPresentation = {
+	AnimationId: string,
+	AnimationType: CardAnimationType,
+	ProjectileShape: string?,
+	EffectColor: Color3,
+	ImpactEffectId: string,
+}
 
 export type ResourceType = "HP" | "MaxHP" | "Shield" | "Energy" | "MaxEnergy" | "Gold"
 
@@ -48,6 +65,12 @@ export type Card = {
 	Name: string,
 	Cost: number,
 	Target: TargetType,
+	Tags: { string }?,
+	Rarity: CardRarity?,
+	Accuracy: number?,
+	MaxCopiesPerDeck: number?,
+	UseLimit: CardUseLimit?,
+	Presentation: CardPresentation?,
 	Effects: { Effect },
 	Description: string,
 	Color: Color3,
@@ -63,6 +86,7 @@ local Strike: Card = {
 	Name = "Strike",
 	Cost = 1,
 	Target = "Enemy",
+	Tags = { "Attack" },
 	Effects = {
 		{ Type = "Damage", Value = 6 },
 	},
@@ -89,6 +113,7 @@ local HeavyBlow: Card = {
 	Name = "Heavy Blow",
 	Cost = 2,
 	Target = "Enemy",
+	Tags = { "Attack", "Heavy" },
 	Effects = {
 		{ Type = "Damage", Value = 14 },
 	},
@@ -102,11 +127,12 @@ local PoisonDart: Card = {
 	Name = "Poison Dart",
 	Cost = 1,
 	Target = "Enemy",
+	Tags = { "Attack", "Poison", "Piercing" },
 	Effects = {
 		{ Type = "Damage", Value = 3, Target = "Enemy" },
 		{ Type = "ApplyStatus", Value = 3, StatusId = "Poison", Stacks = 3, Target = "Enemy" },
 	},
-	Description = "Deal 3 damage and apply 3 Poison.",
+	Description = "Pierce Armor for 3 damage and apply 3 Poison.",
 	Color = Color3.fromRGB(40, 160, 80),
 	Icon = "🧪",
 }
@@ -126,7 +152,7 @@ local FirstAid: Card = {
 }
 
 --------------------------------------------------------------------------------
--- Class Signature Cards
+-- Shared Themed Cards (never class-locked)
 --------------------------------------------------------------------------------
 
 -- Warlord Cards
@@ -191,9 +217,9 @@ local ArcaneMissiles: Card = {
 	Cost = 1,
 	Target = "Enemy",
 	Effects = {
-		{ Type = "Damage", Value = 10 },
+		{ Type = "Damage", Value = 10, DamageType = "Arcane" },
 	},
-	Description = "Unleash a volley of 3 homing arcane bolts dealing 10 total damage.",
+	Description = "Unleash 3 homing arcane bolts for 10 total damage, ignoring physical Armor.",
 	Color = Color3.fromRGB(50, 160, 255),
 	Icon = "✨",
 }
@@ -218,10 +244,10 @@ local SoulHarvest: Card = {
 	Cost = 1,
 	Target = "Enemy",
 	Effects = {
-		{ Type = "Damage", Value = 7, Target = "Enemy" },
+		{ Type = "Damage", Value = 7, Target = "Enemy", DamageType = "Arcane" },
 		{ Type = "Heal", Value = 3, Target = "Self" },
 	},
-	Description = "Deal 7 damage and harvest spiritual essence to heal 3 HP.",
+	Description = "Deal 7 arcane damage that ignores Armor and harvest 3 HP.",
 	Color = Color3.fromRGB(75, 180, 130),
 	Icon = "💀",
 }
@@ -371,9 +397,9 @@ local UnholyOffering: Card = {
 	Cost = 2,
 	Target = "Enemy",
 	Effects = {
-		{ Type = "Damage", Value = 18 },
+		{ Type = "Damage", Value = 18, DamageType = "Arcane" },
 	},
-	Description = "Smite the enemy with fanatical fury for 18 damage.",
+	Description = "Smite the enemy for 18 arcane damage that ignores physical Armor.",
 	Color = Color3.fromRGB(160, 20, 50),
 	Icon = "🕯️",
 }
@@ -405,6 +431,61 @@ local PackCall: Card = {
 	Color = Color3.fromRGB(145, 105, 55),
 	Icon = "🐺",
 }
+
+-- Every card belongs to the shared pool. These identities control balance and
+-- presentation only; none of them restricts which hero class may equip a card.
+local function setCardIdentity(
+	card: Card,
+	rarity: CardRarity,
+	accuracy: number,
+	maxCopies: number,
+	animationType: CardAnimationType,
+	projectileShape: string?,
+	effectColor: Color3,
+	impactEffectId: string,
+	useScope: UseLimitScope?,
+	maxUses: number?
+)
+	card.Rarity = rarity
+	card.Accuracy = accuracy
+	card.MaxCopiesPerDeck = maxCopies
+	card.Presentation = {
+		AnimationId = card.Id,
+		AnimationType = animationType,
+		ProjectileShape = projectileShape,
+		EffectColor = effectColor,
+		ImpactEffectId = impactEffectId,
+	}
+	if useScope and maxUses then
+		card.UseLimit = { Scope = useScope, MaxUses = maxUses }
+	end
+end
+
+setCardIdentity(Strike, "Common", 0.95, 3, "Melee", nil, Color3.fromRGB(255, 105, 90), "SlashImpact", nil, nil)
+setCardIdentity(Defend, "Common", 1.00, 3, "Aura", nil, Color3.fromRGB(80, 165, 255), "ShieldPulse", nil, nil)
+setCardIdentity(HeavyBlow, "Uncommon", 0.82, 2, "Melee", nil, Color3.fromRGB(255, 145, 55), "HeavyImpact", "Battle", 2)
+setCardIdentity(PoisonDart, "Uncommon", 0.90, 2, "Projectile", "Dart", Color3.fromRGB(75, 235, 105), "PoisonBurst", "Battle", 2)
+setCardIdentity(FirstAid, "Rare", 1.00, 1, "Aura", nil, Color3.fromRGB(70, 255, 185), "HealingSigil", "Run", 1)
+setCardIdentity(RageSlash, "Uncommon", 0.92, 2, "Melee", nil, Color3.fromRGB(255, 55, 75), "BloodArc", "Battle", 2)
+setCardIdentity(ShieldSlam, "Rare", 0.88, 1, "Melee", nil, Color3.fromRGB(235, 125, 80), "ShieldRush", "Battle", 1)
+setCardIdentity(QuickSlash, "Common", 0.98, 3, "Melee", nil, Color3.fromRGB(205, 105, 255), "QuickArc", nil, nil)
+setCardIdentity(ShadowCloak, "Uncommon", 1.00, 2, "Aura", nil, Color3.fromRGB(145, 75, 220), "ShadowVeil", "Battle", 2)
+setCardIdentity(ArcaneMissiles, "Rare", 0.92, 2, "Projectile", "OrbVolley", Color3.fromRGB(85, 185, 255), "ArcaneBurst", "Battle", 2)
+setCardIdentity(ManaSurge, "Uncommon", 1.00, 2, "Aura", nil, Color3.fromRGB(80, 225, 255), "ManaWave", "Battle", 2)
+setCardIdentity(SoulHarvest, "Rare", 0.90, 2, "Projectile", "SoulScythe", Color3.fromRGB(105, 235, 170), "SoulDrain", "Battle", 2)
+setCardIdentity(BoneArmor, "Uncommon", 1.00, 2, "Aura", nil, Color3.fromRGB(175, 220, 185), "BoneWard", "Battle", 2)
+setCardIdentity(WrenchThrow, "Uncommon", 0.88, 2, "Projectile", "Wrench", Color3.fromRGB(255, 175, 70), "MetalImpact", "Battle", 2)
+setCardIdentity(DeployTurret, "SuperRare", 0.95, 1, "Summon", "TurretBolt", Color3.fromRGB(255, 155, 45), "TurretDeploy", "Battle", 1)
+setCardIdentity(CoinFlip, "Uncommon", 0.90, 2, "Projectile", "Coin", Color3.fromRGB(255, 225, 70), "CoinFlash", "Battle", 2)
+setCardIdentity(HighStakes, "Rare", 0.75, 1, "Projectile", "Dice", Color3.fromRGB(255, 205, 60), "JackpotImpact", "Battle", 1)
+setCardIdentity(TimeWarp, "Rare", 0.93, 2, "Projectile", "TimeOrb", Color3.fromRGB(85, 235, 235), "TimeFracture", "Battle", 2)
+setCardIdentity(RewindEcho, "SuperRare", 1.00, 1, "Aura", nil, Color3.fromRGB(90, 225, 230), "ClockRewind", "Run", 1)
+setCardIdentity(MiasmaFlask, "Uncommon", 0.88, 2, "Projectile", "Flask", Color3.fromRGB(85, 225, 105), "MiasmaCloud", "Battle", 2)
+setCardIdentity(Contagion, "Rare", 0.85, 1, "Projectile", "PlagueOrb", Color3.fromRGB(110, 205, 75), "ContagionBurst", "Battle", 1)
+setCardIdentity(BloodPact, "Rare", 1.00, 1, "Aura", nil, Color3.fromRGB(235, 45, 90), "BloodSeal", "Battle", 1)
+setCardIdentity(UnholyOffering, "UltraRare", 0.78, 1, "Projectile", "RitualFlame", Color3.fromRGB(255, 55, 105), "UnholyDetonation", "Run", 1)
+setCardIdentity(FeralBite, "Uncommon", 0.92, 2, "Melee", nil, Color3.fromRGB(225, 170, 85), "BeastLunge", "Battle", 2)
+setCardIdentity(PackCall, "SuperRare", 0.95, 1, "Summon", "SpiritWolf", Color3.fromRGB(190, 145, 75), "PackRush", "Battle", 1)
 
 --------------------------------------------------------------------------------
 -- Master Card Registry & Lookup
@@ -501,6 +582,18 @@ function CardData.validateCard(card: Card): (boolean, string?)
 	end
 	if not card.Effects or #card.Effects == 0 then
 		return false, string.format("Card '%s' has no effects", card.Id)
+	end
+	if not card.Rarity or not card.Presentation then
+		return false, string.format("Card '%s' is missing rarity or presentation metadata", card.Id)
+	end
+	if not card.Accuracy or card.Accuracy <= 0 or card.Accuracy > 1 then
+		return false, string.format("Card '%s' Accuracy must be within (0, 1]", card.Id)
+	end
+	if not card.MaxCopiesPerDeck or card.MaxCopiesPerDeck < 1 then
+		return false, string.format("Card '%s' must define a positive MaxCopiesPerDeck", card.Id)
+	end
+	if card.UseLimit and (card.UseLimit.MaxUses < 1 or card.UseLimit.MaxUses ~= math.floor(card.UseLimit.MaxUses)) then
+		return false, string.format("Card '%s' has an invalid use limit", card.Id)
 	end
 
 	-- Check if card is mixed-target (contains both Enemy-targeting and Player-targeting effects)

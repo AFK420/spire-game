@@ -12,7 +12,7 @@ Phase 4 establishes the persistent meta-progression, card collection management,
 
 1. **Persistent Account Profile**: Upgraded `PersistenceService` to schema `ProfileVersion = 1` with a deterministic migration and reconcile pipeline.
 2. **Permanent Card Collection**: Implemented `CardCollectionService` to manage permanent definition ownership and copy counts, supporting future gacha/banner card grants cleanly.
-3. **Persistent Deck Management**: Implemented `DeckService` with server-generated GUIDs, configurable slot entitlements (`BaseDeckSlots = 4`), and authoritative validation (collection ownership, copy limits, min 8 / max 30 size).
+3. **Persistent Deck Management**: Implemented `DeckService` with server-generated GUIDs, configurable slot entitlements (`BaseDeckSlots = 4`), and authoritative validation (collection ownership, rarity/card-specific copy limits, min 8 / max 30 size). Decks are class-agnostic.
 4. **Active Deck Run Integration**: Connected `ClassService.initializeStartingDeck` to synthesize fresh runtime `CardInstance`s from the player's selected `SavedDeck`. In-run card movement never mutates persistent decks or collections.
 5. **Deck Builder Network Contracts**: Added 11 RemoteEvents in `NetworkService` with token-bucket rate limiting and zero client-minting pathways.
 6. **Comprehensive Verification**: Implemented 6 new test suites (Suites 53–58) covering all migration, collection, deck, run integration, and network security assertions.
@@ -59,7 +59,7 @@ Phase 4.1 resolves all critical persistence edge cases and boundary security:
 3. **Hardened Profile Reconciliation**:
    - Strictly rejects non-integer/fractional quantities in `CardCollection` and `Decks.Cards`.
    - Sanitizes empty or whitespace-only deck names into `"Custom Deck"`.
-   - Validates `ClassId` against `ClassData` definitions.
+   - Normalizes legacy deck `ClassId` values to `nil`; cards are never class-locked.
    - Strips unknown or invalid card definitions from saved decks.
    - Clamps `DeckSlotEntitlement` to valid ranges (`BaseDeckSlots` to `MaxPurchasableDeckSlots`).
 4. **Deterministic Active Deck Fallback**:
@@ -93,4 +93,3 @@ To maintain architectural focus, the following systems remain intentionally unst
 - Gacha banner summoning logic, pity counters, and pull animations.
 - Robux purchases and monetization integrations.
 - Hundreds of card definitions (Phase 4 uses the verified starter roster).
-

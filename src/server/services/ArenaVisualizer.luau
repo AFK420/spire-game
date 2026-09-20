@@ -170,7 +170,7 @@ local function buildEnemyModel(enemy: StateTypes.EnemyState, worldPos: Vector3):
 	statusBar.Size = UDim2.new(1, 0, 0.3, 0)
 	statusBar.Position = UDim2.new(0, 0, 0.65, 0)
 	statusBar.BackgroundTransparency = 1
-	statusBar.Text = string.format("🛡️ %d   🧪 %d   |   %s (%d)", enemy.Shield, enemy.Poison, enemy.Intent.Type, enemy.Intent.Value)
+	statusBar.Text = string.format("🛡️ %d  🪨 %d  💨 %d%%  🧪 %d  |  %s (%d)", enemy.Shield, enemy.Armor or 0, math.round((enemy.Evasion or 0) * 100), enemy.Poison, enemy.Intent.Type, enemy.Intent.Value)
 	statusBar.TextColor3 = Color3.fromRGB(240, 230, 180)
 	statusBar.TextScaled = true
 	statusBar.Font = Enum.Font.GothamMedium
@@ -247,7 +247,7 @@ function ArenaVisualizer.syncEnemies(enemies: { [string]: StateTypes.EnemyState 
 
 						local statusBar = container:FindFirstChild("StatusBar") :: TextLabel?
 						if statusBar then
-							statusBar.Text = string.format("🛡️ %d   🧪 %d   |   %s (%d)", enemy.Shield, enemy.Poison, enemy.Intent.Type, enemy.Intent.Value)
+							statusBar.Text = string.format("🛡️ %d  🪨 %d  💨 %d%%  🧪 %d  |  %s (%d)", enemy.Shield, enemy.Armor or 0, math.round((enemy.Evasion or 0) * 100), enemy.Poison, enemy.Intent.Type, enemy.Intent.Value)
 						end
 					end
 				end

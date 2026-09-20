@@ -11,6 +11,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StateTypes = require(Shared:WaitForChild("StateTypes") :: ModuleScript)
+local GameConfig = require(Shared:WaitForChild("GameConfig") :: ModuleScript)
 
 local servicesFolder = script.Parent
 local DamagePipeline = require(servicesFolder:WaitForChild("DamagePipeline") :: ModuleScript)
@@ -99,15 +100,15 @@ local definitions: { [string]: StateTypes.StatusDefinition } = {
 	Shock = {
 		Id = "Shock",
 		Name = "Shock",
-		Description = "Causes bonus damage on subsequent hits.",
+		Description = "Each stack increases direct damage taken by 5% until it expires.",
 		Stacking = "Stack",
-		DefaultDuration = 2,
-		TickTiming = "OnAction",
+		DefaultDuration = 3,
+		TickTiming = "TurnStart",
 		MaxStacks = 20,
 		IsDebuff = true,
 		Icon = "⚡",
-		Implemented = false,
-		TickBehaviorId = nil,
+		Implemented = true,
+		TickBehaviorId = "ShockDecay",
 	},
 	Bleed = {
 		Id = "Bleed",
@@ -167,6 +168,15 @@ function StatusService.getStatuses(targetId: string): { StateTypes.StatusInstanc
 		table.insert(list, inst)
 	end
 	return list
+end
+
+function StatusService.getIncomingDamageMultiplier(targetId: string, isPeriodic: boolean): (number, number)
+	if isPeriodic then
+		return 1, 0
+	end
+	local shock = StatusService.getStatus(targetId, "Shock")
+	local stacks = if shock then math.max(0, shock.Stacks) else 0
+	return 1 + (stacks * GameConfig.Status.ShockDamageTakenPerStack), stacks
 end
 
 -- Applies or stacks a status on a target entity
@@ -426,6 +436,20 @@ local tickBehaviors: { [string]: TickBehaviorFn } = {
 		return {
 			DamageDealt = dmgDealt,
 			Defeated = defeated,
+			ShouldRemove = shouldRemove,
+		}
+	end,
+
+	["ShockDecay"] = function(ctx: TickContext): TickBehaviorResult
+		local inst = ctx.Instance
+		local shouldRemove = false
+		if inst.Duration > 0 then
+			inst.Duration -= 1
+			shouldRemove = inst.Duration <= 0
+		end
+		return {
+			DamageDealt = 0,
+			Defeated = false,
 			ShouldRemove = shouldRemove,
 		}
 	end,

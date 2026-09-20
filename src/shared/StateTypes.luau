@@ -87,6 +87,8 @@ export type PlayerState = {
 	IsConnected: boolean?,
 	ClassLocked: boolean?,
 	VotedNodeId: string?,
+	CardUsesThisBattle: { [string]: number }?, -- Definition-level use counts, reset each encounter
+	CardUsesThisRun: { [string]: number }?, -- Definition-level use counts, reset only when a run begins
 	-- =========================================================================
 	-- Phase 3 / 3.1 Run-Scoped Progression State
 	-- These fields are ephemeral and bound strictly to the current expedition run.
@@ -120,6 +122,16 @@ export type EnemyIntent = {
 	Value: number,
 	TargetUserId: number?,
 	Description: string?,
+	MoveId: string?,
+	AttackProfileId: string?,
+	TargetMode: string?,
+	StatusId: string?,
+	StatusStacks: number?,
+	BreakInterruptible: boolean?,
+	InterruptText: string?,
+	ArmorAfterAction: number?,
+	EvasionAfterAction: number?,
+	DefenseText: string?,
 }
 
 export type EnemyState = {
@@ -130,8 +142,19 @@ export type EnemyState = {
 	MaxHP: number,
 	Shield: number,
 	Poison: number,
+	Armor: number?,               -- Reduces direct physical damage through the authoritative damage pipeline
+	Evasion: number?,             -- Subtracted from targeted card Accuracy, clamped by card rules
 	AttackPower: number,
 	Intent: EnemyIntent,
+	MoveIndex: number?,           -- Current authored move in the definition cycle
+	Role: string?,                -- Player-facing mechanical role from EnemyData
+	BreakMeter: number?,          -- Current stagger accumulated; nil/0 for non-breakable enemies
+	BreakThreshold: number?,      -- 0/nil means this enemy cannot be Broken
+	IsBroken: boolean?,           -- True while the party has an active Break damage window
+	BreakActionsToSkip: number?,  -- Upcoming enemy actions cancelled by the Break
+	BossPhase: number?,            -- Current authored boss phase (nil for non-bosses)
+	BossPhaseName: string?,        -- Player-facing phase name
+	DefeatProcessed: boolean?,     -- Guards one-time on-defeat mechanics and notifications
 	ModelRef: Model?,           -- Optional Workspace visual model
 }
 
@@ -144,6 +167,14 @@ export type CombatEvent = {
 	Value: number?,
 	ExtraText: string?,
 	Timestamp: number,
+	CardDefinitionId: string?,
+	CardRarity: CardData.CardRarity?,
+	AnimationId: string?,
+	AnimationType: CardData.CardAnimationType?,
+	ProjectileShape: string?,
+	EffectColor: Color3?,
+	ImpactEffectId: string?,
+	DidHit: boolean?,
 }
 
 --------------------------------------------------------------------------------
@@ -154,6 +185,7 @@ export type ReactionType = "Dodge" | "Parry"
 export type TimingJudgement = "Perfect" | "Good" | "Early" | "Late" | "Miss" | "Unavailable" | "None"
 export type ReactionResult = "Success" | "Perfect" | "Good" | "Miss" | "Early" | "Late" | "Unavailable" | "None"
 export type AttackType = "Melee" | "Jump" | "Projectile" | "AoE"
+export type AvoidanceMode = "Reaction" | "Movement" | "DefenseOnly"
 
 export type AttackReactionProfile = {
 	AttackId: string,
@@ -175,6 +207,8 @@ export type AttackReactionProfile = {
 	DamageType: DamageType,
 	RawDamage: number,
 	IsAoE: boolean?,
+	AvoidanceMode: AvoidanceMode?,
+	HazardRadius: number?,
 	AnimationLength: number?,
 	ProjectileSpeed: number?,
 	ProjectileColor: Color3?,
@@ -198,6 +232,8 @@ export type ReactionWindowState = {
 	TargetWorldPos: Vector3?,
 	TargetWorldPosition: Vector3?,
 	AttackerWorldPos: Vector3?,
+	AvoidanceMode: AvoidanceMode?,
+	HazardRadius: number?,
 	PerPlayerResult: {
 		[number]: {
 			Reaction: ReactionType?,
@@ -239,6 +275,8 @@ export type ReactionWindowView = {
 	TargetWorldPos: Vector3?,
 	TargetWorldPosition: Vector3?,
 	AttackerWorldPos: Vector3?,
+	AvoidanceMode: AvoidanceMode?,
+	HazardRadius: number?,
 }
 
 export type EnvironmentId = "RainSoaked" | "LavaCavern" | "FrozenWastes" | "ToxicSwamp" | "ArcaneStorm" | "None"
@@ -435,6 +473,7 @@ export type DamageResult = {
 	HPLost: number,
 	IsDefeatedOrDowned: boolean,
 	IsCritical: boolean?,
+	ArmorMitigated: number?,
 }
 
 export type StatusStackingMode = "Stack" | "RefreshDuration" | "Independent" | "None"
@@ -516,7 +555,8 @@ export type ActiveRoom = {
 	EventId: string?,
 	CampfireUsed: boolean?,
 	ShopVisited: boolean?,
-	MerchantWares: { MerchantItemView }?,
+	MerchantWares: { MerchantItemView }?, -- Legacy/test fallback; live shops use per-player stock
+	MerchantWaresByPlayer: { [number]: { MerchantItemView } }?,
 }
 
 export type RunRewards = {
@@ -553,6 +593,14 @@ export type CardView = {
 	Name: string,
 	Cost: number,
 	Target: CardData.TargetType,
+	Tags: { string }?,
+	Rarity: CardData.CardRarity,
+	AccuracyPercent: number,
+	MaxCopiesPerDeck: number,
+	UseLimitScope: CardData.UseLimitScope?,
+	MaxUses: number?,
+	RemainingUses: number?,
+	Presentation: CardData.CardPresentation,
 	Description: string,
 	Icon: string,
 	Color: Color3,
@@ -581,6 +629,7 @@ export type PlayerView = {
 	SkillInventory: { string }?,
 	UnlockedPassives: { [string]: boolean }?,
 	PassivePoints: number?,
+	Shock: number?,
 }
 
 export type EnemyView = {
@@ -590,9 +639,22 @@ export type EnemyView = {
 	MaxHP: number,
 	Shield: number,
 	Poison: number,
+	Armor: number,
+	EvasionPercent: number,
 	AttackPower: number,
+	BreakMeter: number,
+	BreakThreshold: number,
+	IsBroken: boolean,
 	IntentText: string,
 	IntentIcon: string,
+	IntentInterruptible: boolean,
+	IntentInterruptText: string?,
+	IntentTargetUserId: number?,
+	IntentTargetText: string,
+	IntentReactionText: string,
+	IntentReactionStyle: string,
+	BossPhase: number?,
+	BossPhaseName: string?,
 }
 
 export type CombatSnapshot = {

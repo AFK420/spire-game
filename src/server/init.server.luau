@@ -263,7 +263,20 @@ NetworkService.PlayCardEvent.OnServerEvent:Connect(function(player: Player, card
 		return
 	end
 
-	local success, err = CombatService.playCard(player, cardInstanceId, targetParam)
+	local callOk, success, err = pcall(CombatService.playCard, player, cardInstanceId, targetParam)
+	if not callOk then
+		warn(string.format("[Server] PlayCard handler error for %s: %s", player.Name, tostring(success)))
+		NetworkService.sendActionResult(player, {
+			Action = "PlayCard",
+			Success = false,
+			Message = "The card action hit an internal error. Your combat state is being resynchronized.",
+		})
+		local snapshot = CombatService.getCombatSnapshotForPlayer(player)
+		if snapshot then
+			NetworkService.sendCombatState(player, snapshot)
+		end
+		return
+	end
 	if not success then
 		if err then
 			warn(string.format("[Server] PlayCard rejected for %s: %s", player.Name, err))
